@@ -54,7 +54,7 @@ component or move it into another component (Copy/Paste and Cut/Paste of compone
 placed occurrences carry them. Unresolved connector context and
 assumed motion bindings are reported separately.
 
-Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available, and a part with both shown and hidden bodies is shown whole, with an Info note.
+Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available and are written marked hidden: SolidCraft 0.42 and newer open them hidden, while older releases show a part with both shown and hidden bodies whole. An Info note gives the count.
 
 | What the codec gives | What Dutchman does |
 |---|---|
@@ -312,8 +312,9 @@ transform, and each component as a product definition.
 - **Hidden components and bodies** stay hidden: a placement whose occurrence the design hides,
   or whose part holds only bodies the design hides (a design's own body hidden beside its
   components, say), is written as a SolidCraft occurrence hidden in every placement of what
-  holds it. Its geometry is still converted and can be shown again in SolidCraft. A part with
-  shown and hidden bodies is shown whole.
+  holds it. Its geometry is still converted and can be shown again in SolidCraft. In a part with
+  shown and hidden bodies, the hidden ones are written marked hidden: SolidCraft 0.42 and newer
+  open them hidden, older releases show the part whole.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part. Offsets apply to the second connector:

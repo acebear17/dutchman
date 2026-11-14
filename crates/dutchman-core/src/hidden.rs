@@ -54,7 +54,7 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
         .count();
     if hidden > 0 {
         report.push(Severity::Info, "bodies", format!(
-            "{hidden} user-hidden Fusion bodies were kept; parts with both shown and hidden bodies are shown whole"
+            "{hidden} user-hidden Fusion bodies were kept, marked hidden: SolidCraft 0.42 and newer open them hidden; older releases show a part with both shown and hidden bodies whole"
         ));
     }
     // Fusion needs no visibility rewrite when it has no unowned hidden bodies.

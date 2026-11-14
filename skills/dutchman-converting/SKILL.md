@@ -446,7 +446,8 @@ arcs, unbounded conics, other weighted splines, and text without solved outlines
 
 Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
 and no component owns them, with an Info `bodies` note giving the count. User-hidden
-component members stay available; mixed shown/hidden parts are shown whole, with an Info
+component members stay available, marked hidden (SolidCraft 0.42 and newer open them hidden;
+older releases show mixed shown/hidden parts whole), with an Info
 note. See the Fusion format documentation.
 
 FreeCAD numeric spreadsheet cells and supported formulas can remain editable parameters.
