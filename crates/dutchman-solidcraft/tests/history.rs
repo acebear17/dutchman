@@ -11382,6 +11382,38 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
     }
 }
 
+#[test]
+fn a_face_extrude_reapplied_to_a_base_body_stored_as_the_design_ends_is_refused() {
+    let model = face_extrude(true, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    // The cube comes from a base feature holding the body as the design ends, and the face
+    // extrude joins onto that same body.
+    let first = features.iter_mut().find(|f| f["name"] == "Block").unwrap();
+    first["definition"] = json!({"definition": "base_feature",
+        "bodies": {"kind": "resolved", "value": {"bodies": [body.clone()], "native": "f3d:base#1"}}});
+    first["name"] = json!("Base Feature 1");
+    let extrude = features
+        .iter_mut()
+        .find(|f| f["name"] == "Face extrude")
+        .unwrap();
+    extrude["outputs"] = json!([body]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("re-applied to a base body stored only as the design ends"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 /// The example cube (10 mm, built by the base extrude) with one more extrude that takes its
 /// top (`up`) or bottom face as it was before that extrude: a historical face, known only by
 /// the geometry of the edges around it. `change` edits the extrude's definition.

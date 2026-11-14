@@ -115,8 +115,9 @@ for a small rounded corner, span the arc's whole turn about its centre) and mirr
 sketch if it was written on the inner side; fillets and chamfers after a mirrored sketch are then
 proven on a fresh replay that has the extrude on its outward side. A face it cannot find exactly once, an edge that is
 not a line or circular arc, a boundary that does not close or is not flat, an input topology
-without edge geometry for the face, a direction of its own, and ends to or from an object
-leave the extrude unmapped with the reason. Faces that share an edge are refused. Without a
+without edge geometry for the face, a direction of its own, ends to or from an object, and
+an extrude that re-applies to a base body cadmpeg gives only as the design ends (where the
+face's outward side is not the one it had) leave the extrude unmapped with the reason. Faces that share an edge are refused. Without a
 SolidCraft CLI to replay the history, the extrude waits for one like a blend does.
 
 ## Appearances

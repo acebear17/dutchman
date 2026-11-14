@@ -18,6 +18,21 @@ pub(crate) fn map(
 ) -> Result<Value, String> {
     let face_profile =
         definition.pointer("/profile/kind").and_then(Value::as_str) == Some("historical_faces");
+    if face_profile
+        && feature
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| ctx.reapplied.contains(id))
+    {
+        // Its body was imported as the design ends, so the face's outward side there is not
+        // the side it had when the extrude was made; finding it would point the extrude the
+        // wrong way.
+        return Err(
+            "an extrude of a face, re-applied to a base body stored only as the design ends, \
+             is not mapped yet: the face's side is known only on the body before it"
+                .to_owned(),
+        );
+    }
     let (sketch_id, profiles) = if face_profile {
         // The sketch of the face's boundary runs along the face's outward normal; mapping
         // assumes that side and the replay corrects it, so nothing here may depend on the
