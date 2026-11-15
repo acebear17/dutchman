@@ -358,6 +358,11 @@ fn placed_body_names(occurrences: &[Value], bodies: &[(u64, String)], cap: usize
                     continue;
                 }
                 for outer in rows.iter().filter(|o| o.component == parent) {
+                    // Each partial path ends in at least one path, so a wide fan-out of
+                    // placements per level is cut here rather than growing round on round.
+                    if next.len() >= cap {
+                        break;
+                    }
                     if !path.iter().any(|o| o.id == outer.id) {
                         let mut longer = vec![outer];
                         longer.extend(path.iter().copied());
@@ -1773,6 +1778,24 @@ mod hidden_tests {
         );
         // The cap bounds the names per body.
         assert_eq!(placed_body_names(&occurrences, &bodies[..1], 1), ["Peg"]);
+    }
+
+    #[test]
+    fn a_wide_fan_out_of_placements_stays_within_the_cap() {
+        // Components 10, 20 and 30, each placed 60 times inside the one before: 216000 paths
+        // to a body of 30, of which only the first few are named.
+        let mut occurrences = Vec::new();
+        let mut id = 0;
+        for (component, parent) in [(10, 0), (20, 10), (30, 20)] {
+            for n in 1..=60 {
+                id += 1;
+                occurrences.push(json!({"id": id, "parent": parent, "component": component,
+                    "name": format!("C{component}:{n}")}));
+            }
+        }
+        let names = placed_body_names(&occurrences, &[(30, "Deep".to_owned())], 5);
+        assert_eq!(names.len(), 5, "{names:?}");
+        assert_eq!(names[0], "Deep");
     }
 
     #[test]
