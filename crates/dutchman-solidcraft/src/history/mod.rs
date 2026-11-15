@@ -1828,7 +1828,7 @@ fn map_feature(
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
         Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("primitive") => primitive::placed(feature, definition, ctx).map(Mapped::Feature),
-        Some(kind @ "block") => Err(primitive::unplaced(kind)),
+        Some("block") => primitive::block(feature, definition, ctx).map(Mapped::Feature),
         Some("shell") => shell::map(feature, definition, ctx).map(Mapped::Feature),
         // Draft still needs the geometry of its own input faces.
         Some("draft") => Err("draft waits on input face geometry".to_owned()),
