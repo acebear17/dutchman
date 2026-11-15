@@ -70,6 +70,62 @@ fn model(kind: &str) -> Model {
     }
 }
 
+/// The synthetic pad twice over: two sketches, two new-body extrudes, and a second body in the
+/// final shape.
+fn two_bodies(second: &str) -> Model {
+    let mut wire = serde_json::to_value(cadmpeg_ir::examples::unit_cube().unwrap()).unwrap();
+    let arena = &mut wire["model"];
+    let sketch = |n: u32| {
+        json!({"id": format!("synthetic:test:sketch#{n}"), "name": format!("Profile {n}"),
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+        }},
+        "profiles": [[{"entity": format!("synthetic:test:sketch-entity#{n}")}]]})
+    };
+    arena["sketches"] = json!([sketch(1), sketch(2)]);
+    arena["sketch_entities"] = json!([1, 2].map(|n| json!({
+        "id": format!("synthetic:test:sketch-entity#{n}"),
+        "sketch": format!("synthetic:test:sketch#{n}"),
+        "construction": false,
+        "geometry": {"kind": "circle", "center": {"u": 5.0 * f64::from(n) * 4.0, "v": 0.0}, "radius": 2.0}
+    })));
+    let extrude = |id: u32, sketch: u32, op: &str| {
+        json!({"id": format!("synthetic:test:feature#{id}"), "ordinal": id, "name": format!("Solid {id}"),
+        "suppressed": false,
+        "definition": {"definition": "extrude",
+            "profile": {"kind": "sketch", "value": format!("synthetic:test:sketch#{sketch}")},
+            "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
+            "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}},
+            "op": op}})
+    };
+    let sketch_feature = |id: u32, sketch: u32| {
+        json!({"id": format!("synthetic:test:feature#{id}"), "ordinal": id, "name": format!("Profile {sketch}"),
+        "suppressed": false,
+        "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": format!("synthetic:test:sketch#{sketch}")}}})
+    };
+    arena["features"] = json!([
+        sketch_feature(0, 1),
+        extrude(1, 1, "new_body"),
+        sketch_feature(2, 2),
+        extrude(3, 2, second)
+    ]);
+    let mut bodies = arena["bodies"].as_array().unwrap().clone();
+    let mut other = bodies[0].clone();
+    other["id"] = json!("synthetic:test:body#2");
+    bodies.push(other);
+    arena["bodies"] = json!(bodies);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "Synthetic".to_owned(),
+        source_file: None,
+        source_step: None,
+        assembly: None,
+    }
+}
+
 fn written(model: &Model, writer: FreeCadWriter) -> (String, Report) {
     let mut bytes = Vec::new();
     let mut report = Report::default();
@@ -1287,4 +1343,32 @@ fn native_document_rebuilds_a_synthetic_pad_when_freecad_is_configured() {
         stdout.lines().any(|line| line == "VISIBLE=Body"),
         "{stdout}"
     );
+}
+
+#[test]
+fn a_part_with_several_bodies_opens_a_body_for_each_new_body_feature() {
+    let (script, report) = written(&two_bodies("new_body"), FreeCadWriter::new());
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.mode, Mode::History, "{outcome:?}");
+    assert_eq!(script.matches("rebuild_bodies(json.loads").count(), 4);
+    assert!(script.contains("states = []\n    sketch_rows = {}\n"));
+    assert!(script.contains("selected = rebuilt"));
+    assert!(!script.contains("body = doc.addObject('PartDesign::Body', 'Body')\nbody.Label"));
+    assert!(outcome
+        .features
+        .iter()
+        .all(|f| f.status == FeatureStatus::Mapped));
+}
+
+#[test]
+fn a_join_after_several_bodies_is_placed_by_the_macro() {
+    let (script, report) = written(&two_bodies("join"), FreeCadWriter::new());
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert!(script.contains("\\\"operation\\\":\\\"join\\\""));
+}
+
+#[test]
+fn single_body_macros_do_not_carry_the_multi_body_helpers() {
+    let (script, _) = written(&model("pad"), FreeCadWriter::new());
+    assert!(!script.contains("rebuild_bodies"));
 }

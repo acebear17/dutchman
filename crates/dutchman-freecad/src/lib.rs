@@ -1,5 +1,6 @@
 //! Rebuild scripts using FreeCAD's public Python scripting API. No FreeCAD code is linked.
 mod assembly;
+mod bodies;
 mod generate;
 mod prefix;
 pub mod run;
@@ -74,17 +75,21 @@ impl FreeCadWriter {
             mapping.parameter_values
         ))?);
         script.push('\n');
+        let multi = model.ir.model.bodies.len() > 1;
         let generated = if self.import_only {
             Err("geometry only was requested".to_owned())
-        } else if model.ir.model.bodies.len() != 1 {
-            Err("feature ownership across multiple bodies is not supported yet".to_owned())
+        } else if model.ir.model.bodies.is_empty() {
+            Err("the part has no body to rebuild".to_owned())
+        } else if multi {
+            rows.as_ref()
+                .map_err(Clone::clone)
+                .and_then(|rows| generate::history_bodies(rows))
         } else {
             rows.as_ref()
                 .map_err(Clone::clone)
                 .and_then(|rows| generate::history(rows))
         };
-        let partial = if generated.is_err() && !self.import_only && model.ir.model.bodies.len() == 1
-        {
+        let partial = if generated.is_err() && !self.import_only && !multi {
             prefix::recover(model, rows.ok(), mapping.sketches, &mut features)
         } else {
             None
@@ -133,6 +138,7 @@ impl FreeCadWriter {
         script.push_str(&generate::quoted(&step)?);
         script.push_str(")\nselected = original\nfallback = None\n");
         match generated {
+            Ok(code) if multi => bodies::write(script, &model.name, &code)?,
             Ok(code) => {
                 script.push_str("body = doc.addObject('PartDesign::Body', 'Body')\nbody.Label = ");
                 script.push_str(&generate::quoted(&model.name)?);

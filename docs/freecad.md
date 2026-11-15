@@ -296,11 +296,16 @@ kept as reference` (sketches count as features; suppressed and organizational fe
 not). Later body-building features are blocked, with their reasons; later mapped sketches
 remain hidden references. Partial histories are still experimental and unverified.
 
+A part that ends as several bodies is rebuilt as one Body per body: a new-body feature opens a
+Body, a pattern goes to the body holding its features, a cut or hole to every body it removes
+material from, and any other feature to the first body it joins without leaving a separate solid.
+A feature that makes several bodies at once, or that fits no body, keeps the part as STEP.
+
 A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
 Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
 guided, twisted, scaled, or binormal sweeps and lofts, lofts ending at a point, extrudes from
 or to a point or face or with taper, counterbored, countersunk, or face-ended holes, coils
-about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
+about an axis other than Z, two-direction patterns, and combines across bodies. The report gives one result per source feature, including the reason each feature
 was not rebuilt. `--import-only` keeps every part as STEP and leaves out joints.
 Assemblies retain placements and rebuild supported joints as described below.
 Pattern counts are limited to 10,000. Solid lines drawn corner to
