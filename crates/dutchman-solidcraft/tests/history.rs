@@ -7158,6 +7158,43 @@ fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
 }
 
 #[test]
+fn a_sketch_with_no_timeline_row_is_written_before_the_extrude_that_uses_it() {
+    // The source keeps the cube's sketch only in its sketch arena: no sketch feature names it.
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|feature| feature["name"] != "Base sketch");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let outcome = report.outcome().unwrap();
+    let block = outcome
+        .features
+        .iter()
+        .find(|f| f.name.as_deref() == Some("Block"))
+        .unwrap();
+    assert_eq!(
+        block.status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{}",
+        history_line(&report)
+    );
+    let kinds: Vec<&str> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["type"].as_str())
+        .collect();
+    let sketch = kinds.iter().position(|kind| *kind == "sketch").unwrap();
+    let extrude = kinds.iter().position(|kind| *kind == "extrude").unwrap();
+    assert!(sketch < extrude, "{kinds:?}");
+}
+
+#[test]
 fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
     // A second base feature the source proves empty, after the one holding the cube.
     let mut model = based_cube();

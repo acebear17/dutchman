@@ -181,6 +181,12 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
+## Sketches without a timeline row
+
+Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lists the sketch
+alone. A feature whose profile uses such a sketch gets it written just before itself, so the
+feature finds it; any other such sketch is kept for reference after the timeline, as before.
+
 ## Trimmed and unresolved profile regions
 
 Trimmed regions select a point strictly inside their stored boundary, for revolves and other

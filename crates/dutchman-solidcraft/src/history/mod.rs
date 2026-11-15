@@ -1000,6 +1000,19 @@ fn map_into(
                 || is_assembly_feature(feature)
                 || helpers::is_helper(feature))
     });
+    // Sketches the source keeps without a timeline row of their own (cadmpeg gives some only in
+    // its sketch arena). One a feature uses is mapped just before that feature; the others are
+    // added after the timeline, below.
+    let bound: std::collections::BTreeSet<String> = ctx
+        .arena("features")
+        .iter()
+        .filter_map(|feature| {
+            operation(feature)
+                .pointer("/sketch/sketch")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect();
     for (position, feature) in features.into_iter().enumerate() {
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             name: name(feature).map(str::to_owned),
@@ -1059,6 +1072,7 @@ fn map_into(
             ));
             continue;
         }
+        map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
         let before = history.features.len();
         let blends = ctx.blends.len();
@@ -1178,20 +1192,11 @@ fn map_into(
         .count();
     // Some decoders supply sketches without timeline rows. Their resolved frames are
     // independent of replayed topology; unresolved attachments are refused by sketch::map.
-    let bound: std::collections::BTreeSet<&str> = ctx
-        .arena("features")
-        .iter()
-        .filter_map(|feature| {
-            operation(feature)
-                .pointer("/sketch/sketch")
-                .and_then(Value::as_str)
-        })
-        .collect();
     for sketch in ctx.arena("sketches") {
         let Some(id) = sketch.get("id").and_then(Value::as_str) else {
             continue;
         };
-        if !keep_sketches || bound.contains(id) {
+        if !keep_sketches || bound.contains(id) || ctx.sketches.contains_key(id) {
             continue;
         }
         let feature = serde_json::json!({"name": sketch.get("name")});
@@ -1602,6 +1607,55 @@ pub(crate) fn prove_blends(
     }
     if let Some((source, reason)) = first {
         shorten(mapping, source, reason);
+    }
+}
+
+/// Maps, just before `feature`, each sketch it uses that the source keeps without a timeline
+/// row (`bound` holds those that have one) and that is not mapped yet, so the feature finds it.
+/// A sketch that does not map is left for the feature to refuse with its own reason.
+fn map_unbound_sketches(
+    feature: &Value,
+    bound: &std::collections::BTreeSet<String>,
+    ctx: &mut Context,
+    report: &mut Report,
+    history: &mut History,
+    references: &mut History,
+) {
+    let mut used = Vec::new();
+    collect_strings(operation(feature), &mut used);
+    for id in used {
+        if bound.contains(&id) || ctx.sketches.contains_key(&id) {
+            continue;
+        }
+        let Some(sketch) = ctx.row("sketches", &id) else {
+            continue;
+        };
+        let source = serde_json::json!({"name": sketch.get("name")});
+        let definition = serde_json::json!({"sketch": {"space": "planar", "sketch": id}});
+        let Ok(mut mapped) = sketch::map(&source, &definition, ctx, report) else {
+            continue;
+        };
+        let name = ctx.unique_name(&mapped, history.features.iter());
+        if let Some(fields) = mapped.as_object_mut() {
+            fields.insert("name".to_owned(), Value::String(name));
+        }
+        if sketch.get("visible").and_then(Value::as_bool) == Some(false) {
+            if let Some(id) = mapped.get("id").and_then(Value::as_u64) {
+                history.hidden.push(id);
+            }
+        }
+        references.features.push(mapped.clone());
+        history.features.push(mapped);
+    }
+}
+
+/// Every string in `value`, depth first.
+fn collect_strings(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(text) => out.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| collect_strings(item, out)),
+        Value::Object(fields) => fields.values().for_each(|item| collect_strings(item, out)),
+        _ => {}
     }
 }
 
