@@ -505,7 +505,7 @@ mod tests {
             ))
         );
         assert!(!cards[1].ok);
-        assert_eq!(cards[1].outcome, "not supported yet");
+        assert_eq!(cards[1].outcome, "Not supported yet");
         assert_eq!(cards[1].stage.as_deref(), Some("decode"));
         assert_eq!(cards[1].download, None);
         assert_eq!(cards[0].saved, None);
