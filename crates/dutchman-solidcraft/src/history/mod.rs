@@ -1783,6 +1783,13 @@ fn map_feature(
         Some("tree_node") => Ok(Mapped::Nothing),
         // A raster image placed for reference (a Fusion Canvas): it builds no geometry.
         Some("reference_image") => Ok(Mapped::Nothing),
+        // A corner the source proves leaves its body as it was (topology included) needs no
+        // SolidCraft feature: a corner of one flange, say, with nothing to relieve.
+        Some("sheet_metal_corner")
+            if definition.get("effect").and_then(Value::as_str) == Some("unchanged") =>
+        {
+            Ok(Mapped::Nothing)
+        }
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("spatial_sketch") => {
             spatial::map(feature, definition, ctx, report).map(Mapped::Feature)

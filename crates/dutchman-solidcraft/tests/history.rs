@@ -7890,6 +7890,28 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
 }
 
 #[test]
+fn a_corner_that_leaves_its_body_unchanged_needs_no_feature() {
+    let corner = json!({"definition": "sheet_metal_corner",
+        "bend": "inventor:model:feature#0", "effect": "unchanged"});
+    let model = cube_under(&[("Corner1", corner)]);
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let outcome = report.outcome().unwrap();
+    let row = outcome
+        .features
+        .iter()
+        .find(|f| f.name.as_deref() == Some("Corner1"))
+        .unwrap();
+    assert_eq!(
+        row.status,
+        dutchman_core::FeatureStatus::NotNeeded,
+        "{row:?}"
+    );
+}
+
+#[test]
 fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
     // An Inventor part made of a base solid: its one feature is kept in its native form.
     let native = json!({"definition": "native", "kind": "InventorClass:0843c7c2"});

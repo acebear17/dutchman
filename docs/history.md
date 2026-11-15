@@ -327,7 +327,9 @@ stands square to the sheet at 90 degrees, is flush with the edge's end face, has
 thickness and starts where the bend ends; the flange height is the plate's far end measured
 from the sheet's outer face. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
-outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no
+outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
+corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
+relieve) needs no SolidCraft feature and is counted as not needed. CADIR has no
 contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
 settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
 first feature that stops the history; the original geometry is still converted.
