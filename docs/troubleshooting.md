@@ -117,8 +117,8 @@ has the steps (in the desktop app, open **Help us fix it** under **Review and se
    - A file of up to 10 MB: drag it in. The desktop app opens its folder.
    - A larger file: Dutchy replies with a private upload link, for up to 300 MB for the design,
      300 MB for its STEP, or a 1.5 GB zip, for 72 hours.
-3. **Have a STEP export?** If you can export a STEP of the same design, add it too. It helps us
-   compare, but it isn't required.
+3. **Please add a STEP export.** Strongly recommended: a STEP export of the exact same design
+   (same version, part positions and state) lets us check every part. It really helps us fix it.
 
 Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
 on request.

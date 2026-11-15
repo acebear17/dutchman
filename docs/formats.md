@@ -50,7 +50,7 @@ After the results, a refused conversion (except IGES) or a history that didn't f
 prints one invitation to make [test files](https://dutchman-cad.github.io/fixtures/) or type
 `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides it, and with
 `--json` stdout holds only the report. The desktop app shows the same under its results.
-Got a file that converts wrong? Send it, with its STEP export, to Dutchy in a Discord DM.
+Got a file that converts wrong? Please send it, with a STEP export of the exact same design, to Dutchy in a Discord DM.
 
 ## Per program
 
