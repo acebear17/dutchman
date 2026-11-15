@@ -371,3 +371,20 @@ jobs:
           build-args: |
             VERSION=${{ steps.metadata.outputs.version }}
             LICENSES=${{ steps.metadata.outputs.licenses }}
+      - name: Read the SolidCraft pin
+        run: grep -E '^SOLIDCRAFT_[A-Z0-9_]+=[0-9a-f.]+$' docker/solidcraft.env >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v7
+        with:
+          context: build-context
+          file: docker/release.Dockerfile
+          target: solidcraft
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: |
+            dutchman:check-solidcraft
+          build-args: |
+            VERSION=${{ steps.metadata.outputs.version }}
+            LICENSES=${{ steps.metadata.outputs.licenses }}
+            SOLIDCRAFT_VERSION=${{ env.SOLIDCRAFT_VERSION }}
+            SOLIDCRAFT_SHA256_AMD64=${{ env.SOLIDCRAFT_SHA256_AMD64 }}
+            SOLIDCRAFT_SHA256_ARM64=${{ env.SOLIDCRAFT_SHA256_ARM64 }}

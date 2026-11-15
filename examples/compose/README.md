@@ -89,6 +89,7 @@ This updates Caddy within its pinned 2.x minor, and SolidCraft and Dutchman to
 their newest releases. The example needs Dutchman 0.2.2 or later for
 `--base-path`, `--output-dir`, and `--solidcraft`, and SolidCraft 0.24.0 or later
 for opening a result on the same origin. To hold Dutchman at one version, set
-both Dutchman images to that version instead of `latest`; for builds of `main`,
-use `nightly`. SolidCraft's image takes a version tag the same way, such as
+both Dutchman images to that version instead of `latest` (`X.Y.Z-solidcraft` for the
+`dutchman` service); for builds of `main`, use `nightly`. SolidCraft's image takes a version
+tag the same way, such as
 `ghcr.io/tangency-labs/solidcraft-web:0.42.0`.

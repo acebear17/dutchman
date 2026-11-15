@@ -23,6 +23,8 @@ each time. The tags are:
 
 - `X.Y.Z`: one release, such as `0.2.1`; it never changes.
 - `latest`: the newest release.
+- `X.Y.Z-solidcraft` and `latest-solidcraft`: the same release with SolidCraft's checker added,
+  so histories are checked ([below](#checking-histories-in-solidcraft)).
 - `nightly`: built each day from `main` against cadmpeg's `main`, after its tests pass.
 
 To update, pull again (`docker pull ghcr.io/dutchman-cad/dutchman:latest`, then tag it again),
@@ -161,15 +163,29 @@ host with SELinux, add `:Z` to the volume (`.:/work:Z`).
 ## Checking histories in SolidCraft
 
 Without `solidcraft-cli`, a written history is reported `unverified`
-([Feature history](history.md)). The published image has none, so its histories stay
-unverified, and a few features that need SolidCraft's replay to find their edges (such as some
-FreeCAD fillets) are not mapped. Add a
-[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to the image to
-check each history. Give its version and the SHA-256 of its
-`solidcraft-VERSION-linux-x86_64.tar.gz`, or `-linux-aarch64.tar.gz` on ARM64, shown beside
-each file on the release page. The build stops if the download does not match.
+([Feature history](history.md)), and a few features that need SolidCraft's replay to find their
+edges (such as some FreeCAD fillets) are not mapped. The default image has no `solidcraft-cli`,
+to stay small. To get checked histories with no build step, use the image that includes it:
 
-To add it to the published image without building Dutchman, save this as `Dockerfile` in an
+```sh
+docker pull ghcr.io/dutchman-cad/dutchman:latest-solidcraft
+docker tag ghcr.io/dutchman-cad/dutchman:latest-solidcraft dutchman
+docker run --rm --entrypoint solidcraft-cli dutchman --version
+```
+
+It is the same Dutchman for x86_64 and ARM64, plus the SolidCraft release that Dutchman targets
+(0.42 for now), and adds about 470 MB. Pin a release with `X.Y.Z-solidcraft`, such as
+`0.2.1-solidcraft`. In Compose, use `image: ghcr.io/dutchman-cad/dutchman:latest-solidcraft`.
+
+### Build your own
+
+To check histories with a different SolidCraft release, add that
+[release](https://github.com/tangency-labs/solidcraft/releases) to the image yourself. Give its
+version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`, or
+`-linux-aarch64.tar.gz` on ARM64, shown beside each file on the release page. The build stops if
+the download does not match.
+
+To add it to the default image without building Dutchman, save this as `Dockerfile` in an
 empty folder:
 
 ```dockerfile
@@ -200,7 +216,7 @@ docker build -t dutchman \
   --build-arg SOLIDCRAFT_SHA256=5c05463c8ea247a49269ba63a0c23a3d6cba4d17ae713c655d2f94872fc4424b .
 ```
 
-It takes about a minute and adds about 650 MB. Build again after each `docker pull` to update
+It takes about a minute and adds about 470 MB. Build again after each `docker pull` to update
 Dutchman. An image you [build yourself](#build-it-yourself) from the repository takes the same
 two arguments.
 
