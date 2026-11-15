@@ -286,6 +286,27 @@ progress does not infer unique design counts or a percentage from them. Optional
 [diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs) record these attempts. Separate assembly part files report completions as they are read,
 with an unknown total while parts are discovered. These updates do not change the final report.
 
+## Scripts and PDM systems
+
+A PDM or a script runs one file at a time:
+
+```
+dutchman convert in.ipt out.sc --json --quiet
+```
+
+- **Exit code:** `0` when the design was written; `1` when it was not (missing or unreadable
+  file, a format Dutchman cannot read, a decode refusal). Check the exit code first.
+- **stdout:** exactly one JSON line, schema `dutchman.convert/1` (see
+  [the JSON report](json.md)). With `--quiet`, stderr has no progress lines; without it,
+  stderr carries `dutchman.progress/1` lines, which a script can ignore.
+- **What came across:** `ok` is `true` whenever the design was written, including a design
+  written as geometry only. To tell an editable part from a geometry-only import, read
+  `mode` (`history`, `partial_history` or `import`) and `history.rebuilt` out of
+  `history.needing`; each `history.features[]` row names a feature that did not come across
+  and gives its `reason`.
+- **Target:** add `--solidcraft-version x.y.z` to pin the SolidCraft release the design is
+  written for, so output does not change with the SolidCraft found on the machine.
+
 ## Convert a whole folder: convert-all
 
 `convert-all` converts every file named, and every file Dutchman knows inside the folders
