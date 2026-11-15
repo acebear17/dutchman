@@ -78,12 +78,16 @@ the container isn't stopped first.
 
 ## In a browser
 
-The repository's [`compose.yaml`](../compose.yaml) runs `dutchman-web` from the image on port
-8080, asking for the password you give it:
+The repository's [`compose.yaml`](../compose.yaml) runs `dutchman-web` from the image tagged
+`dutchman` on port 8080, asking for the password you give it. With the published image pulled
+and tagged as above:
 
 ```sh
-DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d --build
+DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d
 ```
+
+To build the image from the checkout instead, add `--build`; the first build takes several
+minutes or more, as in [Build it yourself](#build-it-yourself).
 
 Open `http://<server>:8080` and sign in as `dutchman`. Or run it with `docker run`:
 
@@ -128,8 +132,15 @@ Replace `/home/me/cad` with your folder and `1000:1000` with your user and group
 
 ## With Compose
 
-The [Compose example](../examples/compose/) serves SolidCraft and Dutchman on one address,
-with a shared folder and a watched inbox.
+### SolidCraft and Dutchman on one address
+
+The [Compose example](../examples/compose/) serves web SolidCraft at `/` and Dutchman Web at
+`/dutchman/` behind Caddy, with a shared folder and a watched inbox. Both apps come from
+published images, so it starts in about a minute. Copy the folder to your server and follow its
+[README](../examples/compose/README.md): create the folders and `.env`, then run
+`docker compose up -d`. Each converted design's card gets an **Open in SolidCraft** link.
+
+### Convert from the command line
 
 Save as `compose.yaml` next to your designs, then convert with
 `docker compose run --rm dutchman convert-all --out-dir converted/ .`:
@@ -150,14 +161,17 @@ host with SELinux, add `:Z` to the volume (`.:/work:Z`).
 ## Checking histories in SolidCraft
 
 Without `solidcraft-cli`, a written history is reported `unverified`
-([Feature history](history.md)). On x86_64, an image you build
-yourself can include a [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check
-each history. Give its version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`:
+([Feature history](history.md)). The published image has none, so its histories stay
+unverified, and a few features that need SolidCraft's replay to find their edges (such as some
+FreeCAD fillets) are not mapped. On x86_64, an image you build yourself can include a
+[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check each
+history. Give its version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`
+(shown beside each file on the release page):
 
 ```sh
 docker build -t dutchman \
-  --build-arg SOLIDCRAFT_VERSION=0.20.0 \
-  --build-arg SOLIDCRAFT_SHA256=0c0965f8807945722780f83750c4bd3ce6544f9d827e01cad0664b28cf2a6910 .
+  --build-arg SOLIDCRAFT_VERSION=0.42.0 \
+  --build-arg SOLIDCRAFT_SHA256=5c05463c8ea247a49269ba63a0c23a3d6cba4d17ae713c655d2f94872fc4424b .
 ```
 
 The build stops if the download does not match the SHA-256.
