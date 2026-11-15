@@ -2,8 +2,10 @@
 //! them (modelled directly, or imported), as SolidCraft Import features at their place in the
 //! timeline, so the features after them keep their history.
 //!
-//! The bodies are the design's as it ends, so a base body a later feature changes is imported
-//! changed already. A later join, cut or intersection re-applies to it without changing the
+//! When the source keeps a base feature's own body (a history body, which cadmpeg gives when a
+//! later feature changes it), that body is imported and the later features rebuild on it.
+//! Otherwise the bodies are the design's as it ends, so a base body a later feature changes is
+//! imported changed already. A later join, cut or intersection re-applies to it without changing the
 //! shape: those features are kept but marked as re-applied, not rebuilt, and the base feature as
 //! holding the final body. Any other later change (a move, a blend, a deleted face) would apply
 //! twice, so such a base feature is refused, naming the feature that changes its body.
@@ -50,6 +52,9 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .and_then(Value::as_array)
         .map(|ids| ids.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    if let (Some(nest), [body]) = (history_body(feature, &ids, ctx), ids.as_slice()) {
+        return import_history_body(feature, body, nest, ctx);
+    }
     let later = later_changes(feature, &ids, ctx);
     if let Some(twice) = later.iter().find(|row| !reapplies(row)) {
         return Err(format!(
@@ -69,6 +74,117 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         );
     }
     Ok(mapped)
+}
+
+/// The body a base feature of one body made, as it stood when the base feature ended: the
+/// history body the source keeps for it, nested with its own topology. cadmpeg keeps one
+/// only when a later feature changes the body. None for a base feature of several bodies,
+/// or when the source keeps none or more than one.
+fn history_body<'a>(feature: &Value, ids: &[&str], ctx: &Context<'a>) -> Option<&'a Value> {
+    let [_] = ids else {
+        return None;
+    };
+    let id = feature.get("id").and_then(Value::as_str)?;
+    let mut nests = ctx
+        .arena("history_bodies")
+        .iter()
+        .filter(|nest| nest.get("produced_by").and_then(Value::as_str) == Some(id));
+    match (nests.next(), nests.next()) {
+        (Some(nest), None) => Some(nest),
+        _ => None,
+    }
+}
+
+/// Imports a base feature's own body, `nest`, in place of the design's final body `body`.
+/// Later features then rebuild on it as they did in the source, so none is re-applied; the
+/// body keeps the name later features select it by.
+fn import_history_body(
+    feature: &Value,
+    body: &str,
+    nest: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let id = ctx.id();
+    ctx.builds = true;
+    let name = name(feature)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Base Feature{id}"));
+    let model = ctx.source.ok_or("its source geometry is not available")?;
+    let (part, nest_body) = nested_model(model, nest, &name)
+        .map_err(|why| format!("base feature \"{name}\": its own body {why}"))?;
+    let part = dutchman_core::with_bodies(&part, &[nest_body.as_str()], name.clone())
+        .map_err(|why| format!("base feature \"{name}\": {why}"))?;
+    let text = step::restate(&part, &mut Report::default())
+        .map_err(|err| format!("base feature \"{name}\": {err}"))?;
+    let names = super::faces::import_names(ctx, &[body], Some(&text));
+    let mut mapped = json!({
+        "id": id,
+        "name": name,
+        "type": "import",
+        "suppressed": false,
+        "file": format!("{name}.step"),
+        "step": "",
+        STEP: text,
+    });
+    if let (false, Some(fields)) = (names.is_empty(), mapped.as_object_mut()) {
+        fields.insert("body_names".to_owned(), json!(names));
+    }
+    Ok(mapped)
+}
+
+/// A model holding only the body of a history body `nest`, with `model`'s units and
+/// tolerances, and that body's id.
+fn nested_model(model: &Model, nest: &Value, name: &str) -> Result<(Model, String), String> {
+    let topology = nest
+        .get("topology")
+        .and_then(Value::as_object)
+        .ok_or("is malformed")?;
+    let body = topology.get("body").ok_or("is malformed")?;
+    let body_id = body
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("is malformed")?
+        .to_owned();
+    // Every arena of an empty model, so the document reads back whole.
+    let mut arenas = match serde_json::to_value(cadmpeg_ir::document::Model::default()) {
+        Ok(Value::Object(fields)) => fields,
+        _ => return Err("cannot be read: an empty model does not serialize".to_owned()),
+    };
+    arenas.insert("bodies".to_owned(), json!([body]));
+    for (arena, rows) in topology {
+        if arena != "body" {
+            arenas.insert(arena.clone(), rows.clone());
+        }
+    }
+    // The document's own header (version, depth, source, units, tolerances) without
+    // expanding its model, which can be large.
+    let mut wire = super::wire::only_arenas(
+        &model.ir,
+        &[
+            "ir_version",
+            "decode_depth",
+            "source",
+            "units",
+            "tolerances",
+        ],
+    )
+    .map_err(|err| format!("cannot be read: {err}"))?;
+    if let Some(fields) = wire.as_object_mut() {
+        fields.insert("model".to_owned(), Value::Object(arenas));
+    }
+    let ir = cadmpeg_ir::CadIr::from_json(&wire.to_string())
+        .map_err(|err| format!("cannot be read: {err}"))?;
+    Ok((
+        Model {
+            ir,
+            fidelity: None,
+            name: name.to_owned(),
+            source_file: None,
+            assembly: None,
+            source_step: None,
+        },
+        body_id,
+    ))
 }
 
 /// Whether a later feature re-applies to a body that already holds its result without

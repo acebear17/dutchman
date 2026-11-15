@@ -7157,6 +7157,90 @@ fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
     );
 }
 
+/// The based cube with a later shell of its body, which changes it, and, when `nested`, the
+/// base feature's own body as the source keeps it: a history body with a nest of its own.
+fn based_cube_changed_later(nested: bool) -> Model {
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#9", "ordinal": 9, "name": "Shell",
+            "suppressed": false, "outputs": [body.clone()],
+            "definition": {"definition": "shell", "bodies": cube_body(),
+                "removed_faces": cube_faces(&["top"]), "thickness": 1.0, "outward": false},
+        }));
+    if nested {
+        let mut topology = serde_json::Map::new();
+        for arena in [
+            "regions", "shells", "faces", "loops", "coedges", "edges", "vertices", "surfaces",
+            "curves", "points",
+        ] {
+            let text = serde_json::to_string(&wire["model"][arena]).unwrap();
+            let rows: Value =
+                serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:nest:")).unwrap();
+            if rows.as_array().is_some_and(|rows| !rows.is_empty()) {
+                topology.insert(arena.to_owned(), rows);
+            }
+        }
+        let text = serde_json::to_string(&wire["model"]["bodies"][0]).unwrap();
+        let mut nest_body: Value =
+            serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:nest:")).unwrap();
+        nest_body["id"] = json!("synthetic:history-body:nest#h0");
+        topology.insert("body".to_owned(), nest_body);
+        wire["model"]["history_bodies"] = json!([{
+            "id": "synthetic:history-body:nest#h0",
+            "produced_by": "f3d:model:feature#1",
+            "state": {"ordinal": 1, "identifier": 7},
+            "topology": topology,
+        }]);
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_base_feature_imports_its_own_body_when_the_source_keeps_it() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    // Without the base feature's own body, the shell after it would apply twice.
+    let (_, report) = convert(&based_cube_changed_later(false), &writer);
+    let outcome = report.outcome().unwrap();
+    let base = |outcome: &dutchman_core::Outcome| {
+        outcome
+            .features
+            .iter()
+            .find(|f| f.name.as_deref() == Some("Base Feature 1"))
+            .cloned()
+            .unwrap()
+    };
+    assert!(
+        base(outcome)
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("stored only as the design ends")),
+        "{}",
+        history_line(&report)
+    );
+    // With it, the base feature imports that body and the shell is judged on its own.
+    let (document, report) = convert(&based_cube_changed_later(true), &writer);
+    let outcome = report.outcome().unwrap();
+    let imported = base(outcome);
+    assert_eq!(
+        imported.status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{}",
+        history_line(&report)
+    );
+    assert!(!imported.final_body && !imported.reapplied);
+    let first = &document["features"][0];
+    assert_eq!(first["type"], "import");
+    assert!(first["step_blob"]
+        .as_str()
+        .is_some_and(|blob| blob.starts_with("blobs/")));
+}
+
 #[test]
 fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
     // A second base feature the source proves empty, after the one holding the cube.

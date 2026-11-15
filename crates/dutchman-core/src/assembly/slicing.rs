@@ -35,6 +35,8 @@ impl<'a> Packed<'a> {
             "features",
             "parameters",
             "appearance_bindings",
+            // A base feature's own body, carried into the part with its base feature.
+            "history_bodies",
         ] {
             if let Some(rows) = self.model.get(name) {
                 let rows: Result<Vec<Value>, _> = rows

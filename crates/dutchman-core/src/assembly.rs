@@ -3093,6 +3093,28 @@ fn slice(
             }
         }
     }
+    // A base feature's own body, kept by the source as a history body when a later feature
+    // changes it, comes along with the base feature. Nothing else refers to it.
+    if history {
+        let nests = wire
+            .get("history_bodies")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        for nest in nests {
+            let made_here = nest
+                .get("produced_by")
+                .and_then(Value::as_str)
+                .is_some_and(|feature| keep.contains_key(feature));
+            if let (true, Some((id, _))) = (
+                made_here,
+                nest.get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| rows.get_key_value(id)),
+            ) {
+                keep.insert(id.as_str(), ());
+            }
+        }
+    }
     // A sketch another component builds that a feature of this one uses (designing in the
     // context of an assembly): carry its sketch feature in, with the sketch's plane moved from
     // that component's coordinates into this one's. Repeated using components need a unique
