@@ -206,7 +206,7 @@ The desktop app shows the same. A terminal gets one updating line.
 When stderr is redirected or piped, text mode prints no
 progress, so logs and scripts see only errors and warnings; `--verbose` asks for a line at
 each stage or design completion and a running-step update every five seconds there. `--quiet`
-suppresses progress everywhere. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
+suppresses progress everywhere. With `--json` (after the command, or before it as in `dutchman --json convert …`), stderr contains `dutchman.progress/1` JSON lines; stdout
 stays one final report (or the existing watch-event stream for `watch`). Elapsed time starts
 with each file, including a separate assembly's part files.
 
