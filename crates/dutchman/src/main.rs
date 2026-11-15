@@ -336,10 +336,37 @@ fn json_after_command(args: &mut Vec<OsString>) {
     }
 }
 
+/// The exit status of a command whose output reader went away (128 + SIGPIPE).
+const READER_CLOSED: i32 = 141;
+
+/// Whether a panic message is the standard library's report that stdout's reader went away.
+fn is_closed_stdout(message: &str) -> bool {
+    message.contains("failed printing to stdout") && message.contains("Broken pipe")
+}
+
+/// When whatever reads stdout stops early (`dutchman … | head`), end quietly with the usual
+/// status for that instead of a panic message; every other panic is reported as before.
+fn quiet_when_stdout_closes() {
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if is_closed_stdout(message) {
+            std::process::exit(READER_CLOSED);
+        }
+        report(info);
+    }));
+}
+
 fn main() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
+    quiet_when_stdout_closes();
     let mut args: Vec<OsString> = std::env::args_os().collect();
     json_after_command(&mut args);
     if let Some((index, arg)) = args
@@ -1630,6 +1657,17 @@ mod output_tests {
         let mut args = os(&["dutchman", "--json", "convert", "in.f3d", "out.sc"]);
         json_after_command(&mut args);
         assert!(Cli::try_parse_from(args).is_ok());
+    }
+
+    #[test]
+    fn only_the_closed_stdout_panic_is_quieted() {
+        assert!(is_closed_stdout(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(!is_closed_stdout(
+            "failed printing to stderr: Broken pipe (os error 32)"
+        ));
+        assert!(!is_closed_stdout("index out of bounds"));
     }
 
     #[test]
