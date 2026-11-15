@@ -148,7 +148,7 @@ For a desktop result with losses, **Ask your AI about this file** copies a short
 naming the saved report and the run's log; your assistant reads the bundled guidance from there
 and uses the bundled command line for focused follow-up. No server setup is needed. See [desktop usage](docs/desktop.md#ask-your-ai-about-this-file).
 
-`dutchman --json` prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with conversion, diagnosis, and reporting tools. The core conversion tools return the same reports as their matching `--json` commands:
+`dutchman convert in.f3d out.sc --json` (or `dutchman --json convert …`) prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with conversion, diagnosis, and reporting tools. The core conversion tools return the same reports as their matching `--json` commands:
 
 | Tool | Arguments | Returns |
 |---|---|---|

@@ -315,11 +315,33 @@ enum Command {
     },
 }
 
+/// `--json` is each command's own flag; written before the command (`dutchman --json convert
+/// …`, as the global `--quiet` may be), it is moved after it so every command reads it the
+/// same way.
+fn json_after_command(args: &mut Vec<OsString>) {
+    let Some(command) = args
+        .iter()
+        .skip(1)
+        .position(|arg| !arg.to_string_lossy().starts_with('-'))
+        .map(|at| at + 1)
+    else {
+        return;
+    };
+    if let Some(at) = args
+        .get(1..command)
+        .and_then(|before| before.iter().position(|arg| arg == "--json"))
+    {
+        let flag = args.remove(at + 1);
+        args.push(flag);
+    }
+}
+
 fn main() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
     let mut args: Vec<OsString> = std::env::args_os().collect();
+    json_after_command(&mut args);
     if let Some((index, arg)) = args
         .iter()
         .enumerate()
@@ -1582,6 +1604,33 @@ fn print_losses(losses: &[Value], verbose: bool) {
 #[cfg(test)]
 mod output_tests {
     use super::*;
+
+    #[test]
+    fn json_before_the_command_reads_as_the_commands_own_flag() {
+        let os = |args: &[&str]| args.iter().map(OsString::from).collect::<Vec<_>>();
+        for (given, expected) in [
+            (
+                &["dutchman", "--json", "convert", "in.f3d", "out.sc"][..],
+                &["dutchman", "convert", "in.f3d", "out.sc", "--json"][..],
+            ),
+            (
+                &["dutchman", "--quiet", "--json", "inspect", "in.f3d"][..],
+                &["dutchman", "--quiet", "inspect", "in.f3d", "--json"][..],
+            ),
+            (
+                &["dutchman", "convert", "in.f3d", "--json"][..],
+                &["dutchman", "convert", "in.f3d", "--json"][..],
+            ),
+            (&["dutchman", "--json"][..], &["dutchman", "--json"][..]),
+        ] {
+            let mut args = os(given);
+            json_after_command(&mut args);
+            assert_eq!(args, os(expected), "{given:?}");
+        }
+        let mut args = os(&["dutchman", "--json", "convert", "in.f3d", "out.sc"]);
+        json_after_command(&mut args);
+        assert!(Cli::try_parse_from(args).is_ok());
+    }
 
     #[test]
     fn report_summary_requires_explicit_consent_and_accepts_converted_signature() {
