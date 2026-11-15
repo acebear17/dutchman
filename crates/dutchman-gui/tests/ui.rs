@@ -358,7 +358,7 @@ fn a_small_failed_file_is_dragged_into_the_dm_with_its_folder_open() {
     assert!(harness
         .query_by_label("Drag the file in (its folder is open).")
         .is_some());
-    assert!(harness.query_by_label("Have a STEP export?").is_some());
+    assert!(harness.query_by_label("Please add a STEP export").is_some());
     let (message, opened) = press_dm(&mut harness);
     assert!(opened.starts_with("https://discord.com/users/"), "{opened}");
     assert!(message.contains("Size: 0.1 MB."), "{message}");
@@ -402,14 +402,14 @@ fn the_step_cards_stand_side_by_side_and_wrap_when_narrow() {
     assert!((join.top() - dm.top()).abs() < 1.0 && join.right() < dm.left());
     let (harness, _dir) = failed_card("narrow.f3d", 10, 520.0);
     let join = harness.get_by_label("Join our Discord server").rect();
-    let step = harness.get_by_label("Have a STEP export?").rect();
+    let step = harness.get_by_label("Please add a STEP export").rect();
     assert!(step.top() > join.bottom());
 }
 
 #[test]
 fn a_step_file_is_not_asked_for_a_step_export() {
     let (mut harness, _dir) = failed_card("broken.step", 2048, 760.0);
-    assert!(harness.query_by_label("Have a STEP export?").is_none());
+    assert!(harness.query_by_label("Please add a STEP export").is_none());
     let (message, _) = press_dm(&mut harness);
     assert!(message.contains("STEP: yes."), "{message}");
 }

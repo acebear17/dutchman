@@ -140,9 +140,9 @@ pub const SEND_JOIN_BUTTON: &str = "Open invite";
 pub const SEND_JOIN_NOTE: &str = "Already in? Skip this step.";
 pub const SEND_DM_TITLE: &str = "DM Dutchy";
 pub const SEND_DM_BUTTON: &str = "Copy and open DM";
-pub const SEND_STEP_TITLE: &str = "Have a STEP export?";
-pub const SEND_STEP_TEXT: &str = "If you can export a STEP of the same design, add it too. \
-     It helps us compare, but it isn't required.";
+pub const SEND_STEP_TITLE: &str = "Please add a STEP export";
+pub const SEND_STEP_TEXT: &str = "Strongly recommended: a STEP export of the exact same design \
+     (same version, part positions and state) lets us check every part. It really helps us fix it.";
 pub const SEND_SMALL_PRINT: &str = "Only the Dutchman team sees it. It's never published or \
      used in public tests, and we delete it on request.";
 pub const SEND_COPIED: &str = "The message is copied: paste it into the DM with Dutchy.";

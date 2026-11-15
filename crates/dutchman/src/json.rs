@@ -120,7 +120,7 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
         return None;
     }
     let programs = programs.into_iter().collect::<Vec<_>>().join(", ");
-    Some(format!("Want to help Dutchman read {programs} better? If you have {programs}, you can make a few small test files from short recipes: {FIXTURES_URL} or type /volunteer in our Discord ({DISCORD_URL}). Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord."))
+    Some(format!("Want to help Dutchman read {programs} better? If you have {programs}, you can make a few small test files from short recipes: {FIXTURES_URL} or type /volunteer in our Discord ({DISCORD_URL}). Got a file that converts wrong? Please drop it, with a STEP export of the exact same design, in a DM to Dutchy in our Discord."))
 }
 
 /// One loss of a report as the text reports print it, `LEVEL: SUBJECT: MESSAGE`, with the
@@ -1300,7 +1300,7 @@ mod tests {
                 && !pitch.contains("read STEP")
                 && !pitch.contains("have STEP")
         );
-        assert!(pitch.ends_with("Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord."));
+        assert!(pitch.ends_with("Got a file that converts wrong? Please drop it, with a STEP export of the exact same design, in a DM to Dutchy in our Discord."));
         let refused = json!({"ok": false, "input": {"program": "STEP"}});
         assert!(fixtures_pitch([&refused])
             .unwrap()
