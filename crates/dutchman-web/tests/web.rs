@@ -104,6 +104,9 @@ async fn the_page_offers_the_formats_that_convert() {
         dutchman::BUILD_VERSION
     )));
     assert!(headers.get(header::CONTENT_SECURITY_POLICY).is_some());
+    // A browser sends the page's real Origin on its form post only under this policy;
+    // `no-referrer` makes it send `Origin: null`, which the upload check refuses.
+    assert_eq!(headers[header::REFERRER_POLICY], "same-origin");
 }
 
 #[tokio::test]
