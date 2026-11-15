@@ -163,10 +163,36 @@ host with SELinux, add `:Z` to the volume (`.:/work:Z`).
 Without `solidcraft-cli`, a written history is reported `unverified`
 ([Feature history](history.md)). The published image has none, so its histories stay
 unverified, and a few features that need SolidCraft's replay to find their edges (such as some
-FreeCAD fillets) are not mapped. On x86_64, an image you build yourself can include a
-[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check each
-history. Give its version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`
-(shown beside each file on the release page):
+FreeCAD fillets) are not mapped. Add a
+[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to the image to
+check each history. Give its version and the SHA-256 of its
+`solidcraft-VERSION-linux-x86_64.tar.gz`, or `-linux-aarch64.tar.gz` on ARM64, shown beside
+each file on the release page. The build stops if the download does not match.
+
+To add it to the published image without building Dutchman, save this as `Dockerfile` in an
+empty folder:
+
+```dockerfile
+FROM ghcr.io/dutchman-cad/dutchman:latest
+ARG TARGETARCH
+ARG SOLIDCRAFT_VERSION
+ARG SOLIDCRAFT_SHA256
+USER root
+RUN set -eu; \
+    case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) exit 1 ;; esac; \
+    archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-${arch}.tar.gz"; \
+    apt-get update; apt-get install -y --no-install-recommends curl; \
+    curl -fsSL -o "/tmp/$archive" \
+      "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"; \
+    echo "${SOLIDCRAFT_SHA256}  /tmp/$archive" | sha256sum -c -; \
+    mkdir -p /opt/solidcraft; tar -xzf "/tmp/$archive" -C /opt/solidcraft --strip-components=1; \
+    ln -s /opt/solidcraft/bin/solidcraft-cli /usr/local/bin/solidcraft-cli; \
+    apt-get purge -y curl; apt-get autoremove -y; rm -rf /var/lib/apt/lists/* "/tmp/$archive"
+USER 1000:1000
+```
+
+Then build it in that folder, with the SolidCraft 0.42.0 archive for x86_64 here, and use
+`dutchman` as before:
 
 ```sh
 docker build -t dutchman \
@@ -174,7 +200,9 @@ docker build -t dutchman \
   --build-arg SOLIDCRAFT_SHA256=5c05463c8ea247a49269ba63a0c23a3d6cba4d17ae713c655d2f94872fc4424b .
 ```
 
-The build stops if the download does not match the SHA-256.
+It takes about a minute and adds about 650 MB. Build again after each `docker pull` to update
+Dutchman. An image you [build yourself](#build-it-yourself) from the repository takes the same
+two arguments.
 
 ## What the image leaves out
 
