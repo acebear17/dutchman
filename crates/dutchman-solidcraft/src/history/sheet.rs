@@ -485,11 +485,15 @@ pub(super) fn attached_plate(
         near = near.min(up);
         far = far.max(up);
     }
-    if (near - (radius + thickness)).abs() > TOL {
-        return Err(
-            "a plate that does not start where its 90 degree bend ends is not supported yet"
-                .to_owned(),
-        );
+    // The plate starts where its bend ends, or, as Inventor stores a flange whose height is
+    // measured from where the outer faces meet, at the outer face itself; either way its far
+    // end is the flange's height from the outer face.
+    if (near - (radius + thickness)).abs() > TOL && near.abs() > TOL {
+        return Err(format!(
+            "a plate that does not start where its 90 degree bend ends is not supported yet \
+             (it starts {near:.4} mm from the sheet's outer face, the bend ends at {:.4} mm)",
+            radius + thickness
+        ));
     }
     ctx.consumed_bends.insert(bend_id);
     let id = ctx.id();

@@ -324,7 +324,8 @@ keep the geometry and report the reason. Final-body edges alone never select a f
 An attached plate with its paired bend maps to one SolidCraft edge flange (the bend is reported
 as mapped with its plate) when the plate is one rectangle that spans the whole proven input edge,
 stands square to the sheet at 90 degrees, is flush with the edge's end face, has the sheet's
-thickness and starts where the bend ends; the flange height is the plate's far end measured
+thickness and starts where the bend ends or, as Inventor stores a flange measured from where
+the outer faces meet, at the sheet's outer face; the flange height is the plate's far end measured
 from the sheet's outer face. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no

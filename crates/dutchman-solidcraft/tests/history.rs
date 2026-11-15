@@ -7813,6 +7813,29 @@ fn an_attached_plate_and_its_bend_become_one_edge_flange() {
 }
 
 #[test]
+fn a_plate_starting_at_the_outer_face_is_the_same_edge_flange() {
+    // Inventor stores a flange measured from where the outer faces meet: its plate starts at
+    // the sheet's outer face, not where the bend ends. The flange's height is the same.
+    let (document, report) = convert(
+        &attached_plate(0.0, 2.0, false),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let flange = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "sheet_flange")
+        .unwrap();
+    assert_eq!(flange["height"], "20 mm");
+    assert_eq!(flange["radius"], "2 mm");
+}
+
+#[test]
 fn an_attached_plate_that_is_not_a_plain_edge_flange_is_refused() {
     for (model, reason) in [
         (attached_plate(3.0, 2.0, true), "not one rectangle"),
