@@ -389,6 +389,26 @@ fn sketch_constraints_keep_their_evaluated_dimensions() {
 }
 
 #[test]
+fn a_dimension_named_by_a_parameter_gets_the_parameters_value() {
+    let mut model = model("pad");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"] = json!([{
+        "id": "synthetic:test:parameter#1", "name": "Radius", "expression": "2 mm",
+        "owner": "synthetic:test:feature#1", "value": {"kind": "length", "value": 2.0}
+    }]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mapped = dutchman_solidcraft::mapped_history(&model, &mut Report::default());
+    assert_eq!(
+        mapped.parameter_values.get("Radius").map(String::as_str),
+        Some("2 mm")
+    );
+    let (script, _) = written(&model, FreeCadWriter::new());
+    // FreeCAD's quantity parser takes no names: the macro resolves them from this table.
+    assert!(script.contains("parameter_values = json.loads("));
+    assert!(script.contains("if name in parameter_values:"));
+}
+
+#[test]
 fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
     let part = model("pad");
     let placement = dutchman_core::Placement {

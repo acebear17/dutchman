@@ -68,6 +68,12 @@ impl FreeCadWriter {
         let mapping = dutchman_solidcraft::mapped_history(model, &mut mapping_report);
         let mut features = mapping.outcomes;
         let rows = mapping.features;
+        // This part's parameters, for the dimensions its rows name by parameter.
+        script.push_str("parameter_values = ");
+        script.push_str(&generate::data(&serde_json::json!(
+            mapping.parameter_values
+        ))?);
+        script.push('\n');
         let generated = if self.import_only {
             Err("geometry only was requested".to_owned())
         } else if model.ir.model.bodies.len() != 1 {

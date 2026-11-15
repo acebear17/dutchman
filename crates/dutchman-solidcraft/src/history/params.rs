@@ -647,6 +647,22 @@ fn unit(value: Option<&ParameterValue>) -> &'static str {
 }
 
 /// The value as a SolidCraft expression: lengths in millimetres, angles in degrees.
+/// The value of each parameter `map` writes, by its written name, as a quantity (`"40 mm"`,
+/// `"90 deg"`, a plain number): for a writer whose target cannot evaluate the expressions.
+pub(crate) fn values(model: &dutchman_core::Model) -> BTreeMap<String, String> {
+    let (_, written) = map(model, &mut Report::default());
+    model
+        .ir
+        .model
+        .parameters
+        .iter()
+        .filter_map(|parameter| {
+            let name = written.get(parameter.id.as_str())?;
+            Some((name.clone(), parameter.value.as_ref().and_then(literal)?))
+        })
+        .collect()
+}
+
 fn literal(value: &ParameterValue) -> Option<String> {
     match value {
         ParameterValue::Length(length) => Some(format!("{} mm", length.get())),

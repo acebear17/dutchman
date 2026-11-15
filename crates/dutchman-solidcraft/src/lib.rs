@@ -1461,6 +1461,8 @@ pub struct MappedHistory {
     pub sketches: Vec<Value>,
     /// One mapping result per source feature.
     pub outcomes: Vec<FeatureOutcome>,
+    /// The value of each parameter the features may name, as a quantity, by parameter name.
+    pub parameter_values: std::collections::BTreeMap<String, String>,
 }
 
 /// Maps history without writing a container or running SolidCraft.
@@ -1477,7 +1479,48 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
         }),
         sketches: mapping.references.features,
         outcomes: mapping.features,
+        parameter_values: parameter_values(model, &mapping.references.params),
     }
+}
+
+/// The value of each parameter in `params` (the rows the mapped history names), as a quantity:
+/// a source parameter's solved value, a literal expression as written, and a negated parameter
+/// as the negation of its value.
+fn parameter_values(
+    model: &Model,
+    params: &[serde_json::Value],
+) -> std::collections::BTreeMap<String, String> {
+    let mut values = history::params::values(model);
+    for row in params {
+        let (Some(name), Some(expr)) = (
+            row.get("name").and_then(serde_json::Value::as_str),
+            row.get("expr").and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        if values.contains_key(name) {
+            continue;
+        }
+        let expr = expr.trim();
+        let value = match expr.strip_prefix('-').map(str::trim) {
+            Some(negated) => {
+                values
+                    .get(negated)
+                    .map(|value| match value.trim().strip_prefix('-') {
+                        Some(positive) => positive.trim().to_owned(),
+                        None => format!("-{}", value.trim()),
+                    })
+            }
+            None if expr.starts_with(|c: char| c.is_ascii_digit() || c == '.') => {
+                Some(expr.to_owned())
+            }
+            None => None,
+        };
+        if let Some(value) = value {
+            values.insert(name.to_owned(), value);
+        }
+    }
+    values
 }
 
 /// Restates geometry with the existing guarded STEP encoder, for output adapters that

@@ -283,9 +283,9 @@ The macro makes a Body for each placed part, preserving nested assembly placemen
 uses Dutchman's existing history mapping and timeline order to rebuild planar sketches
 (lines, circles, arcs, ellipses, and supported B-splines), constraints, pads and pockets,
 full-turn or symmetric revolves, unguided lofts, sweeps, simple holes, linear and circular
-feature patterns, spheres, tori, and coils. Numeric feature values are retained. A parameter
-object keeps evaluated scalar values and source expressions as text; source expressions
-are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
+feature patterns, spheres, tori, and coils. Numeric feature values are retained; a dimension
+driven by a parameter is built with that parameter's solved value. A parameter object keeps
+evaluated scalar values and source expressions as text; source expressions are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
 numeric properties; editing those properties does not recompute the coil.
 
 When a later feature cannot be rebuilt, the macro keeps the longest mapped prefix and
