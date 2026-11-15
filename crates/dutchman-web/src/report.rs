@@ -293,22 +293,27 @@ fn card(result: &Value) -> Card {
 }
 
 /// Puts repeated losses of one level and subject on one line, as the command line does: "13
-/// notes: curve is not part of any closed profile loop". The messages must agree after their
-/// last ": ", which is where an upstream note names the entity it is about; others stay apart.
-/// The JSON report keeps every entry.
+/// notes: curve is not part of any closed profile loop". Equal messages always share a line.
+/// A decoder's note (its subject a code such as `f3d/sketch.curve-unprofiled`) names the entity
+/// it is about before its last ": ", so those also share a line when the rest agrees. The JSON
+/// report keeps every entry.
 fn group_losses(losses: Vec<(String, String, String)>) -> Vec<(String, String, String)> {
-    let tail = |message: &str| {
-        message
-            .rsplit_once(": ")
-            .map_or(message, |(_, tail)| tail)
-            .to_owned()
+    let key = |subject: &str, message: &str| {
+        if subject.contains('/') {
+            message
+                .rsplit_once(": ")
+                .map_or(message, |(_, tail)| tail)
+                .to_owned()
+        } else {
+            message.to_owned()
+        }
     };
     let mut rows: Vec<(String, String, String, usize)> = Vec::new();
     for (level, subject, message) in losses {
-        let shared = tail(&message);
+        let shared = key(&subject, &message);
         match rows
             .iter_mut()
-            .find(|row| row.0 == level && row.1 == subject && tail(&row.2) == shared)
+            .find(|row| row.0 == level && row.1 == subject && key(&row.1, &row.2) == shared)
         {
             Some(row) => {
                 row.2 = shared;
@@ -560,7 +565,8 @@ mod tests {
             {"ok": true, "input": {"path": "a.f3d"}, "part_positions": {"total": 0},
              "losses": [entity(137), entity(138), entity(139),
                 {"level": "Info", "subject": "part positions", "message": "0 parts placed"},
-                {"level": "Degraded", "subject": "history", "message": "stopped at Extrude 4"},
+                {"level": "Degraded", "subject": "history", "message": "stopped at Extrude 4: why"},
+                {"level": "Degraded", "subject": "history", "message": "stopped at Extrude 5: why"},
                 {"level": "Info", "subject": "s", "message": "first: one"},
                 {"level": "Info", "subject": "s", "message": "second: two"}]},
             {"ok": false, "input": {"path": "b.f3d"}, "private_report": {"id": "x", "size_bytes": 10},
@@ -570,7 +576,7 @@ mod tests {
                 dutchman::issue::NEW_ISSUE), "kind": "no_geometry"}}
         ]});
         let cards = cards(&report);
-        assert_eq!(cards[0].loss_counts, "4 Degraded, 2 Info");
+        assert_eq!(cards[0].loss_counts, "5 Degraded, 2 Info");
         assert_eq!(
             cards[0].losses,
             vec![
@@ -582,7 +588,12 @@ mod tests {
                 (
                     "Degraded".to_owned(),
                     "history".to_owned(),
-                    "stopped at Extrude 4".to_owned()
+                    "stopped at Extrude 4: why".to_owned()
+                ),
+                (
+                    "Degraded".to_owned(),
+                    "history".to_owned(),
+                    "stopped at Extrude 5: why".to_owned()
                 ),
                 ("Info".to_owned(), "s".to_owned(), "first: one".to_owned()),
                 ("Info".to_owned(), "s".to_owned(), "second: two".to_owned()),
