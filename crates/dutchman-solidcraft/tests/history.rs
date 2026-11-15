@@ -6630,6 +6630,60 @@ fn placed_cylinders_and_cones_become_solidcraft_primitives() {
     );
 }
 
+/// A box (a block) of `size` along its frame's x, y and z from the frame origin, its minimum
+/// corner; `placement` gives the frame as three rows of a 3x4 transform.
+fn block(size: [f64; 3], placement: [[f64; 4]; 3]) -> Value {
+    json!({"definition": "block", "dimensions": size, "placement": placement, "op": "new_body"})
+}
+
+#[test]
+fn boxes_along_the_model_axes_become_solidcraft_boxes() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    // The frame at the origin: the box is the cube itself.
+    let identity = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    let (document, report) = convert(&primitive_history(block([10.0; 3], identity)), &writer);
+    let cube = &document["features"][0];
+    assert_eq!(cube["type"], "box");
+    assert_eq!(cube["corner"], json!([0.0, 0.0, 0.0]));
+    assert_eq!(
+        (
+            cube["length"].clone(),
+            cube["width"].clone(),
+            cube["height"].clone()
+        ),
+        (json!("10 mm"), json!("10 mm"), json!("10 mm"))
+    );
+    assert_eq!(cube["operation"], "new_body");
+    assert!(
+        history_line(&report).contains("1 of 1 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+
+    // RailCore's box frame: its x along model +y and its y along model -x, from (10, 0, 0).
+    // A 2 x 3 x 4 box then spans x 7..10, y 0..2 and z 0..4.
+    let turned = [
+        [0.0, -1.0, 0.0, 10.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    let (document, _) = convert(&primitive_history(block([2.0, 3.0, 4.0], turned)), &writer);
+    let slab = &document["features"][0];
+    assert_eq!(slab["corner"], json!([7.0, 0.0, 0.0]));
+    assert_eq!(
+        (
+            slab["length"].clone(),
+            slab["width"].clone(),
+            slab["height"].clone()
+        ),
+        (json!("3 mm"), json!("2 mm"), json!("4 mm"))
+    );
+}
+
 #[test]
 fn primitives_solidcraft_cannot_place_flatten_the_history() {
     let writer = SolidCraftWriter::new().verification(Verification::Off);
@@ -6639,10 +6693,26 @@ fn primitives_solidcraft_cannot_place_flatten_the_history() {
             "a torus about an axis other than Z is not mapped yet",
         ),
         (
-            json!({"definition": "block", "dimensions": [10.0, 10.0, 10.0],
-                   "placement": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-                   "op": "new_body"}),
-            "cadmpeg does not say whether a box's placement is its corner or its centre",
+            // Turned 45 degrees about z: SolidCraft's box is axis-aligned.
+            block(
+                [10.0, 10.0, 10.0],
+                [
+                    [
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        -std::f64::consts::FRAC_1_SQRT_2,
+                        0.0,
+                        0.0,
+                    ],
+                    [
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        std::f64::consts::FRAC_1_SQRT_2,
+                        0.0,
+                        0.0,
+                    ],
+                    [0.0, 0.0, 1.0, 0.0],
+                ],
+            ),
+            "a box turned off the model axes is not mapped yet",
         ),
     ] {
         let (_, report) = convert(&primitive_history(definition), &writer);
@@ -6658,9 +6728,15 @@ fn primitives_solidcraft_cannot_place_flatten_the_history() {
 fn solidcraft_builds_the_primitives() {
     let Some(cli) = solidcraft() else { return };
     let pi = std::f64::consts::PI;
+    let turned = [
+        [0.0, -1.0, 0.0, 10.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
     for (definition, expected) in [
         (sphere(), 4.0 / 3.0 * pi * 125.0),
         (torus([0.0, 0.0, 1.0]), 2.0 * pi * pi * 10.0 * 4.0),
+        (block([2.0, 3.0, 4.0], turned), 24.0),
     ] {
         let volume = volumes(&cli, &written(&primitive_history(definition)).0);
         assert_eq!(volume.len(), 1);
