@@ -180,6 +180,9 @@ branch until its next release. Links work only while the job's design is kept.
   present, must match the request's `Host` (including its port), or an exact origin in
   `--public-origin`. Have the proxy preserve `Host`, or configure its public origin.
   Requests with neither header, such as curl and scripts, are allowed.
+- The page sends `Referrer-Policy: same-origin`, so a browser's own form post carries the
+  page's real `Origin` while other sites receive no referrer. A proxy that rewrites this
+  header to `no-referrer` makes browsers send `Origin: null`, and every upload is refused.
 - On Unix, new data folders are created with mode 0700. Existing folders must belong to the
   current user, be directories rather than symbolic links, and have no group or other write
   permission. These checks also apply to the default temporary folder.
