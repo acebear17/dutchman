@@ -127,7 +127,7 @@ A design Dutchman can't finish reading is stopped after 20 minutes with no progr
 
 Make a small public test file from a [fixtures recipe](https://dutchman-cad.github.io/fixtures/),
 or send a file that converts wrong, with its STEP export, to Dutchy in
-[Discord](https://discord.gg/yTcseBEdeu). Share only designs you own and can share.
+[Discord](https://discord.gg/yTcseBEdeu). Send only designs you have the right to send; we keep them private and use them only to fix the converter.
 
 Converted cards have a closed **Something wrong? Report this file** section. Expand it
 for **Review and send report** and the private-send steps. The anonymous review shows
