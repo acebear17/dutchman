@@ -257,9 +257,24 @@ pub(crate) fn history_design(
             .filter(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
             .filter_map(|f| f.get("id").cloned())
             .collect();
+        let mut visibility = serde_json::Map::new();
+        visibility.insert("hidden_occurrences".to_owned(), json!([[occurrence]]));
+        visibility.insert("hidden_sketches".to_owned(), json!(sketches));
+        if !history.hidden_bodies.is_empty() {
+            visibility.insert("hidden_bodies".to_owned(), json!(history.hidden_bodies));
+        }
+        fields.insert("visibility".to_owned(), Value::Object(visibility));
+    }
+    // A body the source hides stays hidden when the history rebuilds it.
+    let rebuilt = matches!(live, Live::History | Live::Whole);
+    if let (true, false, Some(fields)) = (
+        rebuilt,
+        history.hidden_bodies.is_empty(),
+        doc.as_object_mut(),
+    ) {
         fields.insert(
             "visibility".to_owned(),
-            json!({"hidden_occurrences": [[occurrence]], "hidden_sketches": sketches}),
+            json!({"hidden_bodies": history.hidden_bodies}),
         );
     }
     let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
@@ -430,10 +445,33 @@ mod history_tests {
             total: 2,
             blends: Vec::new(),
             hidden: Vec::new(),
+            hidden_bodies: Vec::new(),
             unconfirmed: Default::default(),
             stop: None,
             sources: Default::default(),
         }
+    }
+
+    #[test]
+    fn bodies_the_source_hides_stay_hidden_when_the_history_rebuilds_them() {
+        let model = crate::testing::cube();
+        let mut hiding = history();
+        hiding.hidden_bodies = vec!["Body 2".to_owned()];
+        let version = SolidCraftVersion::V0_30_0;
+        for live in [Live::History, Live::Whole, Live::Partial, Live::Unverified] {
+            let doc = history_design(&model, &hiding, "blobs/x.step", live, version);
+            assert_eq!(
+                doc["visibility"]["hidden_bodies"],
+                json!(["Body 2"]),
+                "{live:?}"
+            );
+        }
+        // Suppressed history builds nothing, so there is nothing to hide.
+        let doc = history_design(&model, &hiding, "blobs/x.step", Live::Original, version);
+        assert!(doc.get("visibility").is_none());
+        // Nothing hidden writes no visibility for a live history.
+        let doc = history_design(&model, &history(), "blobs/x.step", Live::History, version);
+        assert!(doc.get("visibility").is_none());
     }
 
     #[test]

@@ -177,6 +177,7 @@ pub(crate) fn write(
         definition_components: BTreeMap::new(),
         written_sketches: BTreeSet::new(),
         unused_sketches: Vec::new(),
+        hidden_bodies: Vec::new(),
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
@@ -295,6 +296,14 @@ pub(crate) fn write(
     if !hidden_occurrences.is_empty() {
         visibility.insert("hidden_occurrences".to_owned(), json!(hidden_occurrences));
     }
+    let hidden_bodies = placed_body_names(
+        &builder.occurrences,
+        &builder.hidden_bodies,
+        MAX_HIDDEN_PATHS,
+    );
+    if !hidden_bodies.is_empty() {
+        visibility.insert("hidden_bodies".to_owned(), json!(hidden_bodies));
+    }
     if let (false, Some(fields)) = (visibility.is_empty(), doc.as_object_mut()) {
         fields.insert("visibility".to_owned(), Value::Object(visibility));
     }
@@ -308,6 +317,102 @@ pub(crate) fn write(
 /// occurrence ids from the root down. A hidden occurrence inside a component placed more than
 /// once is hidden in each placement of it. At most `cap` paths are made; the second value
 /// counts the paths left out past it (at least that many: making them stops at the cap).
+/// The world names SolidCraft gives each placement of the bodies in `bodies` ((component, body
+/// name)): the body's own name at the component's first placement, and `name (A/B)` at any
+/// other, A/B being the occurrence names along its path from the root (SolidCraft's
+/// `Document::world_body_name`). At most `cap` names per body.
+fn placed_body_names(occurrences: &[Value], bodies: &[(u64, String)], cap: usize) -> Vec<String> {
+    struct Occurrence<'a> {
+        id: u64,
+        parent: u64,
+        component: u64,
+        name: &'a str,
+    }
+    let rows: Vec<Occurrence> = occurrences
+        .iter()
+        .filter_map(|o| {
+            Some(Occurrence {
+                id: o.get("id")?.as_u64()?,
+                parent: o.get("parent")?.as_u64()?,
+                component: o.get("component")?.as_u64()?,
+                name: o.get("name").and_then(Value::as_str).unwrap_or(""),
+            })
+        })
+        .collect();
+    // Every path from the root to a placement of `component`, outermost occurrence first.
+    let paths_to = |component: u64| -> Vec<Vec<&Occurrence>> {
+        let mut done = Vec::new();
+        let mut partial: Vec<Vec<&Occurrence>> = rows
+            .iter()
+            .filter(|o| o.component == component)
+            .map(|o| vec![o])
+            .collect();
+        for _ in 0..=rows.len() {
+            let mut next = Vec::new();
+            for path in partial {
+                let Some(parent) = path.first().map(|o| o.parent) else {
+                    continue;
+                };
+                if parent == 0 {
+                    done.push(path);
+                    continue;
+                }
+                for outer in rows.iter().filter(|o| o.component == parent) {
+                    if !path.iter().any(|o| o.id == outer.id) {
+                        let mut longer = vec![outer];
+                        longer.extend(path.iter().copied());
+                        next.push(longer);
+                    }
+                }
+            }
+            if next.is_empty() || done.len() >= cap {
+                break;
+            }
+            partial = next;
+        }
+        done
+    };
+    // The path of a component's first placement: its first occurrence, inside the first
+    // placement of the component that occurrence sits in.
+    let first_path = |component: u64| -> Vec<u64> {
+        let mut path = Vec::new();
+        let mut c = component;
+        for _ in 0..=rows.len() {
+            if c == 0 {
+                break;
+            }
+            let Some(o) = rows.iter().find(|o| o.component == c) else {
+                break;
+            };
+            path.insert(0, o.id);
+            c = o.parent;
+        }
+        path
+    };
+    let mut names = Vec::new();
+    for (component, body) in bodies {
+        let first = first_path(*component);
+        let mut paths = paths_to(*component);
+        paths.truncate(cap);
+        if paths.is_empty() {
+            paths.push(Vec::new());
+        }
+        for path in paths {
+            let ids: Vec<u64> = path.iter().map(|o| o.id).collect();
+            let name = if path.is_empty() || ids == first {
+                body.clone()
+            } else {
+                let label: Vec<&str> = path.iter().map(|o| o.name).collect();
+                format!("{body} ({})", label.join("/"))
+            };
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
 fn hidden_paths(
     occurrences: &[Value],
     placements: &BTreeMap<u64, (u64, [[f64; 4]; 3])>,
@@ -798,6 +903,8 @@ struct Builder<'r> {
     /// Sketches of written histories that no feature is built on or the source hides: they
     /// start hidden.
     unused_sketches: Vec<Value>,
+    /// Bodies written histories rebuild that the source hides: (component, body name).
+    hidden_bodies: Vec<(u64, String)>,
 }
 
 impl Builder<'_> {
@@ -1402,6 +1509,12 @@ impl Builder<'_> {
         history.rename_bodies(name, &mut self.bodies);
         self.mark_written(part);
         self.unused_sketches.extend(history.hidden_sketches());
+        self.hidden_bodies.extend(
+            history
+                .hidden_bodies
+                .iter()
+                .map(|body| (component, body.clone())),
+        );
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
         self.params.append(&mut history.params);
@@ -1639,6 +1752,28 @@ fn prefix(name: &str) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod hidden_tests {
     use super::*;
+
+    #[test]
+    fn a_hidden_rebuilt_body_is_hidden_at_every_placement_by_its_world_name() {
+        // Component 10 is placed twice at the root and holds one placement of component 20.
+        let occurrences = vec![
+            json!({"id": 1, "parent": 0, "component": 10, "name": "A:1"}),
+            json!({"id": 2, "parent": 0, "component": 10, "name": "A:2"}),
+            json!({"id": 3, "parent": 10, "component": 20, "name": "B:1"}),
+        ];
+        let bodies = [(10, "Peg".to_owned()), (20, "Pin".to_owned())];
+        assert_eq!(
+            placed_body_names(&occurrences, &bodies, 10),
+            ["Peg", "Peg (A:2)", "Pin", "Pin (A:2/B:1)"]
+        );
+        // A body of a component nothing places keeps its own name.
+        assert_eq!(
+            placed_body_names(&occurrences, &[(30, "Loose".to_owned())], 10),
+            ["Loose"]
+        );
+        // The cap bounds the names per body.
+        assert_eq!(placed_body_names(&occurrences, &bodies[..1], 1), ["Peg"]);
+    }
 
     #[test]
     fn hidden_paths_past_the_cap_are_counted_as_left_shown() {

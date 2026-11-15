@@ -67,7 +67,7 @@ component or move it into another component (Copy/Paste and Cut/Paste of compone
 placed occurrences carry them. Unresolved connector context and
 assumed motion bindings are reported separately.
 
-Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available and are written marked hidden: SolidCraft 0.42 and newer open them hidden, while older releases show a part with both shown and hidden bodies whole. An Info note gives the count.
+Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available and are written marked hidden: SolidCraft 0.42 and newer open them hidden, while older releases show a part with both shown and hidden bodies whole. An Info note gives the count. A hidden body the editable history rebuilds has no STEP of its own to carry that mark, so it is listed in the design's hidden bodies instead, at every placement of its part, and opens hidden too.
 
 | What the codec gives | What Dutchman does |
 |---|---|

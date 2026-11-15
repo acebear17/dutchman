@@ -12905,3 +12905,43 @@ fn an_inferred_partial_profile_needs_known_bodies_at_its_own_source_state() {
         );
     }
 }
+
+/// The cube with its body hidden in the source (a Fusion body with its eye off), owned by the
+/// design's component so it is a part of the design and not a consumed tool.
+fn hidden_cube_with_history() -> Model {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    wire["model"]["bodies"][0]["visible"] = json!(false);
+    wire["model"]["product_definitions"] =
+        json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body]}]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_body_the_source_hides_stays_hidden_when_the_history_rebuilds_it() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, _) = convert(&hidden_cube_with_history(), &writer);
+    let extrude = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["type"] == "extrude")
+        .unwrap();
+    let name = extrude["body_names"][0].clone();
+    assert_eq!(
+        document["visibility"]["hidden_bodies"],
+        json!([name]),
+        "{document}"
+    );
+
+    // A shown source body is listed nowhere.
+    let (shown, _) = convert(&cube_with_history(10.0, first_profile(), None), &writer);
+    assert!(
+        shown.pointer("/visibility/hidden_bodies").is_none(),
+        "{shown}"
+    );
+}

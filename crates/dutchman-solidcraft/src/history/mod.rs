@@ -90,6 +90,11 @@ pub(crate) struct History {
     pub(crate) blends: Vec<blend::Pending>,
     /// Ids of sketch features whose source sketch is hidden in the source.
     pub(crate) hidden: Vec<u64>,
+    /// Names of the bodies the history builds that the source hides (a Fusion body with its
+    /// eye off). Imported bodies stay hidden through their STEP's INVISIBILITY; a body the
+    /// history rebuilds has no STEP of its own, so the writer lists it in
+    /// `visibility.hidden_bodies` instead.
+    pub(crate) hidden_bodies: Vec<String>,
     /// Ids of features whose source profile is the whole of a sketch with more than one
     /// profile. Which of them it takes isn't stated, so each is kept only when SolidCraft's
     /// check confirms the replay ([`History::first_unconfirmed`]).
@@ -531,6 +536,9 @@ impl History {
             .into_iter()
             .map(|(name, look)| (rename(&name), look))
             .collect();
+        for name in &mut self.hidden_bodies {
+            *name = rename(name);
+        }
         for face in &mut self.face_looks {
             if let Some(fields) = face.as_object_mut() {
                 if let Some(old) = fields.get("body").and_then(Value::as_str) {
@@ -951,6 +959,22 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .count();
 }
 
+/// The names of the bodies the history builds whose source body is hidden, once each.
+fn hidden_bodies(ctx: &Context) -> Vec<String> {
+    let mut names = Vec::new();
+    for (id, name) in &ctx.named_bodies {
+        let hidden = ctx
+            .row("bodies", id)
+            .and_then(|row| row.get("visible"))
+            .and_then(Value::as_bool)
+            == Some(false);
+        if hidden && !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
 fn map_into(
     model: &Model,
     report: &mut Report,
@@ -1243,6 +1267,7 @@ fn map_into(
     if history.stop.is_none() {
         report.append(appearance_report);
     }
+    history.hidden_bodies = hidden_bodies(&ctx);
     history.looks = std::mem::take(&mut ctx.looks);
     history.default_bodies = std::mem::take(&mut ctx.default_bodies);
     history.sheet_rules = ctx
