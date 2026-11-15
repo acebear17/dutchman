@@ -20,7 +20,9 @@ limits and retention settings below still apply.
 that can reach it, without installing Dutchman on each computer. Drop design files, or a `.zip`
 of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
 converted, what was written (editable history or geometry), which features did not map, and its
-losses as Info, Degraded, or Dropped, with a link to download its design. **Download all** gets
+losses as Info, Degraded, or Dropped, with a link to download its design. Repeated losses of
+one kind share a line with their count ("13 notes: …"); the JSON report keeps each one. When
+the server has no `solidcraft-cli`, the page says so once, above the cards. **Download all** gets
 every design in one zip. The page waits for the final results; it does not stream conversion
 stages, design counts, or elapsed-time heartbeats.
 
