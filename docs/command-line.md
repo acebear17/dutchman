@@ -358,6 +358,9 @@ paths it stores, else anywhere under the project folder, the nearest folder abov
 `.ipj`. Give another with `--project DIR`; `convert-all` searches each folder it is given. See
 [Finding the part files](inventor.md#finding-the-part-files).
 
+When whatever reads Dutchman's output stops early (`dutchman … | head`), Dutchman ends quietly
+with status 141, as other command-line tools do, instead of printing a panic.
+
 ## Watch a folder
 
 ```sh
