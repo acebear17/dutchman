@@ -239,7 +239,7 @@ impl Panel {
         ui.label(RichText::new("Your Onshape API keys").strong());
         ui.horizontal_wrapped(|ui| {
             ui.label(
-                "Create them in Onshape under My account > Developer > API keys, with read access.",
+                "Create them in Onshape under My account > Developer > API keys, with two permissions: read your profile information, and read your documents.",
             );
             ui.hyperlink_to("Open the API keys page", KEYS_URL);
         });
