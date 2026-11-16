@@ -205,14 +205,14 @@ mod tests {
 
     fn occurrence(key: usize, path: &str, parent: Value) -> Value {
         json!({"id": format!("synthetic:assembly:occurrence#{key}"), "ordinal": key,
-            "prototype": {"scope": "external", "document": {"resolution": "path", "path": path}, "object": "Default"},
+            "prototype": {"kind": "external", "document": {"kind": "path", "path": path}, "object": "Default"},
             "parent": parent, "name": format!("Part {key}"),
             "transform": [[1,0,0,30 * key],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]})
     }
 
     fn assembly(cube: &Model, rows: Vec<Value>) -> Model {
         let mut wire = serde_json::to_value(&cube.ir).unwrap();
-        wire["model"]["bodies"] = json!([]);
+        wire["geometry"]["bodies"] = json!([]);
         wire["model"]["occurrences"] = json!(rows);
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -285,9 +285,7 @@ mod tests {
         let mut part = cube.clone();
         part.ir.model.configurations.clear();
         part.ir.model.configurations.push(
-            serde_json::from_value(json!({
-                "id":"synthetic:part:configuration#default", "name":"Default", "active":true
-            }))
+            serde_json::from_value(json!({"id": "synthetic:part:configuration#default", "name": "Default", "active": true, "ordinal": 0, "properties": {}, "parameter_overrides": {}, "parameter_values": {}, "feature_states": {}}))
             .unwrap(),
         );
         let reads = Cell::new(0);
@@ -357,22 +355,19 @@ mod tests {
         for (key, target) in [
             (
                 "mesh",
-                json!({"kind":"tessellation", "id":"synthetic:display:tessellation#triangle"}),
+                json!({"kind":"tessellation", "value":"synthetic:display:tessellation#triangle"}),
             ),
             (
                 "group",
-                json!({"kind":"triangle_group", "id":{"tessellation":"synthetic:display:tessellation#triangle", "group":"front"}}),
+                json!({"kind":"triangle_group", "value":{"tessellation":"synthetic:display:tessellation#triangle", "group":"front"}}),
             ),
             (
                 "body",
-                json!({"kind":"body", "id":source.ir.model.bodies[0].id}),
+                json!({"kind":"body", "value":source.ir.geometry.bodies[0].id}),
             ),
         ] {
             source.ir.model.appearance_bindings.push(
-                serde_json::from_value(json!({
-                    "id":format!("synthetic:display:binding#{key}"), "target":target,
-                    "appearance":"synthetic:display:appearance#paint"
-                }))
+                serde_json::from_value(json!({"id": format!("synthetic:display:binding#{key}"), "target": target, "appearance": "synthetic:display:appearance#paint", "channels": {}}))
                 .unwrap(),
             );
         }
@@ -581,7 +576,7 @@ mod tests {
         let cube = cube();
         let mut local = occurrence(1, "unused", json!({"kind":"root"}));
         local["prototype"] =
-            json!({"scope":"local", "definition":"synthetic:assembly:component#holder"});
+            json!({"kind":"local", "definition":"synthetic:assembly:component#holder"});
         let mut source = assembly(
             &cube,
             vec![
@@ -592,11 +587,11 @@ mod tests {
                     json!({"kind":"occurrence", "occurrence":"synthetic:assembly:occurrence#1"}),
                 ),
                 json!({"id":"synthetic:assembly:occurrence#3", "ordinal":3, "parent":{"kind":"root"},
-                "prototype":{"scope":"unresolved"}, "transform":IDENTITY, "scale":[1,1,1]}),
+                "prototype":{"kind":"unresolved"}, "transform":IDENTITY, "scale":[1,1,1]}),
             ],
         );
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        wire["model"]["product_definitions"] = json!([{"id":"synthetic:assembly:component#holder", "kind":"part", "source_name":"Holder", "bodies":[]}]);
+        wire["model"]["product_definitions"] = json!([{"id": "synthetic:assembly:component#holder", "kind": "part", "source_name": "Holder", "bodies": [], "bom_properties": {}, "sketches": []}]);
         source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Pin.SLDPRT"), b"").unwrap();

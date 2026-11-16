@@ -1224,11 +1224,7 @@ mod tests {
     }
 
     fn row(start: (f64, f64), mid: (f64, f64), end: (f64, f64), tangent: (f64, f64)) -> Value {
-        json!({
-            "edge": "e", "interior": point(mid.0, mid.1),
-            "start": point(start.0, start.1), "end": point(end.0, end.1),
-            "tangent": point(tangent.0, tangent.1),
-        })
+        json!({"edge": "e", "interior": point(mid.0, mid.1), "start": point(start.0, start.1), "end": point(end.0, end.1), "tangent": point(tangent.0, tangent.1), "faces": []})
     }
 
     const FRAME: (V3, V3, V3) = ([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
@@ -1376,10 +1372,7 @@ mod tests {
         // A quarter arc of radius 5 about the z axis at height `centre_z`.
         let at = |a: f64| json!({"x": 5.0 * a.cos(), "y": 5.0 * a.sin(), "z": centre_z});
         let mid = (from + to) / 2.0;
-        json!({
-            "edge": "e", "interior": at(mid), "start": at(from), "end": at(to),
-            "tangent": {"x": -mid.sin(), "y": mid.cos(), "z": 0.0},
-        })
+        json!({"edge": "e", "interior": at(mid), "start": at(from), "end": at(to), "tangent": {"x": -mid.sin(), "y": mid.cos(), "z": 0.0}, "faces": []})
     }
 
     #[test]
@@ -1387,10 +1380,7 @@ mod tests {
         let quarter = std::f64::consts::FRAC_PI_2;
         let line = |angle: f64| {
             let at = |z: f64| json!({"x": 5.0 * angle.cos(), "y": 5.0 * angle.sin(), "z": z});
-            json!({
-                "edge": "e", "interior": at(5.0), "start": at(0.0), "end": at(10.0),
-                "tangent": {"x": 0.0, "y": 0.0, "z": 1.0},
-            })
+            json!({"edge": "e", "interior": at(5.0), "start": at(0.0), "end": at(10.0), "tangent": {"x": 0.0, "y": 0.0, "z": 1.0}, "faces": []})
         };
         let rows = [
             arc_row(0.0, 0.0, quarter),

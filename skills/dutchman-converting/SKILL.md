@@ -8,6 +8,10 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
+If a reader supplies only CADIR v11 design history, the final geometry is kept and
+the report says its ordered selections and evaluation states are not mapped yet.
+See `docs/cadir-v11.md` for the pinned reader contract.
+
 On Windows, the per-user MSI installs `dutchman`, `dutchman-mcp`, and `dutchman-gui` under
 `%LOCALAPPDATA%\Programs\Dutchman` and adds that folder to the user PATH. Start a new
 terminal or restart the MCP client after installation. MSI copies update from the app's

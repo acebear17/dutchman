@@ -7,9 +7,19 @@ use serde_json::{json, Value};
 use super::sketch::{Curve, Mapped, Shape, P2};
 use super::Context;
 
+/// V11 operations use either PlanarProfileRef directly or ProfileRef's planar arm.
+/// Spatial arms stay intact so the mapper names the unsupported profile form.
+pub(super) fn planar(reference: &Value) -> &Value {
+    if reference.get("kind").and_then(Value::as_str) == Some("planar") {
+        reference.get("value").unwrap_or(&Value::Null)
+    } else {
+        reference
+    }
+}
+
 /// The sketch a profile reference uses, and the SolidCraft profile selection for it.
 pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String, Value), String> {
-    let profile = profile.ok_or("it has no profile")?;
+    let profile = planar(profile.ok_or("it has no profile")?);
     let kind = profile
         .get("kind")
         .and_then(Value::as_str)
@@ -128,7 +138,7 @@ pub(super) fn whole_region_sketch(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Option<u64> {
-    let reference = super::operation(feature).get("profile")?;
+    let reference = planar(super::operation(feature).get("profile")?);
     match reference.get("kind")?.as_str()? {
         "sketch_profiles" => {}
         "sketch_regions"
@@ -136,7 +146,7 @@ pub(super) fn whole_region_sketch(
                 .pointer("/value/regions")?
                 .as_array()?
                 .iter()
-                .all(|region| region.get("region").and_then(Value::as_str) == Some("loops")) => {}
+                .all(|region| region.get("kind").and_then(Value::as_str) == Some("loops")) => {}
         _ => return None,
     }
     let source = ctx.row("sketches", sketch)?;
@@ -644,7 +654,7 @@ fn regions(
             .get("holes")
             .and_then(Value::as_array)
             .is_some_and(|holes| !holes.is_empty());
-        if region.get("region").and_then(Value::as_str) == Some("loops")
+        if region.get("kind").and_then(Value::as_str) == Some("loops")
             && region.get("outer").and_then(Value::as_u64) == Some(0)
             && !holes
             && profile_count(ctx, sketch) == 1
@@ -660,7 +670,7 @@ fn regions(
     let mut outers = Vec::with_capacity(regions.len());
     let mut trimmed = false;
     for region in regions {
-        match region.get("region").and_then(Value::as_str) {
+        match region.get("kind").and_then(Value::as_str) {
             Some("loops") => {
                 let outer = source_loop(
                     ctx,
@@ -729,7 +739,7 @@ fn regions(
     if trimmed {
         if regions
             .iter()
-            .any(|region| region.get("region").and_then(Value::as_str) == Some("trimmed"))
+            .any(|region| region.get("kind").and_then(Value::as_str) == Some("trimmed"))
         {
             let points = region_points(regions, ctx, sketch, mapped).ok_or(
                 "its trimmed profile boundary does not close unambiguously or has no unambiguous interior point",
@@ -761,7 +771,7 @@ fn expand_enclosing_loops(regions: &[Value], ctx: &Context, sketch: &str) -> Opt
     let index = |value: Option<&Value>| value?.as_u64().and_then(|i| usize::try_from(i).ok());
     let mut wanted: Vec<(usize, Vec<usize>)> = Vec::with_capacity(regions.len());
     for region in regions {
-        if region.get("region").and_then(Value::as_str) != Some("loops") {
+        if region.get("kind").and_then(Value::as_str) != Some("loops") {
             return None;
         }
         let holes = match region.get("holes").and_then(Value::as_array) {
@@ -836,7 +846,7 @@ fn expand_enclosing_loops(regions: &[Value], ctx: &Context, sketch: &str) -> Opt
     out.reverse();
     Some(
         out.into_iter()
-            .map(|(outer, holes)| json!({"region": "loops", "outer": outer, "holes": holes}))
+            .map(|(outer, holes)| json!({"kind": "loops", "outer": outer, "holes": holes}))
             .collect(),
     )
 }
@@ -908,7 +918,7 @@ fn region_points(
     }
     let boundaries = regions
         .iter()
-        .filter(|region| region.get("region").and_then(Value::as_str) == Some("trimmed"))
+        .filter(|region| region.get("kind").and_then(Value::as_str) == Some("trimmed"))
         .map(|region| {
             let holes = region
                 .get("hole_boundaries")
@@ -929,7 +939,7 @@ fn region_points(
         .collect();
     for region in regions
         .iter()
-        .filter(|region| region.get("region").and_then(Value::as_str) == Some("loops"))
+        .filter(|region| region.get("kind").and_then(Value::as_str) == Some("loops"))
     {
         for index in region.get("outer").into_iter().chain(
             region
@@ -963,7 +973,7 @@ fn region_points(
     let mut rings = Vec::with_capacity(regions.len());
     let mut holes = Vec::with_capacity(regions.len());
     for region in regions {
-        match region.get("region").and_then(Value::as_str) {
+        match region.get("kind").and_then(Value::as_str) {
             Some("trimmed") => {
                 rings.push(resolved.next()?);
                 holes.push(
@@ -1033,7 +1043,7 @@ pub(super) fn trimmed_bounds(
     let mut low = f64::INFINITY;
     let mut high = f64::NEG_INFINITY;
     for region in value.get("regions")?.as_array()? {
-        if region.get("region")?.as_str()? != "trimmed" {
+        if region.get("kind")?.as_str()? != "trimmed" {
             return None;
         }
         let (a, b) = super::crossing::trimmed_bounds(
@@ -1225,13 +1235,13 @@ mod tests {
 
     fn model() -> Value {
         json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
-            [{"entity": "circle"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}],
+            [{"entity": "circle", "reversed": false}],
         ]}]})
     }
 
     fn select(model: &Value, profile: Value) -> Result<Value, String> {
-        let mut ctx = Context::new(model);
+        let mut ctx = Context::testing(model);
         ctx.sketches.insert("s".to_owned(), mapped());
         super::profile(Some(&profile), &ctx).map(|(_, selection)| selection)
     }
@@ -1242,7 +1252,7 @@ mod tests {
         let selection = select(
             &model,
             json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "loops", "outer": 0, "holes": [1]}]}}),
+            "regions": [{"kind": "loops", "outer": 0, "holes": [1]}]}}),
         );
         assert_eq!(
             selection.unwrap(),
@@ -1262,7 +1272,7 @@ mod tests {
     fn crossing_circles() -> (Value, Mapped) {
         let circle = |id: &str, center: [f64; 2], radius: f64| {
             json!({"id": id, "sketch": "s", "geometry": {"kind": "circle",
-                "center": {"u": center[0], "v": center[1]}, "radius": radius}})
+                "center": {"u": center[0], "v": center[1]}, "radius": radius}, "endpoint_refs": [], "construction": false})
         };
         let model = json!({
             "sketches": [{"id": "s", "profiles": [], "placement": {"kind": "resolved", "frame": {
@@ -1307,13 +1317,13 @@ mod tests {
         let epsilon = (centre - along).atan2(height);
         let half_pi = std::f64::consts::FRAC_PI_2;
         let pi = std::f64::consts::PI;
-        json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "big", "parameter_range": [delta - half_pi, 3.0 * half_pi - delta]},
-            {"entity": "small", "parameter_range": [epsilon, pi - epsilon], "reversed": true}]})
+        json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "big", "parameter_range": [delta - half_pi, 3.0 * half_pi - delta], "reversed": false},
+            {"entity": "small", "parameter_range": [epsilon, pi - epsilon], "reversed": true}], "hole_boundaries": []})
     }
 
     fn selected(model: &Value, mapped: Mapped, regions: Value) -> Value {
-        let mut ctx = Context::new(model);
+        let mut ctx = Context::testing(model);
         ctx.sketches.insert("s".to_owned(), mapped);
         super::profile(
             Some(&json!({"kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}})),
@@ -1343,10 +1353,8 @@ mod tests {
         model["sketch_entities"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "diameter", "sketch": "s", "geometry": {"kind": "line",
-                "start": {"u": -BIG, "v": 0.0}, "end": {"u": BIG, "v": 0.0}}
-            }));
+            .push(json!({"id": "diameter", "sketch": "s", "geometry": {"kind": "line",
+                "start": {"u": -BIG, "v": 0.0}, "end": {"u": BIG, "v": 0.0}}, "endpoint_refs": [], "construction": false}));
         mapped.shapes.insert(
             "diameter".to_owned(),
             Shape::Curve(Curve {
@@ -1359,9 +1367,9 @@ mod tests {
                 center: None,
             }),
         );
-        let half = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "diameter", "parameter_range": [0.0, 1.0]},
-            {"entity": "big", "parameter_range": [0.0, std::f64::consts::PI]}]});
+        let half = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "diameter", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "big", "parameter_range": [0.0, std::f64::consts::PI], "reversed": false}], "hole_boundaries": []});
         // The diameter alone closes against either semicircle. The notch fixes the reading
         // of their shared circle, so both selected regions have one resolved shape.
         let picked = selected(&model, mapped, json!([notch_region(), half]));
@@ -1371,7 +1379,7 @@ mod tests {
         let (mut model, mut mapped) = crossing_circles();
         model["sketch_entities"].as_array_mut().unwrap().extend([
             json!({"id": "diameter", "sketch": "s", "geometry": {"kind": "line",
-                "start": {"u": -PIN, "v": 0.0}, "end": {"u": PIN, "v": 0.0}}}),
+                "start": {"u": -PIN, "v": 0.0}, "end": {"u": PIN, "v": 0.0}}, "endpoint_refs": [], "construction": false}),
         ]);
         mapped.shapes.insert(
             "diameter".to_owned(),
@@ -1385,9 +1393,9 @@ mod tests {
                 center: None,
             }),
         );
-        let unrelated = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "diameter", "parameter_range": [0.0, 1.0]},
-            {"entity": "pin", "parameter_range": [0.0, std::f64::consts::PI]}]});
+        let unrelated = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "diameter", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "pin", "parameter_range": [0.0, std::f64::consts::PI], "reversed": false}], "hole_boundaries": []});
         let picked = selected(&model, mapped, json!([notch_region(), unrelated]));
         assert_eq!(picked["type"], "points", "{picked}");
         assert!(picked["points"][1][1].as_f64().unwrap() > 0.0, "{picked}");
@@ -1399,10 +1407,8 @@ mod tests {
         model["sketch_entities"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "diameter", "sketch": "s", "geometry": {"kind": "line",
-                    "start": {"u": 0.0, "v": -PIN}, "end": {"u": 0.0, "v": PIN}}
-            }));
+            .push(json!({"id": "diameter", "sketch": "s", "geometry": {"kind": "line",
+                    "start": {"u": 0.0, "v": -PIN}, "end": {"u": 0.0, "v": PIN}}, "endpoint_refs": [], "construction": false}));
         mapped.shapes.insert(
             "diameter".to_owned(),
             Shape::Curve(Curve {
@@ -1416,10 +1422,10 @@ mod tests {
             }),
         );
         let reference = json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "trimmed", "outer_boundary": [
-                {"entity": "diameter", "parameter_range": [0.0, 1.0]},
-                {"entity": "pin", "parameter_range": [-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2]}]}]}});
-        let mut ctx = Context::new(&model);
+            "regions": [{"kind": "trimmed", "outer_boundary": [
+                {"entity": "diameter", "parameter_range": [0.0, 1.0], "reversed": false},
+                {"entity": "pin", "parameter_range": [-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2], "reversed": false}], "hole_boundaries": []}]}});
+        let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), mapped);
         assert!(super::profile(Some(&reference), &ctx)
             .unwrap_err()
@@ -1430,13 +1436,13 @@ mod tests {
     fn overlapping_regions_each_get_a_point_of_their_own() {
         // A region stored with no hole covers the disc selected beside it.
         let (model, mapped) = crossing_circles();
-        let half = |from: f64, to: f64| json!({"entity": "pin", "parameter_range": [from, to]});
+        let half = |from: f64, to: f64| json!({"entity": "pin", "parameter_range": [from, to], "reversed": false});
         let pi = std::f64::consts::PI;
         let selection = selected(
             &model,
             mapped,
-            json!([notch_region(), {"region": "trimmed", "outer_boundary": [
-                half(0.0, pi), half(pi, 2.0 * pi)]}]),
+            json!([notch_region(), {"kind": "trimmed", "outer_boundary": [
+                half(0.0, pi), half(pi, 2.0 * pi)], "hole_boundaries": []}]),
         );
         let at = |n: usize| {
             let p = &selection["points"][n];
@@ -1452,21 +1458,22 @@ mod tests {
     #[test]
     fn an_unclosed_or_unplaced_trimmed_boundary_is_refused() {
         let (model, mapped) = crossing_circles();
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), mapped);
         let profile = json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "trimmed", "outer_boundary": [
-                {"entity": "big", "parameter_range": [0.0, 1.0]},
-                {"entity": "small", "parameter_range": [0.0, 1.0]}]}]}});
+            "regions": [{"kind": "trimmed", "outer_boundary": [
+                {"entity": "big", "parameter_range": [0.0, 1.0], "reversed": false},
+                {"entity": "small", "parameter_range": [0.0, 1.0], "reversed": false}], "hole_boundaries": []}]}});
         assert!(super::profile(Some(&profile), &ctx)
             .unwrap_err()
             .contains("does not close unambiguously"));
-        let boundary = |e: &str| json!({"entity": e, "parameter_range": [0.0, 1.0]});
+        let boundary =
+            |e: &str| json!({"entity": e, "parameter_range": [0.0, 1.0], "reversed": false});
         let selection = select(
             &self::model(),
             json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "trimmed", "outer_boundary": [
-                boundary("e0"), boundary("e1"), boundary("e2"), boundary("e0")]}]}}),
+            "regions": [{"kind": "trimmed", "outer_boundary": [
+                boundary("e0"), boundary("e1"), boundary("e2"), boundary("e0")], "hole_boundaries": []}]}}),
         );
         assert!(selection
             .unwrap_err()
@@ -1493,9 +1500,9 @@ mod tests {
         // The first triangle with a curve inside it, which its loop runs along both ways (as a
         // rectangle with its diagonals drawn comes from Fusion), and the circle.
         let model = json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e3"}, {"entity": "e1"},
-             {"entity": "e3", "reversed": true}, {"entity": "e2"}],
-            [{"entity": "circle"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e3", "reversed": false}, {"entity": "e1", "reversed": false},
+             {"entity": "e3", "reversed": true}, {"entity": "e2", "reversed": false}],
+            [{"entity": "circle", "reversed": false}],
         ]}]});
         let every = select(
             &model,
@@ -1521,7 +1528,7 @@ mod tests {
     #[test]
     fn a_selection_cadmpeg_keeps_native_is_the_profile_of_a_one_profile_sketch() {
         let one = json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}],
         ]}]});
         let native = json!({"kind": "sketch_selection",
             "value": {"sketch": "s", "selections": ["native#1"]}});
@@ -1541,7 +1548,7 @@ mod tests {
         // each ending inside the loop, stays solid and divides it in SolidCraft.
         let line = |id: &str, a: [f64; 2], b: [f64; 2]| {
             json!({"id": id, "sketch": "s", "geometry": {"kind": "line",
-                "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}})
+                "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}, "endpoint_refs": [], "construction": false})
         };
         let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
         let square = |chain: bool| {
@@ -1554,7 +1561,7 @@ mod tests {
             }
             json!({
                 "sketches": [{"id": "s", "profiles": [
-                    [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}, {"entity": "e3"}],
+                    [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}, {"entity": "e3", "reversed": false}],
                 ], "placement": {"kind": "resolved", "frame": {
                     "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
@@ -1578,7 +1585,7 @@ mod tests {
             )
         };
         let pick = |model: &Value| {
-            let mut ctx = Context::new(model);
+            let mut ctx = Context::testing(model);
             ctx.sketches.insert("s".to_owned(), drawing());
             let native = json!({"kind": "sketch_selection",
                 "value": {"sketch": "s", "selections": ["native#1"]}});
@@ -1739,16 +1746,16 @@ mod tests {
     #[test]
     fn the_whole_loop_of_a_one_loop_sketch_is_every_profile() {
         let one_loop = json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}],
         ]}]});
         let whole = json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "loops", "outer": 0, "holes": []}]}});
+            "regions": [{"kind": "loops", "outer": 0, "holes": []}]}});
         assert_eq!(select(&one_loop, whole).unwrap(), json!({"type": "all"}));
         // With two loops in the sketch, the region names its boundary.
         let two = select(
             &model(),
             json!({"kind": "sketch_regions", "value": {"sketch": "s",
-                "regions": [{"region": "loops", "outer": 0}]}}),
+                "regions": [{"kind": "loops", "outer": 0, "holes": []}]}}),
         );
         assert_eq!(two.unwrap()["type"], "whole_boundaries");
     }
@@ -1788,11 +1795,11 @@ mod tests {
         );
         let circle = |id: &str, radius: f64| {
             json!({"id": id, "sketch": "s", "geometry": {"kind": "circle",
-                "center": {"u": 0.0, "v": 0.0}, "radius": radius}})
+                "center": {"u": 0.0, "v": 0.0}, "radius": radius}, "endpoint_refs": [], "construction": false})
         };
         let model = json!({
             "sketches": [{"id": "s", "profiles": [
-                [{"entity": "outer"}], [{"entity": "circle"}],
+                [{"entity": "outer", "reversed": false}], [{"entity": "circle", "reversed": false}],
             ]}],
             "sketch_entities": [circle("outer", 6.0), circle("circle", 3.0)],
         });
@@ -1802,7 +1809,7 @@ mod tests {
     #[test]
     fn concentric_loops_taken_together_are_a_ring() {
         let (model, mapped) = rings();
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), mapped);
         let by_index =
             json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1, 0]}});

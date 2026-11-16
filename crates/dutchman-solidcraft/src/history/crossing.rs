@@ -178,7 +178,7 @@ pub(super) fn trimmed_region_curves(sketch: &Value, features: &[Value]) -> BTree
                         .into_iter()
                         .flatten()
                         .filter(|region| {
-                            region.get("region").and_then(Value::as_str) == Some("trimmed")
+                            region.get("kind").and_then(Value::as_str) == Some("trimmed")
                         })
                     {
                         let rings = region
@@ -235,7 +235,7 @@ fn whole_loop_uses(
     let mut identities = vec![id];
     identities.extend(features.iter().filter_map(|feature| {
         let definition = super::operation(feature);
-        if definition.get("definition").and_then(Value::as_str) != Some("sketch")
+        if super::operation_kind(feature) != Some("sketch")
             || definition.pointer("/sketch/sketch").and_then(Value::as_str) != Some(id)
         {
             return None;
@@ -249,7 +249,7 @@ fn whole_loop_uses(
             continue;
         }
         let definition = super::operation(feature);
-        if definition.get("definition").and_then(Value::as_str) == Some("sketch") {
+        if super::operation_kind(feature) == Some("sketch") {
             continue;
         }
         let found = region_uses(definition, id, &identities, sketch, entities, &mut used, 0)?;
@@ -304,11 +304,7 @@ pub(super) fn stray_curves(
     // A consumer that names a curve itself (a path, a rail, a reference) keeps it real.
     let mut named = BTreeSet::new();
     for feature in features {
-        if super::operation(feature)
-            .get("definition")
-            .and_then(Value::as_str)
-            != Some("sketch")
-        {
+        if super::operation_kind(feature) != Some("sketch") {
             named_in(feature, &strays, &mut named, 0);
         }
     }
@@ -488,7 +484,7 @@ fn region_uses(
         let profiles = sketch.get("profiles")?.as_array()?;
         let mut members = 0usize;
         for region in regions {
-            match region.get("region").and_then(Value::as_str) {
+            match region.get("kind").and_then(Value::as_str) {
                 Some("loops") => {}
                 // A trimmed region is bounded by pieces of its curves: each is used.
                 Some("trimmed") => {
@@ -1762,15 +1758,15 @@ mod tests {
     fn curves_bounding_a_selected_trimmed_region_are_named() {
         let sketch = json!({"id": "s"});
         let features = vec![
-            json!({"id": "e", "definition": {"definition": "extrude", "profile": {
+            json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
                 "kind": "sketch_regions", "value": {"sketch": "s", "regions": [
-                    {"region": "trimmed",
-                     "outer_boundary": [{"entity": "top"}, {"entity": "divider"}],
-                     "hole_boundaries": [[{"entity": "circle"}]]},
-                    {"region": "loops", "outer": 0}]}}}}),
-            json!({"id": "f", "definition": {"definition": "extrude", "profile": {
+                    {"kind": "trimmed",
+                     "outer_boundary": [{"entity": "top", "reversed": false}, {"entity": "divider", "reversed": false}],
+                     "hole_boundaries": [[{"entity": "circle", "reversed": false}]]},
+                    {"kind": "loops", "outer": 0, "holes": []}]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}),
+            json!({"id": "f", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
                 "kind": "sketch_regions", "value": {"sketch": "other", "regions": [
-                    {"region": "trimmed", "outer_boundary": [{"entity": "elsewhere"}]}]}}}}),
+                    {"kind": "trimmed", "outer_boundary": [{"entity": "elsewhere", "reversed": false}], "hole_boundaries": []}]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}),
         ];
         let found = trimmed_region_curves(&sketch, &features);
         assert_eq!(
@@ -1936,8 +1932,8 @@ mod tests {
     }
 
     fn extrude(regions: Value) -> Value {
-        json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}}}})
+        json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0})
     }
 
     fn strays(sketch: &Value, entities: &[Value], features: &[Value]) -> Vec<String> {
@@ -1948,14 +1944,14 @@ mod tests {
     #[test]
     fn a_loop_no_feature_takes_is_construction_with_the_curves_in_no_loop() {
         let (sketch, entities) = square_and_tab();
-        let features = [extrude(json!([{"region": "loops", "outer": 0}]))];
+        let features = [extrude(json!([{"kind": "loops", "outer": 0, "holes": []}]))];
         assert_eq!(
             strays(&sketch, &entities, &features),
             ["t1", "t2", "t3", "t4", "x"]
         );
         // Both loops taken: only the line in no loop.
         let features = [extrude(
-            json!([{"region": "loops", "outer": 0}, {"region": "loops", "outer": 1}]),
+            json!([{"kind": "loops", "outer": 0, "holes": []}, {"kind": "loops", "outer": 1, "holes": []}]),
         )];
         assert_eq!(strays(&sketch, &entities, &features), ["x"]);
     }
@@ -1963,16 +1959,16 @@ mod tests {
     #[test]
     fn a_list_of_loops_counts_its_loops_and_the_whole_sketch_keeps_every_curve() {
         let (sketch, entities) = square_and_tab();
-        let listed = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}});
+        let listed = json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert_eq!(
             strays(&sketch, &entities, &[listed]),
             ["t1", "t2", "t3", "t4", "x"]
         );
         // The whole sketch takes every region its curves bound, which the profile table may
         // not list in full: nothing is inferred.
-        let whole = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch", "value": "s"}}});
+        let whole = json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch", "value": "s"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert!(strays(&sketch, &entities, &[whole]).is_empty());
     }
 
@@ -1981,13 +1977,13 @@ mod tests {
         let (sketch, entities) = square_and_tab();
         // Line ranges are fractions of the line: the tab's three outer sides whole, and the
         // stretch of the square's side between them.
-        let trimmed = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "t1", "parameter_range": [0.0, 1.0]},
-            {"entity": "t2", "parameter_range": [0.0, 1.0]},
-            {"entity": "t3", "parameter_range": [0.0, 1.0]},
-            {"entity": "b", "parameter_range": [0.3, 0.7], "reversed": true}]});
+        let trimmed = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "t3", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "b", "parameter_range": [0.3, 0.7], "reversed": true}], "hole_boundaries": []});
         let features = [
-            extrude(json!([{"region": "loops", "outer": 0}])),
+            extrude(json!([{"kind": "loops", "outer": 0, "holes": []}])),
             extrude(json!([trimmed])),
         ];
         assert_eq!(strays(&sketch, &entities, &features), ["t4", "x"]);
@@ -1995,12 +1991,14 @@ mod tests {
         // it are not named), says nothing about which curves it needs.
         for boundary in [
             json!([]),
-            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 1.0]}]),
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false}]),
         ] {
             let features = [
-                extrude(json!([{"region": "loops", "outer": 0}])),
-                extrude(json!([{"region": "trimmed", "outer_boundary": boundary}])),
+                extrude(json!([{"kind": "loops", "outer": 0, "holes": []}])),
+                extrude(
+                    json!([{"kind": "trimmed", "outer_boundary": boundary, "hole_boundaries": []}]),
+                ),
             ];
             assert!(strays(&sketch, &entities, &features).is_empty());
         }
@@ -2011,9 +2009,9 @@ mod tests {
         let (_, entities) = square_and_tab();
         let refs: Vec<&Value> = entities.iter().collect();
         let tab = |piece: [f64; 2]| {
-            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t3", "parameter_range": [0.0, 1.0]},
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t3", "parameter_range": [0.0, 1.0], "reversed": false},
                    {"entity": "b", "parameter_range": piece, "reversed": true}])
         };
         // 30% to 70% of the square's 10 mm side closes the 4 mm tab.

@@ -3,6 +3,10 @@
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
+If a reader supplies only CADIR v11 design history, the final geometry is kept and
+the report says its ordered selections and evaluation states are not mapped yet.
+See [the port audit](cadir-v11.md) for the pinned reader contract.
+
 ## Ask your assistant about a saved desktop result
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a

@@ -30,8 +30,8 @@ fn appearance_causes_are_counted_without_design_identifiers() {
         let m = &mut wire["model"];
         m["features"] = json!([]);
         m["appearances"] = json!([
-            {"id":"synthetic:private:appearance#red","name":"Private paint","base_color":{"r":1.0,"g":0.0,"b":0.0,"a":1.0}},
-            {"id":"synthetic:private:appearance#blue","base_color":{"r":0.0,"g":0.0,"b":1.0,"a":1.0}}
+            {"id": "synthetic:private:appearance#red", "name": "Private paint", "base_color": {"r":1.0,"g":0.0,"b":0.0,"a":1.0}, "properties": {}, "textures": []},
+            {"id": "synthetic:private:appearance#blue", "base_color": {"r":0.0,"g":0.0,"b":1.0,"a":1.0}, "properties": {}, "textures": []}
         ]);
         let body = m["bodies"][0]["id"].clone();
         let face = m["faces"][0]["id"].clone();
@@ -56,9 +56,9 @@ fn appearance_causes_are_counted_without_design_identifiers() {
             _ => {}
         }
         m["appearance_bindings"] = json!([
-            {"id":"synthetic:private:binding#body","target":{"kind":"body","id":body},"appearance":"synthetic:private:appearance#red"},
-            {"id":"synthetic:private:binding#target","target":target,"appearance":colour},
-            {"id":"synthetic:private:binding#repeat","target":target,"appearance":colour}
+            {"id": "synthetic:private:binding#body", "target": {"kind":"body","value":body}, "appearance": "synthetic:private:appearance#red", "channels": {}},
+            {"id": "synthetic:private:binding#target", "target": target, "appearance": colour, "channels": {}},
+            {"id": "synthetic:private:binding#repeat", "target": target, "appearance": colour, "channels": {}}
         ]);
         model.ir = serde_json::from_value(wire).unwrap();
         let mut report = Report::default();

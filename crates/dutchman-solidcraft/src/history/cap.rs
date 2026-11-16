@@ -60,7 +60,7 @@ fn cap_area(ctx: &Context, end: &End) -> Option<f64> {
         else {
             continue;
         };
-        let geometry = surface.get("geometry")?;
+        let geometry = surface.pointer("/geometry/value")?;
         if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
             continue;
         }
@@ -137,7 +137,7 @@ fn edge_points(ctx: &Context, edge: &Value) -> Option<Vec<V3>> {
     let vertex = |key: &str| -> Option<V3> {
         let point = ctx.row(
             "points",
-            ctx.row("vertices", edge.get(key)?.as_str()?)?
+            ctx.row("vertices", edge.get("ends")?.get(key)?.as_str()?)?
                 .get("point")?
                 .as_str()?,
         )?;
@@ -145,7 +145,7 @@ fn edge_points(ctx: &Context, edge: &Value) -> Option<Vec<V3>> {
     };
     let (start, finish) = (vertex("start")?, vertex("end")?);
     let curve = ctx.row("curves", edge.pointer("/carrier/curve")?.as_str()?)?;
-    let geometry = curve.get("geometry")?;
+    let geometry = curve.pointer("/geometry/value")?;
     match geometry.get("kind")?.as_str()? {
         "line" => Some(vec![start, finish]),
         "circle" => {

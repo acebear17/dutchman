@@ -121,6 +121,9 @@ explicitly for a plugin. Native advisory snapshot rendering remains native-only.
 
 ## Depending on cadmpeg
 
+[CADIR v11](cadir-v11.md) records the pinned wire layout and the homes used by
+conversion, history mapping, and component extraction.
+
 - From cadmpeg's git repository, pinned to one tested commit of its `main` (`cadmpeg-ir`,
   `cadmpeg-core`, `cadmpeg-registry`, the same `rev` for each); Cargo fetches it, so CI and
   `cargo install --git` work without a cadmpeg checkout. docs/releasing.md says when the pin

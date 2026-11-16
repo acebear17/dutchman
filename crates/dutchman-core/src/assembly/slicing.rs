@@ -10,6 +10,8 @@ use serde_json::{value::RawValue, Value};
 #[derive(Deserialize)]
 pub(super) struct Packed<'a> {
     #[serde(borrow)]
+    geometry: BTreeMap<&'a str, Vec<&'a RawValue>>,
+    #[serde(borrow)]
     model: BTreeMap<&'a str, Vec<&'a RawValue>>,
     #[serde(borrow)]
     native: Option<&'a RawValue>,
@@ -36,7 +38,12 @@ impl<'a> Packed<'a> {
             "parameters",
             "appearance_bindings",
         ] {
-            if let Some(rows) = self.model.get(name) {
+            let home = if name == "bodies" {
+                &self.geometry
+            } else {
+                &self.model
+            };
+            if let Some(rows) = home.get(name) {
                 let rows: Result<Vec<Value>, _> = rows
                     .iter()
                     .map(|row| serde_json::from_str(row.get()))
@@ -47,6 +54,10 @@ impl<'a> Packed<'a> {
                 );
             }
         }
+        let bodies = model
+            .remove("bodies")
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+        fields.insert("geometry".to_owned(), serde_json::json!({"bodies": bodies}));
         fields.insert("model".to_owned(), Value::Object(model));
         if let Some(native) = self.native {
             let namespaces: BTreeMap<String, &RawValue> =
@@ -109,6 +120,8 @@ pub(super) struct Entry<'a> {
 pub(super) struct Index<'a> {
     pub document: &'a Value,
     pub rows: BTreeMap<String, Entry<'a>>,
+    /// Unordered children whose v11 wire stores only the parent pointer.
+    pub children: BTreeMap<String, Vec<String>>,
     pub arenas: Vec<&'a str>,
     /// Reverse presentation edges, shared by all component slices. Ids are
     /// complete identities, including instance scope; suffixes are not aliases.
@@ -130,7 +143,7 @@ impl<'a> Index<'a> {
             .into_iter()
             .flatten()
         {
-            if let Some(target) = binding.pointer("/target/id").and_then(Value::as_str) {
+            if let Some(target) = binding.pointer("/target/value").and_then(Value::as_str) {
                 bindings.entry(target).or_default().push(binding);
             }
         }
@@ -159,6 +172,7 @@ impl<'a> Index<'a> {
         Self {
             document,
             rows: BTreeMap::new(),
+            children: BTreeMap::new(),
             arenas: Vec::new(),
             bindings,
             duplicates: Vec::new(),
@@ -176,14 +190,24 @@ impl<'a> Index<'a> {
         #[derive(Deserialize)]
         struct Identity {
             id: Option<String>,
+            body: Option<String>,
+            shell: Option<String>,
         }
         let mut index = Self::new(document);
-        for (&arena, rows) in &source.model {
+        for (&arena, rows) in source.geometry.iter().chain(&source.model) {
             index.arenas.push(arena);
             for (ordinal, row) in rows.iter().enumerate() {
                 let identity: Identity =
                     serde_json::from_str(row.get()).map_err(|err| err.to_string())?;
                 if let Some(id) = identity.id {
+                    let parent = match arena {
+                        "regions" => identity.body,
+                        "faces" => identity.shell,
+                        _ => None,
+                    };
+                    if let Some(parent) = parent {
+                        index.children.entry(parent).or_default().push(id.clone());
+                    }
                     index.insert(
                         id,
                         Entry {
@@ -199,15 +223,31 @@ impl<'a> Index<'a> {
     }
 
     pub fn value(document: &'a Value) -> Result<Self, String> {
-        let wire = document
+        let model = document
             .get("model")
             .and_then(Value::as_object)
             .ok_or("the model is malformed")?;
+        let geometry = document
+            .get("geometry")
+            .and_then(Value::as_object)
+            .ok_or("the geometry is malformed")?;
         let mut index = Self::new(document);
-        for (arena, values) in wire {
+        for (arena, values) in geometry.iter().chain(model) {
             index.arenas.push(arena);
             for (ordinal, row) in values.as_array().into_iter().flatten().enumerate() {
                 if let Some(id) = row.get("id").and_then(Value::as_str) {
+                    let parent = match arena.as_str() {
+                        "regions" => row.get("body"),
+                        "faces" => row.get("shell"),
+                        _ => None,
+                    };
+                    if let Some(parent) = parent.and_then(Value::as_str) {
+                        index
+                            .children
+                            .entry(parent.to_owned())
+                            .or_default()
+                            .push(id.to_owned());
+                    }
                     index.insert(
                         id.to_owned(),
                         Entry {
@@ -234,5 +274,6 @@ pub(super) enum Selected<'a> {
 pub(super) struct Part<'a> {
     #[serde(flatten)]
     pub fields: serde_json::Map<String, Value>,
+    pub geometry: BTreeMap<&'a str, Vec<Selected<'a>>>,
     pub model: BTreeMap<&'a str, Vec<Selected<'a>>>,
 }

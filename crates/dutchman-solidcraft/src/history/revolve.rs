@@ -23,13 +23,14 @@ const IN_PLANE: f64 = 1e-6;
 /// Maps a revolve feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let construction = definition.get("construction").unwrap_or(&Value::Null);
-    if construction.get("state").and_then(Value::as_str) != Some("resolved") {
+    if construction.get("kind").and_then(Value::as_str) != Some("resolved") {
         let missing = construction
-            .get("missing")
+            .pointer("/value/kind")
             .and_then(Value::as_str)
             .unwrap_or("construction");
         return Err(format!("its revolve {missing} is not resolved"));
     }
+    let construction = construction.get("value").unwrap_or(&Value::Null);
     let surface = construction.get("solid").and_then(Value::as_bool) == Some(false);
     match construction.get("face_maker_class").and_then(Value::as_str) {
         // SolidCraft builds profile regions with nested islands, as the bullseye maker does.

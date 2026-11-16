@@ -19,7 +19,7 @@ const WHOLE: f64 = 1e-9;
 /// Maps a sweep feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let shape = definition.get("shape").unwrap_or(&Value::Null);
-    let surface = match shape.get("mode").and_then(Value::as_str) {
+    let surface = match shape.get("kind").and_then(Value::as_str) {
         Some("solid") => false,
         Some("surface") => true,
         _ => return Err("its swept shape is not resolved".to_owned()),

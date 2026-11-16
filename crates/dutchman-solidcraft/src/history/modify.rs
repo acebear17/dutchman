@@ -203,6 +203,15 @@ fn vertices(ctx: &Context, body: &str) -> Option<Vec<[f64; 3]>> {
         }
         let mut refs = Vec::new();
         strings(row, &mut refs);
+        if let Some(id) = row.get("id").and_then(Value::as_str) {
+            for (arena, parent) in [("regions", "body"), ("faces", "shell")] {
+                refs.extend(
+                    ctx.children(arena, parent, id)
+                        .iter()
+                        .filter_map(|row| row.get("id").and_then(Value::as_str)),
+                );
+            }
+        }
         for id in refs {
             if seen.len() >= VERTEX_LIMIT || !seen.insert(id) {
                 continue;

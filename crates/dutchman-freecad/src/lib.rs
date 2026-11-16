@@ -75,10 +75,10 @@ impl FreeCadWriter {
             mapping.parameter_values
         ))?);
         script.push('\n');
-        let multi = model.ir.model.bodies.len() > 1;
+        let multi = model.ir.geometry.bodies.len() > 1;
         let generated = if self.import_only {
             Err("geometry only was requested".to_owned())
-        } else if model.ir.model.bodies.is_empty() {
+        } else if model.ir.geometry.bodies.is_empty() {
             Err("the part has no body to rebuild".to_owned())
         } else if multi {
             rows.as_ref()

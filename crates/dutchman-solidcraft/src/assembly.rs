@@ -746,7 +746,7 @@ fn prepare_part(
     #[cfg(all(debug_assertions, not(target_family = "wasm")))]
     crate::slow_part(&part.name);
     let mut report = Report::default();
-    let step = if part.ir.model.bodies.is_empty() {
+    let step = if part.ir.geometry.bodies.is_empty() {
         None
     } else {
         Some(step::restate(part, &mut report)?)
@@ -791,7 +791,7 @@ fn prepare_parts(
         .map(|part| {
             dutchman_core::parallel::part_peak_bytes(
                 dutchman_core::parts::entity_count(part),
-                part.ir.model.bodies.len(),
+                part.ir.geometry.bodies.len(),
             )
         })
         .collect();
@@ -810,7 +810,7 @@ fn prepare_parts(
     // 16 workers used about 14 MiB more than serial preparation without saving time.
     let light_imports = parts.iter().zip(&peaks).all(|(part, peak)| {
         *peak == (256 << 20)
-            && part.ir.model.bodies.len() <= 1
+            && part.ir.geometry.bodies.len() <= 1
             && (writer.import_only || part.ir.model.features.is_empty())
             && (!writer.sketches || part.ir.model.sketches.is_empty())
     });
@@ -1237,7 +1237,7 @@ impl Builder<'_> {
             }
             None => match &part.assembly {
                 Some(_) => None,
-                None if part.ir.model.bodies.is_empty() => None,
+                None if part.ir.geometry.bodies.is_empty() => None,
                 None => match step::restate(part, self.report) {
                     Ok(step) => Some(step),
                     Err(err) => {
@@ -1676,7 +1676,7 @@ fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
     use cadmpeg_ir::features::{FeatureDefinition, FeatureOperation};
 
     let mut owners = BTreeMap::new();
-    if model.ir.check_decode_depth().is_err() {
+    if model.ir.check_scope().is_err() {
         return owners;
     }
     // Ownership does not require expanding geometry or native payloads. Match the
@@ -1710,18 +1710,13 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
     let listed = "test:model:sketch#listed";
     let feature_only = "test:model:sketch#feature";
     wire["model"]["product_definitions"] = json!([
-        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed]},
-        {"id": owner_b, "kind": "part", "bodies": []}
+        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}},
+        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": []}
     ]);
     wire["model"]["features"] = json!([
-        {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b,
-            "suppressed": false, "outputs": [], "definition": {"definition": "sketch",
-                "sketch": {"space": "planar", "sketch": listed}}},
-        {"id": "test:model:feature#feature", "ordinal": 1, "product_definition": owner_b,
-            "suppressed": false, "outputs": [], "definition": {"definition": "sketch",
-                "sketch": {"space": "planar", "sketch": feature_only}}},
-        {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b,
-            "suppressed": false, "outputs": [], "definition": {"definition": "sketch", "sketch": {"space": "unresolved"}}}
+        {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": listed}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
+        {"id": "test:model:feature#feature", "ordinal": 1, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": feature_only}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
+        {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "unresolved"}}}}, "dependencies": [], "source_properties": {}, "source_content": []}
     ]);
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
