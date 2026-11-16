@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Wrap the wasm32-unknown-unknown build of dutchman-plugin as a SolidCraft plugin package:
-#   scripts/package-plugin.sh <dutchman_plugin.wasm> <output folder>
-# writes <output folder>/dutchman.wasm, plugin.json and dutchman-plugin.zip.
+#   scripts/package-plugin.sh <dutchman_plugin.wasm> <output folder> [<version>]
+# writes <output folder>/dutchman.wasm, plugin.json and dutchman-plugin.zip. With a version
+# (a release's X.Y.Z) the manifest says that version and the zip is dutchman-plugin-<version>.zip,
+# with a .sha256 beside it.
 #
 # SolidCraft links only craft:plugin interfaces. `zip` turns on getrandom's JavaScript
 # backend for every wasm32 target, so the core module also imports a few wasm-bindgen
@@ -9,12 +11,13 @@
 # Each such import is bound to a stub that traps, and the script fails unless the finished
 # component imports craft:plugin interfaces only.
 set -euo pipefail
-if [ $# -ne 2 ]; then
-    echo "usage: $0 <dutchman_plugin.wasm> <output folder>" >&2
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+    echo "usage: $0 <dutchman_plugin.wasm> <output folder> [<version>]" >&2
     exit 2
 fi
 core=$1
 out=$2
+version=${3:-}
 wasm_tools=${WASM_TOOLS:-wasm-tools}
 root=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$out"
@@ -42,7 +45,26 @@ if echo "$imports" | grep -qv '^craft:plugin/'; then
     echo "The component imports something besides craft:plugin interfaces" >&2
     exit 1
 fi
-cp "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json"
-rm -f "$out/dutchman-plugin.zip"
-(cd "$out" && zip -q -X dutchman-plugin.zip plugin.json dutchman.wasm)
+zip_name=dutchman-plugin.zip
+if [ -n "$version" ]; then
+    case "$version" in
+        *[!0-9.]* | .* | *. | *..*) echo "The version must look like X.Y.Z, not $version" >&2; exit 2 ;;
+    esac
+    python3 - "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json" "$version" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+manifest["version"] = sys.argv[3]
+with open(sys.argv[2], "w") as f:
+    json.dump(manifest, f, indent=2)
+    f.write("\n")
+PY
+    zip_name=dutchman-plugin-$version.zip
+else
+    cp "$root/crates/dutchman-plugin/plugin.json" "$out/plugin.json"
+fi
+rm -f "$out/$zip_name"
+(cd "$out" && zip -q -X "$zip_name" plugin.json dutchman.wasm)
+if [ -n "$version" ]; then
+    (cd "$out" && sha256sum "$zip_name" > "$zip_name.sha256")
+fi
 wc -c "$out/dutchman.wasm"
