@@ -249,7 +249,14 @@ their union, and the point lies outside both.
 A feature that takes a whole sketch, or a list of its profile loops, treats loops inside loops
 as holes (even-odd nesting), as Fusion does: two concentric circles are a ring, not a disc. The
 selection is written as whole boundaries (outer loop and its holes). Loops that touch or cross
-keep the previous selection.
+keep the previous selection. When a selection names a loop together with loops inside it, as
+well as that whole loop on its own, the whole loop is not a region of the sketch (the loops
+inside divide it), so it is written as the ring around them plus the disc of each: the same
+material, in regions SolidCraft knows.
+
+A cut or intersection that comes before any feature builds a body has nothing to cut, so it is
+not mapped: the report says so ("it cuts or intersects a body, and no earlier feature in the
+history builds one") instead of SolidCraft refusing the history when it replays it.
 
 A selection that takes several separate regions of a sketch can arrive as one loop that crosses
 itself (four openings around two crossing ribs given as one loop that follows both diagonals).
