@@ -330,6 +330,8 @@ the initial geometry; check geometry again after changing a parameter.
 
 ## Sheet metal
 
+You don't need to mark sheet-metal parts: Dutchman reads from the Inventor file whether a part is sheet metal, and converts it the same way as any other part.
+
 Sheet-metal history includes base flanges (not of symmetric thickness) and full-edge flanges
 on an unchanged rectangular base sheet. An edge flange needs its own CADIR input topology
 with edge midpoint, tangent, and end vertices; each midpoint must identify exactly one edge
