@@ -27,14 +27,42 @@ use std::{
 use types::{FieldFailure, PluginError};
 use wasmtime::{
     component::{Component, Linker},
-    Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
+    Config, Engine, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder,
 };
+
+/// The store's limits, remembering the largest linear memory the guest asked for.
+struct Peak {
+    limits: StoreLimits,
+    bytes: usize,
+}
+impl ResourceLimiter for Peak {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let allowed = self.limits.memory_growing(current, desired, maximum)?;
+        if allowed {
+            self.bytes = self.bytes.max(desired);
+        }
+        Ok(allowed)
+    }
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.limits.table_growing(current, desired, maximum)
+    }
+}
 
 struct Host {
     root: PathBuf,
     main: Vec<u8>,
     output: Vec<u8>,
-    limits: StoreLimits,
+    limits: Peak,
     read: usize,
     calls: usize,
     progress: Vec<f32>,
@@ -172,9 +200,12 @@ fn host(root: &Path, main: Vec<u8>) -> Host {
         root: root.into(),
         main,
         output: Vec::new(),
-        limits: StoreLimitsBuilder::new()
-            .memory_size(1024 * 1024 * 1024)
-            .build(),
+        limits: Peak {
+            limits: StoreLimitsBuilder::new()
+                .memory_size(1024 * 1024 * 1024)
+                .build(),
+            bytes: 0,
+        },
         read: 0,
         calls: 0,
         progress: Vec::new(),
@@ -307,6 +338,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let folder = source.parent().unwrap();
         let name = source.file_name().unwrap().to_str().unwrap();
         let bytes = std::fs::read(&source)?;
+        let source_len = bytes.len();
         let mut store = Store::new(&engine, host(folder, bytes.clone()));
         store.limiter(|host| &mut host.limits);
         store.set_fuel(50_000_000_000)?;
@@ -407,6 +439,11 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         eprintln!(
             "{fixture}: matched CLI document and body payloads ({} streamed reads): {summary}",
             store.data().calls
+        );
+        eprintln!(
+            "peak_guest_memory fixture={fixture} input_bytes={} peak_mib={:.1}",
+            source_len,
+            store.data().limits.bytes as f64 / 1048576.0
         );
     }
     Ok(())
