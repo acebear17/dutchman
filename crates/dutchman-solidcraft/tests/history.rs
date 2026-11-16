@@ -2378,19 +2378,34 @@ fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
         for op in ["join", "cut", "intersect"] {
             for reversed in [false, true] {
                 for left in [false, true] {
-                    let model = helical_history(|d| {
+                    let mut model = helical_history(|d| {
                         d["op"] = json!(op);
                         d["construction"]["law"] = json!(law);
                         d["construction"]["reversed"] = json!(reversed);
                         d["construction"]["left_handed"] = json!(left);
                     });
+                    // A cut or intersection works on a body an earlier feature built.
+                    let first = usize::from(op != "join");
+                    if first == 1 {
+                        let base = serde_json::to_value(
+                            &cube_with_history(10.0, first_profile(), None).ir,
+                        )
+                        .unwrap();
+                        let mut wire = serde_json::to_value(&model.ir).unwrap();
+                        let features = wire["model"]["features"].as_array_mut().unwrap();
+                        features[1]["ordinal"] = json!(2);
+                        let mut block = base["model"]["features"][1].clone();
+                        block["id"] = json!("f3d:model:feature#block");
+                        features.insert(1, block);
+                        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                    }
                     let (document, report) = convert(
                         &model,
                         &SolidCraftWriter::new()
                             .verification(Verification::Off)
                             .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
                     );
-                    let coil = &document["features"][1];
+                    let coil = &document["features"][1 + first];
                     assert!(history_line(&report).contains("target SolidCraft 0.25"));
                     assert_eq!(coil["type"], "coil");
                     assert_eq!(coil["sketch"], document["features"][0]["id"]);
@@ -13019,5 +13034,73 @@ fn a_body_the_source_hides_stays_hidden_when_the_history_rebuilds_it() {
     assert!(
         shown.pointer("/visibility/hidden_bodies").is_none(),
         "{shown}"
+    );
+}
+
+/// The 10 mm square with a 4 mm circle centred in it, both taken as whole loops the way a
+/// source lists the ring and the disc inside it, and the whole square besides.
+fn square_and_disc_history() -> Model {
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH, "regions": [
+        {"region": "loops", "outer": 0, "holes": [1]},
+        {"region": "loops", "outer": 1},
+        {"region": "loops", "outer": 0},
+    ]}});
+    cube_with_circle_profile(10.0, profile, 2.0)
+}
+
+#[test]
+fn a_loop_around_another_loop_the_selection_names_is_a_ring_and_a_disc() {
+    let (document, report) = convert(
+        &square_and_disc_history(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let profiles = document["features"][1]["profiles"]["profiles"]
+        .as_array()
+        .unwrap();
+    // The square alone is not a region of the sketch: SolidCraft would refuse it.
+    assert_eq!(profiles.len(), 2, "{profiles:?}");
+    let holes: Vec<usize> = profiles
+        .iter()
+        .map(|profile| profile["holes"].as_array().unwrap().len())
+        .collect();
+    assert!(holes.contains(&0) && holes.contains(&1), "{profiles:?}");
+}
+
+#[test]
+fn solidcraft_replays_a_loop_around_another_loop_the_selection_names() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&square_and_disc_history()).0);
+    assert!(!volume.is_empty());
+    // The ring and the disc take the whole square: 10 x 10 x 10.
+    let total: f64 = volume.iter().sum();
+    assert!((total - 1000.0).abs() < 1.0, "{volume:?}");
+}
+
+#[test]
+fn a_cut_before_any_feature_builds_a_body_is_refused_when_mapping() {
+    let mut model = cube_with_history(10.0, json!({"kind": "sketch", "value": SKETCH}), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["op"] = json!("cut");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        !document["features"]
+            .as_array()
+            .map(|features| features.iter().any(|feature| feature["operation"] == "cut"))
+            .unwrap_or(false),
+        "{document}"
+    );
+    assert!(
+        history_line(&report).contains("no earlier feature in the history builds one"),
+        "{}",
+        history_line(&report)
     );
 }

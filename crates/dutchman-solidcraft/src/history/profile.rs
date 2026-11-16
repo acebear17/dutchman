@@ -654,6 +654,8 @@ fn regions(
             return Ok(json!({"type": "all"}));
         }
     }
+    let expanded = expand_enclosing_loops(regions, ctx, sketch);
+    let regions = expanded.as_deref().unwrap_or(regions);
     let mut whole = Vec::with_capacity(regions.len());
     let mut outers = Vec::with_capacity(regions.len());
     let mut trimmed = false;
@@ -748,6 +750,95 @@ fn regions(
             json!({"type": "whole_boundaries", "profiles": whole}),
         ))
     }
+}
+
+/// A selection of whole-loop regions where a hole-less region encloses another loop the
+/// selection names: the enclosing loop alone is not a region of the sketch (the loop inside
+/// divides it into a ring and that loop's own disc), and SolidCraft refuses it as an unknown
+/// profile. It is the ring around the loops directly inside it plus the disc of each, which
+/// take the same material. `None` when nothing needs that, or a region is not a whole loop.
+fn expand_enclosing_loops(regions: &[Value], ctx: &Context, sketch: &str) -> Option<Vec<Value>> {
+    let index = |value: Option<&Value>| value?.as_u64().and_then(|i| usize::try_from(i).ok());
+    let mut wanted: Vec<(usize, Vec<usize>)> = Vec::with_capacity(regions.len());
+    for region in regions {
+        if region.get("region").and_then(Value::as_str) != Some("loops") {
+            return None;
+        }
+        let holes = match region.get("holes").and_then(Value::as_array) {
+            Some(holes) => holes
+                .iter()
+                .map(|hole| index(Some(hole)))
+                .collect::<Option<Vec<_>>>()?,
+            None => Vec::new(),
+        };
+        wanted.push((index(region.get("outer"))?, holes));
+    }
+    let row = ctx.row("sketches", sketch)?;
+    let entities = sketch_entities(ctx, sketch);
+    let mut loops: Vec<usize> = wanted
+        .iter()
+        .flat_map(|(outer, holes)| std::iter::once(*outer).chain(holes.iter().copied()))
+        .collect();
+    loops.sort_unstable();
+    loops.dedup();
+    if loops.len() < 2 {
+        return None;
+    }
+    // Which selected loops lie directly inside each loop.
+    let inside = |outer: usize| -> Vec<usize> {
+        let within: Vec<usize> = loops
+            .iter()
+            .copied()
+            .filter(|&other| {
+                other != outer
+                    && super::crossing::nesting(row, &entities, &[outer, other])
+                        .is_some_and(|nest| nest.contains(&(outer, vec![other])))
+            })
+            .collect();
+        within
+            .iter()
+            .copied()
+            .filter(|&child| {
+                !within.iter().any(|&between| {
+                    between != child
+                        && super::crossing::nesting(row, &entities, &[between, child])
+                            .is_some_and(|nest| nest.contains(&(between, vec![child])))
+                })
+            })
+            .collect()
+    };
+    let mut out: Vec<(usize, Vec<usize>)> = Vec::with_capacity(wanted.len());
+    let mut changed = false;
+    let mut pending = wanted;
+    // Each step moves to loops strictly inside the one before, so this ends.
+    while let Some((outer, holes)) = pending.pop() {
+        let children = if holes.is_empty() {
+            inside(outer)
+        } else {
+            Vec::new()
+        };
+        if children.is_empty() {
+            if !out.contains(&(outer, holes.clone())) {
+                out.push((outer, holes));
+            }
+            continue;
+        }
+        changed = true;
+        pending.extend(children.iter().map(|&child| (child, Vec::new())));
+        let ring = (outer, children);
+        if !out.contains(&ring) {
+            out.push(ring);
+        }
+    }
+    if !changed {
+        return None;
+    }
+    out.reverse();
+    Some(
+        out.into_iter()
+            .map(|(outer, holes)| json!({"region": "loops", "outer": outer, "holes": holes}))
+            .collect(),
+    )
 }
 
 /// Whether a loop of these whole-loop regions (outer or hole) runs along part of a line of the

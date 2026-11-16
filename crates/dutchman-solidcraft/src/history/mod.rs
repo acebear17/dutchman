@@ -959,6 +959,14 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .count();
 }
 
+/// Whether a mapped feature cuts from or intersects the bodies before it.
+fn cuts_a_body(feature: &Value) -> bool {
+    matches!(
+        feature.get("operation").and_then(Value::as_str),
+        Some("cut" | "intersect")
+    ) && feature.get("type").and_then(Value::as_str) != Some("sketch")
+}
+
 /// The names of the bodies the history builds whose source body is hidden, once each.
 fn hidden_bodies(ctx: &Context) -> Vec<String> {
     let mut names = Vec::new();
@@ -1111,6 +1119,15 @@ fn map_into(
         );
         let mapped = inferred
             .unwrap_or_else(|| map_feature(feature, &mut ctx, report, &mut history.features));
+        // A cut or intersection with no body before it: SolidCraft has nothing to cut and
+        // refuses the feature when it replays.
+        let mapped = mapped.and_then(|mapped| match &mapped {
+            Mapped::Feature(built) if !builds && cuts_a_body(built) => Err(
+                "it cuts or intersects a body, and no earlier feature in the history builds one"
+                    .to_owned(),
+            ),
+            _ => Ok(mapped),
+        });
         match mapped {
             Ok(Mapped::Nothing) => {
                 history.mapped += 1;
