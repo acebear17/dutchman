@@ -89,8 +89,11 @@ the current folder. An existing output is replaced only after a successful fetch
 ### Connect your Onshape account
 
 In the Dutchman app, choose **Connect Onshape**. Create API keys in Onshape under
-My account > Developer > API keys (read access is enough), paste the access key and
-the secret key (the secret is masked), and choose **Test connection**, then **Save**.
+My account > Developer > API keys > Create new API key, and tick exactly two permissions:
+**Application can read your profile information** (the connection test reads your profile)
+and **Application can read your documents**. Leave write, delete, purchase and share unticked.
+Paste the access key and the secret key (the secret is masked), and choose
+**Test connection**, then **Save**.
 **Disconnect** forgets them. Below the keys, paste a link to one of your Part Studios
 and choose **Open from Onshape** to fetch it and convert it to a `.sc` in one step.
 

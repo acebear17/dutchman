@@ -1701,7 +1701,7 @@ fn onshape_login() -> ExitCode {
     let mut err = std::io::stderr();
     let _ = writeln!(
         err,
-        "Create API keys in Onshape: My account > Developer > API keys (read access is enough)."
+        "Create API keys in Onshape: My account > Developer > API keys, ticking read your profile information and read your documents."
     );
     let _ = write!(err, "Access key: ");
     let _ = err.flush();

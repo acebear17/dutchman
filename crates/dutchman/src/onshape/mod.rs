@@ -210,7 +210,7 @@ pub fn session_user<C: HttpClient>(client: &mut C, credentials: &Credentials) ->
         .request("GET", &format!("{API}/users/sessioninfo"), "", b"")
         .map_err(|mut error| {
             if error.kind == ErrorKind::Auth {
-                error.message = "Onshape did not accept these keys; copy both in full from Onshape's developer portal, with read access, and retry.";
+                error.message = "Onshape did not accept these keys; copy both in full from Onshape's developer portal, with the read profile and read documents permissions, and retry.";
             }
             error
         })?;
