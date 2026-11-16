@@ -1,5 +1,19 @@
 # Dutchman Web
 
+`dutchman-web` is Dutchman as a web page: run it on one server, and convert from any browser
+that can reach it, without installing Dutchman on each computer. Drop design files, or a `.zip`
+of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
+converted, what was written (editable history or geometry), which features did not map, and its
+losses as Info, Degraded, or Dropped, with a link to download its design. Repeated losses of
+one kind share a line with their count ("13 notes: …"); the JSON report keeps each one. When
+the server has no `solidcraft-cli`, the page says so once, above the cards. **Download all** gets
+every design in one zip. The page waits for the final results; it does not stream conversion
+stages, design counts, or elapsed-time heartbeats.
+
+It converts exactly as `dutchman convert-all` does, each file in a process of its own, stopped
+when it runs past its time or memory limit. Uploads and designs stay on the server, and are
+deleted after a while (an hour by default).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning
@@ -16,27 +30,17 @@ STEP export beside a native file is kept as a fallback if native conversion fail
 The JSON result includes a plain `plan` describing the selected files. The web upload
 limits and retention settings below still apply.
 
-`dutchman-web` is Dutchman as a web page: run it on one server, and convert from any browser
-that can reach it, without installing Dutchman on each computer. Drop design files, or a `.zip`
-of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
-converted, what was written (editable history or geometry), which features did not map, and its
-losses as Info, Degraded, or Dropped, with a link to download its design. Repeated losses of
-one kind share a line with their count ("13 notes: …"); the JSON report keeps each one. When
-the server has no `solidcraft-cli`, the page says so once, above the cards. **Download all** gets
-every design in one zip. The page waits for the final results; it does not stream conversion
-stages, design counts, or elapsed-time heartbeats.
-
-It converts exactly as `dutchman convert-all` does, each file in a process of its own, stopped
-when it runs past its time or memory limit. Uploads and designs stay on the server, and are
-deleted after a while (an hour by default).
-
 ## Run it
 
-In Docker, from a checkout of the repository ([Docker](docker.md) has more):
+In Docker, from a checkout of the repository ([Docker](docker.md) has more), with the
+published image pulled and tagged `dutchman` as [Docker](docker.md#pull-the-published-image)
+shows:
 
 ```sh
-DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d --build
+DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d
 ```
+
+Add `--build` only to build the image from the checkout instead, which takes much longer.
 
 Then open `http://<server>:8080` and sign in as `dutchman` with that password.
 
@@ -167,9 +171,9 @@ authentication; the browser reuses those credentials when SolidCraft fetches the
 the same origin.
 
 The address must start with exactly one `/`, without backslashes, control characters, a
-query or a fragment; anything else stops `dutchman-web` at startup. This needs SolidCraft
-[#6670](https://github.com/tangency-labs/solidcraft/pull/6670): use a build from its main
-branch until its next release. Links work only while the job's design is kept.
+query or a fragment; anything else stops `dutchman-web` at startup. This needs SolidCraft 0.24.0
+or newer; the published `ghcr.io/tangency-labs/solidcraft-web` image is. Links work only
+while the job's design is kept.
 
 ## Keep it safe
 
