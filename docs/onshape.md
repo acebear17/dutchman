@@ -89,7 +89,7 @@ the current folder. An existing output is replaced only after a successful fetch
 ### Connect your Onshape account
 
 In the Dutchman app, choose **Connect Onshape**. Create API keys in Onshape under
-My account > Developer > API keys > Create new API key, and tick exactly two permissions:
+My account > Developer > API keys > Create new API key. Name it `dutchman` (any name works) and tick exactly two permissions:
 **Application can read your profile information** (the connection test reads your profile)
 and **Application can read your documents**. Leave write, delete, purchase and share unticked.
 Paste the access key and the secret key (the secret is masked), and choose
