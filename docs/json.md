@@ -1,5 +1,9 @@
 # Machine-readable reports
 
+The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
+downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
+flags, MCP tools, or report fields.
+
 Onshape bundles add the format identifier `onshape_bundle` and extension
 `onshape-bundle` to the existing format fields and listings. Existing report
 schemas and fields are unchanged. Reader losses use

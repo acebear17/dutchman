@@ -56,6 +56,31 @@ If a run was cut off, the next launch says **The last run didn't finish.**, with
 log folder. **Dismiss** keeps that run's notice away after a relaunch; another unfinished run
 shows its own.
 
+## Paste files and links
+
+With no text field focused, press ⌘V on macOS or Ctrl+V on Windows/Linux anywhere
+in the main window. Dutchman handles these clipboard contents in order:
+
+- Files or folders copied in Finder, Explorer, or your file manager: queued just like dropped files.
+- A local path, or several paths on separate lines (including `file://` URLs): queued the same way.
+- An Onshape Part Studio link: fetched and converted using your saved keys. If you have not
+  connected yet, the connection dialog keeps the link and continues after **Save**.
+- A direct HTTPS link whose filename has a supported CAD input extension. GitHub `blob`
+  links are changed to `raw.githubusercontent.com` links. Dutchman asks **Download <name>
+  (<size>) from <host>?** before downloading; when the host does not supply a size,
+  it says **size unknown**. Downloads are limited to 2 GB, follow at most five HTTPS
+  redirects, and send no cookies or credentials. Progress and conversion results appear
+  in the main job list. Downloads stay in a temporary folder for inspection and retry
+  until the app closes. Choose an output folder if one has not been selected.
+
+Other links show **Dutchman can't open this link. Download the file and drop it here.**
+Fusion and Google Drive share links are not supported yet. Download those files first.
+Pasting into a focused text field edits that field normally.
+
+Once connected, **Onshape connected ✓** opens the account dialog, and the drop area
+also offers **or paste an Onshape link** and **Open**. See
+[connecting your Onshape account](onshape.md#connect-your-onshape-account).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

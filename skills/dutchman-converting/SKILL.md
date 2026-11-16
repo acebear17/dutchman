@@ -894,3 +894,8 @@ version link”. Do not retry indefinitely or raise the budget automatically. Bo
 export polling/downloads, and head checks share `max_calls`. Successful manifests contain
 `consistent: true` and `file_sources` with a path kind and microversion for each file.
 See `docs/onshape.md` for the exact consistency, cache, and reference behavior.
+
+In the desktop app, paste copied files or paths with no text field focused to queue
+them like dropped files. Onshape links continue through Connect Onshape when needed;
+Save closes setup and keeps the link. Direct HTTPS CAD file links (including GitHub blob
+links) ask before downloading, with a 2 GB cap. See `docs/desktop.md` and `docs/onshape.md`.

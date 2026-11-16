@@ -1,5 +1,9 @@
 # Getting started
 
+The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
+downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
+flags, MCP tools, or report fields.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
