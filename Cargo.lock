@@ -1457,6 +1457,7 @@ dependencies = [
 name = "dutchman-gui"
 version = "0.2.10"
 dependencies = [
+ "arboard",
  "dutchman",
  "dutchman-core",
  "dutchman-solidcraft",
@@ -1464,6 +1465,7 @@ dependencies = [
  "egui_extras",
  "egui_kittest",
  "image",
+ "percent-encoding",
  "pollster",
  "rfd",
  "ron 0.12.3",
@@ -1473,6 +1475,8 @@ dependencies = [
  "sha2",
  "tempfile",
  "ureq",
+ "url",
+ "winit",
  "zip",
 ]
 

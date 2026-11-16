@@ -109,6 +109,11 @@ pub struct App {
     inputs: Vec<PathBuf>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
+    intake: crate::paste::Inbox,
+    onshape_link: String,
+    focus_onshape_link: bool,
+    output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
+    clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
     project_summary: String,
     has_inventor: bool,
     custom: bool,
@@ -400,7 +405,12 @@ impl App {
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
             doctor: None,
-            onshape: crate::onshape::Panel::new(),
+            onshape: crate::onshape::Panel::new(&cc.egui_ctx),
+            intake: crate::paste::Inbox::new(),
+            onshape_link: String::new(),
+            focus_onshape_link: false,
+            output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
+            clipboard: Box::new(crate::paste::clipboard),
             project_summary: String::new(),
             has_inventor: false,
             custom,
@@ -547,18 +557,206 @@ impl App {
         }
     }
 
-    /// Converts a Part Studio just fetched from Onshape, writing the design where the other
-    /// conversions go, or in a "Dutchman Onshape" folder at home when none is chosen.
-    fn convert_onshape_bundle(&mut self, bundle: PathBuf, ctx: &egui::Context) {
-        if self.out_dir.is_none() {
-            let home = std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(PathBuf::from);
-            self.out_dir = home.map(|home| home.join("Dutchman Onshape"));
+    /// Supplies a saved account for UI previews without contacting Onshape.
+    #[doc(hidden)]
+    pub fn preview_onshape(&mut self, user: Option<&str>) {
+        self.onshape.preview(user);
+    }
+
+    /// Completes a connection save for headless UI tests without storing real keys.
+    #[doc(hidden)]
+    pub fn preview_onshape_saved(&mut self, user: &str) {
+        self.onshape.preview_saved(user);
+    }
+
+    /// Replaces download transport and Onshape fetching for headless UI tests.
+    #[doc(hidden)]
+    pub fn set_link_transport_for_test(
+        &mut self,
+        transport: std::sync::Arc<dyn crate::paste::Transport>,
+        fetch: fn(String, &Path) -> Result<PathBuf, String>,
+    ) {
+        self.intake.transport = transport;
+        self.intake.fetch = fetch;
+    }
+
+    fn accept_paste(&mut self, files: Vec<PathBuf>, text: &str, ctx: &egui::Context) {
+        use crate::paste::{Input, Source};
+        match crate::paste::classify(files, text) {
+            Input::Files(paths) => self.add_inputs(paths),
+            Input::Onshape(link) => self.queue_link(Source::Onshape(link), ctx),
+            Input::Download(link) => self.queue_link(Source::Download(link), ctx),
+            Input::Other => self.notice = Some(crate::paste::CANNOT_OPEN.into()),
         }
-        self.add_inputs([bundle]);
-        if !self.running() {
-            self.start(ctx);
+    }
+
+    fn queue_link(&mut self, source: crate::paste::Source, ctx: &egui::Context) {
+        if let crate::paste::Source::Onshape(link) = &source {
+            if !self.onshape.connected() {
+                self.onshape.keep_link(link.clone());
+                return;
+            }
+        }
+        if !self.intake.queue.contains(&source) {
+            self.intake.queue.push_back(source);
+        }
+        self.next_link(ctx);
+    }
+
+    fn next_link(&mut self, ctx: &egui::Context) {
+        if self.running()
+            || self.intake.prompt.is_some()
+            || self.intake.choosing_output.is_some()
+            || self.updater.blocks_conversions()
+        {
+            return;
+        }
+        let Some(source) = self.intake.queue.pop_front() else {
+            return;
+        };
+        match source {
+            crate::paste::Source::Download(link) => self.intake.probe(link, ctx),
+            source @ crate::paste::Source::Onshape(_) => self.open_source(source, ctx),
+        }
+    }
+
+    fn open_source(&mut self, source: crate::paste::Source, ctx: &egui::Context) {
+        if self.out_dir.is_none() {
+            // Local inputs already supply their normal default. Online inputs have no
+            // source folder, so use the existing output picker before starting work.
+            self.intake.choosing_output = Some(source);
+            (self.output_picker)(self.sender.clone(), ctx.clone());
+            return;
+        }
+        let (name, caption) = match &source {
+            crate::paste::Source::Onshape(link) => {
+                let element = dutchman::onshape::DocumentUrl::parse(link, None)
+                    .map(|url| url.element)
+                    .unwrap_or_default();
+                (
+                    format!("{element}.onshape-bundle"),
+                    "Fetching from Onshape…".to_owned(),
+                )
+            }
+            crate::paste::Source::Download(link) => (link.name.clone(), "Downloading…".to_owned()),
+        };
+        self.intake.progress = None;
+        self.rows.clear();
+        self.rows.push(Row {
+            input: PathBuf::from(name),
+            output: None,
+            status: Status::Converting,
+            report: None,
+            job: None,
+            size: None,
+            progress: None,
+        });
+        self.notice = None;
+        // Show transfer progress inside the ordinary result card.
+        self.set_transfer_caption(caption);
+        self.reveal = Some(Reveal::Results);
+        self.intake.start(source, 0, ctx);
+    }
+
+    fn set_transfer_caption(&mut self, caption: String) {
+        self.intake.caption = caption;
+    }
+
+    /// Supplies the ordinary output picker for UI tests without opening a native dialog.
+    #[doc(hidden)]
+    pub fn set_output_picker_for_test(
+        &mut self,
+        picker: impl Fn(Sender<Message>, egui::Context) + 'static,
+    ) {
+        self.output_picker = Box::new(picker);
+    }
+
+    /// Supplies native clipboard contents for UI tests.
+    #[doc(hidden)]
+    pub fn set_clipboard_for_test(
+        &mut self,
+        clipboard: impl Fn() -> (Vec<PathBuf>, String) + 'static,
+    ) {
+        self.clipboard = Box::new(clipboard);
+    }
+
+    fn receive_links(&mut self, ctx: &egui::Context) {
+        use crate::paste::Message;
+        while let Ok(message) = self.intake.receiver.try_recv() {
+            match message {
+                Message::Probed(link, result) => {
+                    self.intake.active = false;
+                    match result {
+                        Ok(size) => self.intake.prompt = Some((link, size)),
+                        Err(why) => self.notice = Some(why),
+                    }
+                }
+                Message::Progress(bytes, size) => {
+                    self.intake.progress = Some((bytes, size));
+                    let total = size.map_or_else(
+                        || "size unknown".into(),
+                        |size| format!("{:.1} MB", size as f64 / 1_000_000.0),
+                    );
+                    self.set_transfer_caption(format!(
+                        "Downloading: {:.1} MB of {total}",
+                        bytes as f64 / 1_000_000.0
+                    ));
+                }
+                Message::Finished(result) => {
+                    self.intake.active = false;
+                    let row = self.intake.row.take();
+                    match result {
+                        Ok((path, folder)) => {
+                            self.intake.folders.push(folder);
+                            self.add_inputs([path]);
+                            self.start(ctx);
+                        }
+                        Err(why) => {
+                            if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
+                                row.status = Status::Failed;
+                                row.progress = None;
+                                row.report = Some(serde_json::json!({ "ok": false,
+                                    "error": { "code": "desktop/download", "message": why } }));
+                            }
+                            self.notice = Some(why);
+                        }
+                    }
+                }
+            }
+        }
+        self.next_link(ctx);
+    }
+
+    fn download_window(&mut self, ctx: &egui::Context) {
+        let Some((link, size)) = self.intake.prompt.clone() else {
+            return;
+        };
+        let mut open = true;
+        let mut download = false;
+        let mut cancel = false;
+        egui::Window::new("Download file")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                let size = size.map_or_else(
+                    || "size unknown".to_owned(),
+                    |size| format!("{:.1} MB", size as f64 / 1_000_000.0),
+                );
+                ui.label(format!(
+                    "Download {} ({size}) from {}?",
+                    link.name, link.host
+                ));
+                ui.horizontal(|ui| {
+                    download = ui.button("Download").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if !open || cancel || download {
+            self.intake.prompt = None;
+        }
+        if download {
+            self.open_source(crate::paste::Source::Download(link), ctx);
         }
     }
 
@@ -930,7 +1128,7 @@ impl App {
 
     /// Whether a run is in progress.
     pub fn running(&self) -> bool {
-        self.run.is_some() || self.pending.is_some()
+        self.run.is_some() || self.pending.is_some() || self.intake.active
     }
 
     fn refresh_blocked_checker(&mut self) {
@@ -1112,11 +1310,19 @@ impl App {
 
     fn picked(&mut self, pick: Pick, paths: Vec<PathBuf>, ctx: &egui::Context) {
         let Some(first) = paths.first().cloned() else {
+            if pick == Pick::Output {
+                self.intake.choosing_output = None;
+            }
             return;
         };
         match pick {
             Pick::Files | Pick::Folder => self.add_inputs(paths),
-            Pick::Output => self.out_dir = Some(first),
+            Pick::Output => {
+                self.out_dir = Some(first);
+                if let Some(source) = self.intake.choosing_output.take() {
+                    self.open_source(source, ctx);
+                }
+            }
             Pick::Project => self.options.project = Some(first),
             Pick::SolidCraftCli => self.choose_solidcraft_cli(&first),
             Pick::SearchFolder(row) => self.search_for_row(row, first, ctx),
@@ -1272,16 +1478,46 @@ impl App {
     }
 
     fn take_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .filter_map(|file| file.path.clone())
-                .collect()
-        });
-        if !dropped.is_empty() && !self.running() {
-            self.add_inputs(dropped);
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        for file in dropped {
+            if let Some(path) = file.path {
+                let text = path.to_string_lossy();
+                if text.starts_with("https://") {
+                    self.accept_paste(Vec::new(), &text, ctx);
+                } else if !self.running() {
+                    self.add_inputs([path]);
+                }
+            } else {
+                let text = file
+                    .bytes
+                    .as_deref()
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .unwrap_or(&file.name);
+                self.accept_paste(Vec::new(), text, ctx);
+            }
         }
+    }
+
+    fn take_paste(&mut self, ctx: &egui::Context) {
+        let native = crate::native_paste::take(ctx);
+        if crate::native_paste::editing(ctx) {
+            return;
+        }
+        let (paste, shortcut) = ctx.input(|input| (
+            input.events.iter().find_map(|event| match event { egui::Event::Paste(text) => Some(text.clone()), _ => None }),
+            input.events.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. } if modifiers.command || modifiers.ctrl)),
+        ));
+        if paste.is_none() && !shortcut && !native {
+            return;
+        }
+        let (files, clipboard) = (self.clipboard)();
+        let text = paste.as_deref().unwrap_or(&clipboard);
+        self.accept_paste(files, text, ctx);
+        ctx.input_mut(|input| {
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::Paste(_)))
+        });
     }
 
     /// Whether the main screen needs to scroll as it is: false when everything is in view.
@@ -1357,7 +1593,18 @@ impl App {
         if self.diagnosis.as_mut().is_some_and(|wizard| wizard.ui(ctx)) {
             self.diagnosis = None;
         }
+        let was_connected = self.onshape.connected();
+        if let Some(link) = self.onshape.poll() {
+            self.queue_link(crate::paste::Source::Onshape(link), ctx);
+        }
+        if std::mem::take(&mut self.onshape.saved) || (!was_connected && self.onshape.connected()) {
+            let (_, clipboard) = (self.clipboard)();
+            crate::paste::prefill_onshape(&mut self.onshape_link, &clipboard);
+            self.focus_onshape_link = true;
+        }
+        self.receive_links(ctx);
         self.take_dropped_files(ctx);
+        self.take_paste(ctx);
         self.refresh_estimates(ctx);
         let view = self.view();
 
@@ -1427,9 +1674,13 @@ impl App {
         self.private_send_window(ctx);
         self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
-        if let Some(bundle) = self.onshape.window(ctx, self.header_bottom) {
-            self.convert_onshape_bundle(bundle, ctx);
+        if let Some(link) = self
+            .onshape
+            .window(ctx, self.header_bottom, !self.running())
+        {
+            self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
+        self.download_window(ctx);
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
         self.updater.windows(ctx, can_restart, self.header_bottom);
@@ -1834,13 +2085,6 @@ impl App {
             if !self.inputs.is_empty() && !self.project_summary.is_empty() {
                 ui.label(RichText::new(&self.project_summary).small().color(p.tide));
             }
-            if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
-                ui.label(
-                    RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
-                        .small()
-                        .color(p.tide),
-                );
-            }
             ui.add_space(theme::SPACE_2);
             ui.horizontal_wrapped(|ui| {
                 ui.add_enabled_ui(
@@ -1862,15 +2106,48 @@ impl App {
                     },
                 );
                 if ui
-                    .button("Connect Onshape")
+                    .button(if self.onshape.connected() {
+                        "Onshape connected ✓"
+                    } else {
+                        "Connect Onshape"
+                    })
                     .on_hover_text(
                         "Save your Onshape API keys, or open a Part Studio from its link",
                     )
                     .clicked()
                 {
-                    self.onshape.toggle(ui.ctx());
+                    let (_, clipboard) = (self.clipboard)();
+                    self.onshape.toggle(ui.ctx(), &clipboard);
                 }
             });
+            ui.horizontal_wrapped(|ui| {
+                if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
+                    ui.label(
+                        RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
+                            .small()
+                            .color(p.tide),
+                    );
+                }
+                ui.small(if cfg!(target_os = "macos") {
+                    "Drop, or paste files or links (⌘V)"
+                } else {
+                    "Drop, or paste files or links (Ctrl+V)"
+                });
+            });
+            if self.onshape.connected() {
+                let focus = std::mem::take(&mut self.focus_onshape_link);
+                let enabled = !self.running();
+                if crate::onshape::link_ui(
+                    ui,
+                    &mut self.onshape_link,
+                    "or paste an Onshape link",
+                    focus,
+                    enabled,
+                ) {
+                    let link = std::mem::take(&mut self.onshape_link);
+                    self.queue_link(crate::paste::Source::Onshape(link), ui.ctx());
+                }
+            }
         });
     }
 
@@ -2232,6 +2509,16 @@ impl App {
                         log,
                         self.ai_prompts.get(&index),
                     );
+                    if self.intake.row == Some(index) {
+                        ui.label(&self.intake.caption);
+                        if let Some((bytes, Some(size))) = self.intake.progress {
+                            if size > 0 {
+                                ui.add(egui::ProgressBar::new(
+                                    (bytes as f32 / size as f32).clamp(0.0, 1.0),
+                                ));
+                            }
+                        }
+                    }
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }

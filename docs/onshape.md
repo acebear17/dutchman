@@ -93,9 +93,23 @@ My account > Developer > API keys > Create new API key. Name it `dutchman` (any 
 **Application can read your profile information** (the connection test reads your profile)
 and **Application can read your documents**. Leave write, delete, purchase and share unticked.
 Paste the access key and the secret key (the secret is masked), and choose
-**Test connection**, then **Save**.
-**Disconnect** forgets them. Below the keys, paste a link to one of your Part Studios
-and choose **Open from Onshape** to fetch it and convert it to a `.sc` in one step.
+**Test connection**, then **Save**. Save closes the dialog and focuses
+**or paste an Onshape link** in the main window. Paste your Part Studio link and choose
+**Open** to fetch and convert it. If the clipboard already contains an Onshape link,
+Dutchman fills it in for you; otherwise the field is empty with a faint URL hint.
+An output folder already selected for local files is reused; otherwise Dutchman asks
+you to choose a folder before fetching. Fetching and conversion appear in the main job list.
+
+The main button now reads **Onshape connected ✓**. Its initial state comes from the
+local credential store, without a network connection test. Open it to see
+**Connected to Onshape as <name>**, **Change keys**, and **Disconnect**. The key fields
+appear only when connecting or choosing **Change keys**. **Disconnect** forgets the
+saved keys and changes the main button back to **Connect Onshape**.
+
+With no text field focused, paste an Onshape link anywhere in the main window
+(⌘V on macOS, Ctrl+V on Windows/Linux) to start the same flow. When no keys are saved, Dutchman keeps the pasted link while you connect
+and continues after **Save**. You can also paste copied files and folders, local paths,
+and direct HTTPS links to supported CAD files; see [pasting files and links](desktop.md#paste-files-and-links).
 
 From the command line:
 
