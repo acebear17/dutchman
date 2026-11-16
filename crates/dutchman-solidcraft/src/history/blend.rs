@@ -32,6 +32,16 @@ const TOLERANCE: f64 = 1e-6;
 const ANGLE: f64 = 1e-6;
 const INPUT: &str =
     "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet";
+const INPUT_NONE: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: no rebuilt edge passes through it";
+/// How far, in millimetres, the nearest rebuilt edge must be for the reason to blame the rebuilt
+/// body rather than the tolerance.
+const NEAR: f64 = 0.01;
+const INPUT_MANY: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: more than one rebuilt edge passes through it";
+const INPUT_ENDS: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it has other ends";
+const INPUT_LENGTH: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it has another length";
+const INPUT_KIND: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it is not the same kind of curve";
+const INPUT_TANGENT: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it does not run along its tangent";
+const INPUT_SOURCE: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: its own source geometry is inconsistent";
 
 type Segment = (V3, V3);
 
@@ -277,11 +287,11 @@ fn historical(
             return Err("blends on closed input edges are not supported yet".to_owned());
         }
         if near(point, ends.0) || near(point, ends.1) {
-            return Err(INPUT.to_owned());
+            return Err(INPUT_SOURCE.to_owned());
         }
         let input = if on_segment(point, ends) {
             if !parallel(sub(ends.1, ends.0), tangent) {
-                return Err(INPUT.to_owned());
+                return Err(INPUT_SOURCE.to_owned());
             }
             Input {
                 point,
@@ -487,7 +497,18 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
             }
         }
         let [(b, e)] = on.as_slice() else {
-            return Err(INPUT.to_owned());
+            return Err(match nearest(input.point, bodies) {
+                _ if !on.is_empty() => INPUT_MANY.to_owned(),
+                Some(far) if far > NEAR => format!(
+                    "{INPUT_NONE}; the nearest rebuilt edge is {far:.1} mm away, so the body \
+                     SolidCraft rebuilds before it differs from the source there"
+                ),
+                Some(far) => format!(
+                    "{INPUT_NONE}; the nearest rebuilt edge is {far:.1e} mm away, outside the \
+                     {TOLERANCE:e} mm tolerance"
+                ),
+                None => format!("{INPUT_NONE}; the rebuilt history has no edges"),
+            });
         };
         let edges = bodies
             .get(*b)
@@ -500,13 +521,19 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
             && straight(edge)
             && on_segment(edge.start, input.ends)
             && on_segment(edge.end, input.ends);
-        if !shortened
-            && (!same(input.ends, (edge.start, edge.end))
-                || !same_length(edge.length, input.length)
-                || straight(edge) != input.straight)
-            || (input.straight && !parallel(sub(edge.end, edge.start), input.tangent))
-        {
-            return Err(INPUT.to_owned());
+        if !shortened {
+            if straight(edge) != input.straight {
+                return Err(INPUT_KIND.to_owned());
+            }
+            if !same(input.ends, (edge.start, edge.end)) {
+                return Err(INPUT_ENDS.to_owned());
+            }
+            if !same_length(edge.length, input.length) {
+                return Err(INPUT_LENGTH.to_owned());
+            }
+        }
+        if input.straight && !parallel(sub(edge.end, edge.start), input.tangent) {
+            return Err(INPUT_TANGENT.to_owned());
         }
         // A 45-degree chamfer has equal setbacks only at a right-angle corner.
         if pending.angle_chamfer && !right_angle(edge, edges) {
@@ -533,6 +560,29 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
         }
     }
     Ok(selections)
+}
+
+/// How far `point` is from the nearest rebuilt edge: the segment of a straight one; for a curved
+/// one the nearest of its ends and midpoint, which SolidCraft reports and the curve passes through.
+fn nearest(point: V3, bodies: &ReplayedBodies) -> Option<f64> {
+    bodies
+        .iter()
+        .flat_map(|(_, edges)| edges)
+        .map(|edge| {
+            if straight(edge) {
+                let direction = sub(edge.end, edge.start);
+                let length2 = dot(direction, direction).max(f64::MIN_POSITIVE);
+                let t = (dot(sub(point, edge.start), direction) / length2).clamp(0.0, 1.0);
+                distance(point, add(edge.start, scale(direction, t)))
+            } else {
+                [edge.start, edge.mid, edge.end]
+                    .into_iter()
+                    .map(|at| distance(point, at))
+                    .fold(f64::INFINITY, f64::min)
+            }
+        })
+        .filter(|d| d.is_finite())
+        .min_by(f64::total_cmp)
 }
 
 /// Whether the faces either side of a straight `edge` meet square, judged at both its ends by
@@ -768,6 +818,62 @@ mod tests {
         assert!(super::prove(&angle, &bodies)
             .unwrap_err()
             .contains("non-perpendicular"));
+    }
+
+    #[test]
+    fn a_refused_midpoint_says_which_proof_failed() {
+        let (a, b) = (straight_input(0.0), straight_input(20.0));
+        let pending = proof(vec![a.clone()]);
+        let reason = |bodies: &super::ReplayedBodies| super::prove(&pending, bodies).unwrap_err();
+        // No rebuilt edge nearby: the body rebuilt before the blend differs from the source.
+        let far = reason(&vec![("B".to_owned(), vec![rebuilt(&b)])]);
+        assert!(far.contains("no rebuilt edge passes through it"), "{far}");
+        assert!(far.contains("20.0 mm away"), "{far}");
+        assert!(far.contains("differs from the source"), "{far}");
+        // An edge just off the midpoint is the tolerance, not a different body.
+        let mut off = rebuilt(&a);
+        off.start[0] += 1e-4;
+        off.end[0] += 1e-4;
+        off.mid[0] += 1e-4;
+        let close = reason(&vec![("A".to_owned(), vec![off])]);
+        assert!(close.contains("outside the"), "{close}");
+        assert!(!close.contains("differs"), "{close}");
+        // Two rebuilt edges through the midpoint are ambiguous.
+        let two = reason(&vec![("A".to_owned(), vec![rebuilt(&a), rebuilt(&a)])]);
+        assert!(two.contains("more than one rebuilt edge"), "{two}");
+        // One edge through it that is not the input edge.
+        let mut longer = rebuilt(&a);
+        longer.end[2] = 12.0;
+        longer.length = 12.0;
+        let shape = reason(&vec![("A".to_owned(), vec![longer.clone()])]);
+        assert!(shape.contains("has other ends"), "{shape}");
+        // A curved input edge through the same ends and midpoint, with another length.
+        let mut curved = proof(vec![super::Input {
+            straight: false,
+            length: 12.0,
+            ..a.clone()
+        }]);
+        let mut arc = rebuilt(&a);
+        arc.length = 11.0;
+        let arcs = vec![("A".to_owned(), vec![arc.clone()])];
+        assert!(super::prove(&curved, &arcs)
+            .unwrap_err()
+            .contains("another length"));
+        // A curved rebuilt edge through a straight input edge's midpoint.
+        let bent = reason(&arcs);
+        assert!(bent.contains("not the same kind"), "{bent}");
+        curved.edges[0].length = 11.0;
+        assert!(super::prove(&curved, &arcs).is_ok());
+        let mut skew = pending.clone();
+        skew.edges[0].tangent = [1.0, 0.0, 0.0];
+        assert!(
+            super::prove(&skew, &vec![("A".to_owned(), vec![rebuilt(&a)])])
+                .unwrap_err()
+                .contains("along its tangent")
+        );
+        assert!(super::prove(&pending, &vec![])
+            .unwrap_err()
+            .contains("no edges"));
     }
 
     #[test]
