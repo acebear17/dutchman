@@ -137,7 +137,7 @@ With 0.1.5 or earlier, write `/Applications/Dutchman.app` in these commands inst
 
 ## Linux: the AppImage
 
-Each release has one AppImage per processor, `dutchman-VERSION-x86_64.AppImage` and
+Each release after 0.2.9 has one AppImage per processor, `dutchman-VERSION-x86_64.AppImage` and
 `dutchman-VERSION-aarch64.AppImage`, each with a `.sha256` file. It runs on any distribution
 with a recent enough glibc (the archives are built in Debian 12) and needs the same X11 or
 Wayland session with OpenGL as the archive. Nothing is installed:
