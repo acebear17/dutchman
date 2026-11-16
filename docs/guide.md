@@ -647,4 +647,5 @@ losses for meshes it could not decode.
 
 The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
 with host-drawn conversion options and a structured loss report. It implements SolidCraft's
-`craft:plugin` importer interface; see that page for build and integration status.
+`craft:plugin` importer interface; see that page for the build. To install it, see
+[Dutchman in SolidCraft](solidcraft-plugin.md).

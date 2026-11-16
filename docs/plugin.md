@@ -81,7 +81,7 @@ DUTCHMAN_PLUGIN_COMPONENT=/absolute/path/dutchman.wasm \
   cargo +1.98.0 test --release -p dutchman-plugin --features host-tests --test component -- --nocapture
 ```
 
-The harness uses a fresh instance per file, fuel, a 1 GiB limit per linear memory, and a
+The harness uses a fresh instance per file, fuel, a 2 GiB limit per linear memory (the manifest asks for 2048 MiB), and a
 16 MiB Wasm stack with an 18 MiB async-stack budget (Wasmtime validates both even
 for this synchronous harness). The production host must cap the sum across component memories.
 Its linker holds only the `craft:plugin` imports, implemented in the test (source, design,
@@ -235,13 +235,18 @@ One-run observations on a shared builder.
 
 | Measurement | Result |
 |---|---|
-| Component (`dutchman.wasm`) | 38,587,446 bytes (36.80 MiB) |
+| Component (`dutchman.wasm`) | 40,264,056 bytes (38.40 MiB) |
 | Release build through buildq, shared compiler cache | 10m 41s |
-| Wasmtime first compilation | 8.4 s |
+| Wasmtime first compilation | 8.4 s on the builder; 36.8 s on a two-core CI runner |
 | Harness process peak RSS after first compilation | 3,897,648 KiB (3.72 GiB) |
+| Guest peak linear memory, public fixtures (release build in CI, `peak_guest_memory` lines) | 3.3 to 15.3 MiB per file (inputs of 0.6 to 15 KB) |
+| Native peak RSS, one 68 MB Fusion archive, `dutchman convert --threads 1 --no-verify` | 3.8 GiB (3,894,656 KiB), 2 min 51 s |
 
-The packaged component's SHA-256 is
-`81caeb3c88564d1b08960e9a75dffe5f0c0d65565905fa5681a5d47d52673a86`.
+The manifest asks for 2048 MiB: the public fixtures need under 16 MiB, and the native run of
+a very large archive shows memory growing to about 57 times the input, so 2 GiB covers inputs of
+roughly 30 MB. wasm32 cannot address more than 4 GiB, so the largest archives stay with the
+command line.
+
 The earlier cold `wasm32-wasip2` measurement took 31 minutes with up to 10.8 GiB in one
 compiler process; `dutchman-plugin-measure` repeats a cold build for this target.
 The Wasmtime values come from the optimized native harness, with a fresh Engine and

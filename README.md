@@ -219,4 +219,4 @@ For other clients:
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
 
-[SolidCraft plugin component](docs/plugin.md): a streaming importer front end with native host forms and structured conversion losses (host importer integration in progress).
+[Dutchman in SolidCraft](docs/solidcraft-plugin.md): a plugin that opens Fusion, Inventor, SolidWorks, and FreeCAD files in SolidCraft with editable history (desktop only for now); [how it is built](docs/plugin.md).

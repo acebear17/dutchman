@@ -202,7 +202,7 @@ fn host(root: &Path, main: Vec<u8>) -> Host {
         output: Vec::new(),
         limits: Peak {
             limits: StoreLimitsBuilder::new()
-                .memory_size(1024 * 1024 * 1024)
+                .memory_size(2048 * 1024 * 1024)
                 .build(),
             bytes: 0,
         },
