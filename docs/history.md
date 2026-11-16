@@ -357,10 +357,10 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.42 with the same writer capabilities as 0.40 and keeps
-design format 23. Saving a design in SolidCraft 0.42 upgrades it to format 57, which
-SolidCraft 0.30.1 and earlier cannot open. SolidCraft 0.40.1 and 0.41
-open designs saved in 0.42 with a warning about the newer format.
+Dutchman targets SolidCraft 0.43 with the same writer capabilities as 0.40 and keeps
+design format 23. Saving a design in SolidCraft 0.43 upgrades it to format 57, which
+SolidCraft 0.30.1 and earlier cannot open. SolidCraft 0.40.1 through 0.42
+open designs saved in 0.43 with a warning about the newer format.
 
 For targets of SolidCraft 0.30 or newer, partial and unverified editable-history copies
 use **Hide its History**: their features stay in the Browser and keep rebuilding, but
