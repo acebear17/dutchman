@@ -3409,6 +3409,247 @@ fn a_hole_to_an_earlier_cap_keeps_a_point_on_that_face() {
     assert!(hole.get("depth").is_none());
 }
 
+const HOLE_INPUT: &str = "test:hole:feature-input#4";
+const HOLE_FACE: &str = "test:hole:historical-face#entry";
+
+/// A historical entry face for the hole of [`holed_cube`]: the top of the cube as it was
+/// before the hole (`round` false), or a whole cylinder of radius 2 about the vertical line
+/// through (5, 5) (`round` true). Edge geometry is all the input topology carries.
+fn historical_entry(round: bool) -> impl FnOnce(&mut Value) {
+    move |hole| {
+        let point = |x: f64, y: f64, z: f64| json!({"x": x, "y": y, "z": z});
+        let edge = |k: usize, start: Value, interior: Value, end: Value, tangent: Value| {
+            json!({"edge": format!("test:hole:historical-edge#{k}"),
+                "start": start, "interior": interior, "end": end, "tangent": tangent,
+                "faces": [HOLE_FACE, format!("test:hole:historical-face#other{k}")]})
+        };
+        let geometry: Vec<Value> = if round {
+            let tangent = point(0.0, 1.0, 0.0);
+            vec![
+                edge(
+                    0,
+                    point(7.0, 5.0, 0.0),
+                    point(3.0, 5.0, 0.0),
+                    point(7.0, 5.0, 0.0),
+                    tangent.clone(),
+                ),
+                edge(
+                    1,
+                    point(7.0, 5.0, 10.0),
+                    point(3.0, 5.0, 10.0),
+                    point(7.0, 5.0, 10.0),
+                    tangent,
+                ),
+                edge(
+                    2,
+                    point(7.0, 5.0, 0.0),
+                    point(7.0, 5.0, 5.0),
+                    point(7.0, 5.0, 10.0),
+                    point(0.0, 0.0, 1.0),
+                ),
+            ]
+        } else {
+            let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+            (0..4)
+                .map(|k| {
+                    let (a, b) = (corners[k], corners[(k + 1) % 4]);
+                    edge(
+                        k,
+                        point(a.0, a.1, 10.0),
+                        point((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0, 10.0),
+                        point(b.0, b.1, 10.0),
+                        point((b.0 - a.0) / 10.0, (b.1 - a.1) / 10.0, 0.0),
+                    )
+                })
+                .collect()
+        };
+        hole["face"] = json!({"kind": "historical", "value": {
+            "state": HOLE_INPUT, "faces": [HOLE_FACE], "native": "synthetic selection"}});
+        hole["feature_input"] = json!({"edge_geometry": geometry});
+    }
+}
+
+/// `holed_cube` with the entry face `historical_entry` describes and the hole `placed` by
+/// its placement.
+fn historical_hole(round: bool, placement: Value) -> Model {
+    let mut input = Value::Null;
+    let model = holed_cube(4.0, |hole| {
+        directed_hole(hole);
+        historical_entry(round)(hole);
+        hole["placements"] = json!([placement]);
+        input = hole
+            .as_object_mut()
+            .unwrap()
+            .remove("feature_input")
+            .unwrap();
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["feature_input_topologies"] = json!([{
+        "id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE],
+        "edge_geometry": input["edge_geometry"],
+    }]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+fn directed(position: [f64; 3], direction: [f64; 3]) -> Value {
+    json!({"kind": "directed",
+        "position": {"x": position[0], "y": position[1], "z": position[2]},
+        "direction": {"x": direction[0], "y": direction[1], "z": direction[2]}})
+}
+
+fn axis_through(origin: [f64; 3], axis: [f64; 3]) -> Value {
+    json!({"kind": "axis",
+        "origin": {"x": origin[0], "y": origin[1], "z": origin[2]},
+        "axis": {"x": axis[0], "y": axis[1], "z": axis[2]}})
+}
+
+fn mapped_hole(model: &Model) -> Result<Value, String> {
+    let (document, report) = convert(
+        model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    if history_line(&report).starts_with("4 of 4 features rebuilt") {
+        Ok(document["features"][3].clone())
+    } else {
+        Err(history_line(&report))
+    }
+}
+
+#[test]
+fn a_hole_on_a_historical_plane_is_proven_against_the_cap_it_drills_into() {
+    for placement in [
+        directed([5.0, 5.0, 10.0], [0.0, 0.0, -1.0]),
+        axis_through([5.0, 5.0, 6.0], [0.0, 0.0, 1.0]),
+        axis_through([5.0, 5.0, 6.0], [0.0, 0.0, -1.0]),
+    ] {
+        let hole = mapped_hole(&historical_hole(false, placement)).unwrap();
+        assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+        assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+    }
+    // Drilling out of the cube, or from a point beside the face, is not its entry.
+    for (placement, reason) in [
+        (
+            directed([5.0, 5.0, 10.0], [0.0, 0.0, 1.0]),
+            "does not drill into its entry face",
+        ),
+        (
+            directed([15.0, 5.0, 10.0], [0.0, 0.0, -1.0]),
+            "does not drill into its entry face",
+        ),
+    ] {
+        let why = mapped_hole(&historical_hole(false, placement)).unwrap_err();
+        assert!(why.contains(reason), "{why}");
+    }
+}
+
+#[test]
+fn a_hole_on_a_historical_plane_the_cube_never_had_is_refused() {
+    // The bottom of the cube is a cap too, but this plane is neither of the extrude's.
+    let model = historical_hole(false, directed([5.0, 5.0, 10.0], [0.0, 0.0, -1.0]));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for row in wire["model"]["feature_input_topologies"][0]["edge_geometry"]
+        .as_array_mut()
+        .unwrap()
+    {
+        for key in ["start", "interior", "end"] {
+            row[key]["z"] = json!(4.0);
+        }
+    }
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let why = mapped_hole(&model).unwrap_err();
+    assert!(why.contains("not proven to exist before the hole"), "{why}");
+}
+
+#[test]
+fn a_radial_hole_on_a_historical_cylinder_starts_where_its_placement_says() {
+    let hole = mapped_hole(&historical_hole(
+        true,
+        directed([7.0, 5.0, 5.0], [-1.0, 0.0, 0.0]),
+    ))
+    .unwrap();
+    assert_eq!(hole["position"], json!([7.0, 5.0, 5.0]));
+    assert_eq!(hole["direction"], json!([-1.0, 0.0, 0.0]));
+    assert_eq!(hole["diameter"], "4 mm");
+    // An axis meets the cylinder twice: the end nearer its origin is the entry.
+    for (origin, position, direction) in [
+        ([9.0, 5.0, 5.0], [7.0, 5.0, 5.0], [-1.0, 0.0, 0.0]),
+        ([1.0, 5.0, 5.0], [3.0, 5.0, 5.0], [1.0, 0.0, 0.0]),
+    ] {
+        let hole = mapped_hole(&historical_hole(
+            true,
+            axis_through(origin, [1.0, 0.0, 0.0]),
+        ))
+        .unwrap();
+        assert_eq!(hole["position"], json!(position));
+        assert_eq!(hole["direction"], json!(direction));
+    }
+}
+
+#[test]
+fn a_hole_that_is_not_along_a_radius_of_its_historical_cylinder_says_so() {
+    for (placement, reason) in [
+        (
+            directed([7.0, 5.0, 5.0], [0.0, 1.0, 0.0]),
+            "along a radius into its entry cylinder",
+        ),
+        (
+            directed([7.0, 5.0, 5.0], [1.0, 0.0, 0.0]),
+            "along a radius into its entry cylinder",
+        ),
+        (
+            directed([8.0, 5.0, 5.0], [-1.0, 0.0, 0.0]),
+            "along a radius into its entry cylinder",
+        ),
+        (
+            directed([7.0, 5.0, 12.0], [-1.0, 0.0, 0.0]),
+            "along a radius into its entry cylinder",
+        ),
+        (
+            axis_through([5.0, 5.0, 5.0], [1.0, 0.0, 0.0]),
+            "does not choose between them",
+        ),
+        (
+            axis_through([9.0, 5.0, 5.0], [0.0, 1.0, 0.0]),
+            "does not cross the axis of its entry cylinder",
+        ),
+        (
+            axis_through([9.0, 5.0, 5.0], [0.0, 0.0, 1.0]),
+            "not along a radius of its entry cylinder",
+        ),
+    ] {
+        let why = mapped_hole(&historical_hole(true, placement)).unwrap_err();
+        assert!(why.contains(reason), "{why}");
+    }
+}
+
+#[test]
+fn solidcraft_drills_a_radial_hole_into_a_cylinder() {
+    let Some(cli) = solidcraft() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let script = json!([
+        {"command": "solid.cylinder", "params": {"radius": "10 mm", "height": "20 mm"}},
+        {"command": "solid.hole", "params": {"position": [10, 0, 10], "direction": [-1, 0, 0],
+            "diameter": "4 mm"}},
+    ]);
+    let input = dir.path().join("radial.json");
+    std::fs::write(&input, script.to_string()).unwrap();
+    let measured = blend_measurement(&cli, &input, &dir.path().join("eval.json"));
+    let volume = measured["volume_mm3"].as_f64().unwrap();
+    let whole = std::f64::consts::PI * 100.0 * 20.0;
+    // Two bores of radius 2 through the wall, a little under a straight 20 mm bore.
+    let bored = whole - volume;
+    assert!(
+        bored > 200.0 && bored < std::f64::consts::PI * 4.0 * 20.0,
+        "{bored}"
+    );
+}
+
 #[test]
 fn a_hole_can_select_sketch_points_or_circle_centres() {
     for point in [false, true] {

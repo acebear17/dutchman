@@ -291,6 +291,41 @@ pub(super) fn planar_face(
     Ok((planar_point(face, origin, normal)?, normal))
 }
 
+/// The unit normal of the plane of the one face `value` selects (its side is not known from
+/// the boundary) and the corners of its single straight-edged outline, in order. A face with
+/// a curved edge or with holes is refused.
+pub(super) fn polygon(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<(V3, Vec<V3>), String> {
+    let faces = boundaries(feature, value, ctx)?;
+    let [face] = faces.as_slice() else {
+        return Err("a selection without exactly one face is not supported yet".to_owned());
+    };
+    let (_, normal) = plane(std::slice::from_ref(face), &samples(face))
+        .map_err(|_| "an extrude face that is not planar is not supported yet".to_owned())?;
+    if face
+        .edges
+        .iter()
+        .any(|edge| !matches!(edge, Edge::Line { .. }))
+    {
+        return Err("a face with curved edges is not mapped yet".to_owned());
+    }
+    let rings = loops(&face.edges)?;
+    let [ring] = rings.as_slice() else {
+        return Err("a face with holes is not mapped yet".to_owned());
+    };
+    let corners = ring
+        .iter()
+        .map(|&(index, forward)| {
+            let (start, end) = face.edges.get(index).ok_or(BAD)?.ends();
+            Ok(if forward { start } else { end })
+        })
+        .collect::<Result<Vec<V3>, String>>()?;
+    Ok((normal, corners))
+}
+
 /// The ends and middle of every boundary edge of `face`.
 fn samples(face: &Boundary) -> Vec<V3> {
     face.edges
@@ -430,11 +465,24 @@ fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     ((p[0] - a[0] - t * dx).powi(2) + (p[1] - a[1] - t * dy).powi(2)).sqrt()
 }
 
-/// A point in the middle of a cylindrical face: its boundary is circles or arcs of one radius
-/// about one axis, joined by straight edges along the axis. A full cylinder gets the point
-/// opposite its seam, a partial one the middle of its arcs.
-fn cylinder_point(face: &Boundary) -> Result<V3, String> {
-    const NOT: &str = "a face other than a plane or a cylinder is not supported yet";
+/// A cylinder rebuilt from the boundary of one face: circles or arcs of one radius about one
+/// axis, joined by straight edges along the axis.
+struct Cylinder {
+    /// The centre of the first curved edge, a point on the axis.
+    origin: V3,
+    axis: V3,
+    radius: f64,
+    /// The extent of the face along the axis, from `origin`.
+    low: f64,
+    high: f64,
+    /// The curved edges: their centres, their middle (a circle's start), and whether each is a
+    /// whole circle.
+    curved: Vec<(V3, f64, V3, bool)>,
+}
+
+const NOT_ROUND: &str = "a face other than a plane or a cylinder is not supported yet";
+
+fn cylinder_of(face: &Boundary) -> Result<Cylinder, String> {
     let curved: Vec<(V3, f64, V3, bool)> = face
         .edges
         .iter()
@@ -454,12 +502,12 @@ fn cylinder_point(face: &Boundary) -> Result<V3, String> {
             Edge::Line { .. } => None,
         })
         .collect();
-    let (first, rest) = curved.split_first().ok_or(NOT)?;
+    let (first, rest) = curved.split_first().ok_or(NOT_ROUND)?;
     let far = rest
         .iter()
         .max_by(|a, b| norm(sub(a.0, first.0)).total_cmp(&norm(sub(b.0, first.0))))
-        .ok_or(NOT)?;
-    let axis = unit(sub(far.0, first.0)).ok_or(NOT)?;
+        .ok_or(NOT_ROUND)?;
+    let axis = unit(sub(far.0, first.0)).ok_or(NOT_ROUND)?;
     let radius = first.1;
     let seams = face
         .edges
@@ -478,7 +526,7 @@ fn cylinder_point(face: &Boundary) -> Result<V3, String> {
             _ => false,
         })
     {
-        return Err(NOT.to_owned());
+        return Err(NOT_ROUND.to_owned());
     }
     let along: Vec<f64> = curved
         .iter()
@@ -487,9 +535,31 @@ fn cylinder_point(face: &Boundary) -> Result<V3, String> {
     let low = along.iter().copied().fold(f64::INFINITY, f64::min);
     let high = along.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if high - low <= NEAR {
-        return Err(NOT.to_owned());
+        return Err(NOT_ROUND.to_owned());
     }
-    let middle = add(first.0, scale(axis, (low + high) / 2.0));
+    Ok(Cylinder {
+        origin: first.0,
+        axis,
+        radius,
+        low,
+        high,
+        curved,
+    })
+}
+
+/// A point in the middle of a cylindrical face: its boundary is circles or arcs of one radius
+/// about one axis, joined by straight edges along the axis. A full cylinder gets the point
+/// opposite its seam, a partial one the middle of its arcs.
+fn cylinder_point(face: &Boundary) -> Result<V3, String> {
+    let Cylinder {
+        origin,
+        axis,
+        radius,
+        low,
+        high,
+        curved,
+    } = cylinder_of(face)?;
+    let middle = add(origin, scale(axis, (low + high) / 2.0));
     let radial = |point: V3, center: V3| {
         let d = sub(point, center);
         sub(d, scale(axis, dot(d, axis)))
@@ -501,8 +571,34 @@ fn cylinder_point(face: &Boundary) -> Result<V3, String> {
             .filter_map(|c| unit(radial(c.2, c.0)))
             .fold([0.0; 3], add),
     };
-    let direction = unit(direction).ok_or(NOT)?;
+    let direction = unit(direction).ok_or(NOT_ROUND)?;
     Ok(add(middle, scale(direction, radius)))
+}
+
+/// The one whole cylinder `value` selects: a point on its axis, the axis direction, its radius
+/// and the extent of the face along the axis from that point. Part of a cylinder (arcs only,
+/// with no whole circle around it) is refused, as is any other surface.
+pub(super) fn whole_cylinder(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<(V3, V3, f64, (f64, f64)), String> {
+    let faces = boundaries(feature, value, ctx)?;
+    let [face] = faces.as_slice() else {
+        return Err("a selection without exactly one face is not supported yet".to_owned());
+    };
+    let cylinder = cylinder_of(face).map_err(|_| {
+        "a hole on a face other than a plane or a whole cylinder is not mapped yet".to_owned()
+    })?;
+    if !cylinder.curved.iter().any(|c| c.3) {
+        return Err("a hole on part of a cylinder is not mapped yet".to_owned());
+    }
+    Ok((
+        cylinder.origin,
+        cylinder.axis,
+        cylinder.radius,
+        (cylinder.low, cylinder.high),
+    ))
 }
 
 /// Reads the boundary of every selected face from the feature's input topology.

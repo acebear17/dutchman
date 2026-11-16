@@ -198,6 +198,12 @@ A counterbore, countersink, or chamfered entry with a drill point keeps both for
 on a plain drilled hole": SolidCraft 0.21.0 ignores `tip_angle` on counterbores and
 countersinks. Conversion keeps the original geometry.
 
+A hole placed on a face of the model as it stood before the hole maps when that face is a plane
+the source's own extrusion just before the hole proves (its cap), or a whole cylinder drilled
+along a radius toward its axis (a radial hole in a round part): the hole starts where the source
+places it on the cylinder. A hole on part of a cylinder, or on any other surface, is not mapped
+yet, and the report says which.
+
 
 3D sketches (Fusion spatial sketches) become SolidCraft sketches with 3D Sketch on, written at
 their solved positions: lines, exact arcs, full circles (as two half arcs), NURBS splines and

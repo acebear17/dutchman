@@ -396,6 +396,15 @@ fn placement(
                 let direction = v3(placement.get("direction"))
                     .and_then(unit)
                     .ok_or("its direction is zero")?;
+                if let Some(round) = round_face(feature, definition.get("face"), ctx)? {
+                    if !round.on_radius(position, direction) {
+                        return Err(
+                            "its placement does not drill along a radius into its entry cylinder"
+                                .to_owned(),
+                        );
+                    }
+                    return Ok((position, direction, None));
+                }
                 if definition.get("face").is_some_and(|face| !face.is_null()) {
                     let face = earlier_face(feature, definition.get("face"), ctx)?;
                     if dot(sub(position, face.point), face.normal).abs() > 1e-7
@@ -408,6 +417,15 @@ fn placement(
                 Ok((position, direction, None))
             }
             Some("axis") => {
+                if let Some(round) = round_face(feature, definition.get("face"), ctx)? {
+                    let origin =
+                        v3(placement.get("origin")).ok_or("its axis origin is not given")?;
+                    let axis = v3(placement.get("axis"))
+                        .and_then(unit)
+                        .ok_or("its axis is zero")?;
+                    let (position, direction) = round.entry(origin, axis)?;
+                    return Ok((position, direction, None));
+                }
                 let face = earlier_face(feature, definition.get("face"), ctx)?;
                 let origin = v3(placement.get("origin")).ok_or("its axis origin is not given")?;
                 let axis = v3(placement.get("axis"))
@@ -564,6 +582,106 @@ fn sketch_locations(
     ))
 }
 
+/// A whole cylinder an entry face of the hole's own input topology stands on. The input
+/// topology is the model as it was just before the hole, so no earlier operation has to be
+/// proven to have made the face.
+struct Round {
+    origin: V3,
+    axis: V3,
+    radius: f64,
+    low: f64,
+    high: f64,
+}
+
+/// How far, in millimetres, a point may be from the cylinder and still be on it.
+const ON: f64 = 1e-6;
+
+impl Round {
+    /// The part of `point` away from the axis, and how far along the axis it is.
+    fn radial(&self, point: V3) -> (V3, f64) {
+        let d = sub(point, self.origin);
+        let along = dot(d, self.axis);
+        (sub(d, add([0.0; 3], self.axis, along)), along)
+    }
+
+    fn on_face(&self, point: V3) -> bool {
+        let (radial, along) = self.radial(point);
+        (dot(radial, radial).sqrt() - self.radius).abs() <= ON * self.radius.max(1.0)
+            && along >= self.low - ON
+            && along <= self.high + ON
+    }
+
+    /// Whether a hole from `position` along `direction` starts on the cylinder, on a radius,
+    /// heading for the axis.
+    fn on_radius(&self, position: V3, direction: V3) -> bool {
+        self.on_face(position)
+            && unit(self.radial(position).0)
+                .is_some_and(|outward| dot(outward, direction) < -1.0 + 1e-9)
+    }
+
+    /// Where a hole axis along a radius meets the cylinder, and the way it drills in. An axis
+    /// has no sign and meets the cylinder twice, so the end nearer `origin` is the entry, and
+    /// an origin midway between them leaves it open.
+    fn entry(&self, origin: V3, axis: V3) -> Result<(V3, V3), String> {
+        if dot(axis, self.axis).abs() > 1e-9 {
+            return Err("its hole axis is not along a radius of its entry cylinder".to_owned());
+        }
+        let centre = add(self.origin, self.axis, self.radial(origin).1);
+        if super::sketch::cross(axis, sub(origin, centre))
+            .iter()
+            .any(|c| c.abs() > ON * self.radius.max(1.0))
+        {
+            return Err("its hole axis does not cross the axis of its entry cylinder".to_owned());
+        }
+        let near = add(centre, axis, self.radius);
+        let far = add(centre, axis, -self.radius);
+        let distance = |p: V3| dot(sub(p, origin), sub(p, origin)).sqrt();
+        if (distance(near) - distance(far)).abs() <= ON * self.radius.max(1.0) {
+            return Err(
+                "its hole axis meets its entry cylinder at two points and its origin does not choose between them"
+                    .to_owned(),
+            );
+        }
+        let position = if distance(near) < distance(far) {
+            near
+        } else {
+            far
+        };
+        if !self.on_face(position) {
+            return Err("its hole axis misses its entry cylinder".to_owned());
+        }
+        let direction = unit(sub(centre, position)).ok_or("its entry cylinder has no radius")?;
+        Ok((position, direction))
+    }
+}
+
+/// The whole cylinder a historical entry face is, when it is one; `None` for any other
+/// selection and for a historical plane, which the planar proof handles.
+fn round_face(
+    feature: &Value,
+    selection: Option<&Value>,
+    ctx: &Context,
+) -> Result<Option<Round>, String> {
+    let Some(selection) =
+        selection.filter(|s| s.get("kind").and_then(Value::as_str) == Some("historical"))
+    else {
+        return Ok(None);
+    };
+    let value = selection.get("value").unwrap_or(&Value::Null);
+    if super::face_profile::planar_face(feature, value, ctx).is_ok() {
+        return Ok(None);
+    }
+    let (origin, axis, radius, (low, high)) =
+        super::face_profile::whole_cylinder(feature, value, ctx)?;
+    Ok(Some(Round {
+        origin,
+        axis,
+        radius,
+        low,
+        high,
+    }))
+}
+
 /// A planar face with a point inside its boundary, as in `faces.rs`. The final B-rep
 /// alone cannot establish when a face existed: `earlier_face` also proves its cap
 /// against the last preceding solid feature's sketch and extrusion distance.
@@ -589,6 +707,33 @@ fn earlier_face(
     ctx: &Context,
 ) -> Result<PlanarFace, String> {
     let selection = selection.ok_or("its face is not resolved")?;
+    if selection.get("kind").and_then(Value::as_str) == Some("historical") {
+        let value = selection.get("value").unwrap_or(&Value::Null);
+        let (normal, corners) = super::face_profile::polygon(feature, value, ctx)?;
+        let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            .into_iter()
+            .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
+            .ok_or("its face has no plane")?;
+        let u = unit(super::sketch::cross(helper, normal)).ok_or("its face has no plane")?;
+        let v = super::sketch::cross(normal, u);
+        let (mut planar, outward) = interior(
+            feature,
+            PlanarFace {
+                point: [0.0; 3],
+                normal,
+                u,
+                v,
+                corners,
+            },
+            ctx,
+        )?;
+        // Only the cap proof knows which way the face looks.
+        if dot(outward, normal).abs() < 1.0 - 1e-9 {
+            return Err("its face is not proven to exist before the hole".to_owned());
+        }
+        planar.normal = outward;
+        return Ok(planar);
+    }
     let ids = match selection.get("kind").and_then(Value::as_str) {
         Some("faces") => selection.get("value"),
         Some("resolved") => selection.pointer("/value/faces"),
@@ -690,17 +835,35 @@ fn earlier_face(
     if corners.len() < 3 {
         return Err("its face has no polygonal boundary".to_owned());
     }
-    let mut planar = PlanarFace {
-        point: [0.0; 3],
-        normal,
-        u,
-        v,
-        corners,
-    };
+    let (mut planar, _) = interior(
+        feature,
+        PlanarFace {
+            point: [0.0; 3],
+            normal,
+            u,
+            v,
+            corners,
+        },
+        ctx,
+    )?;
+    // The underlying surface normal need not be the face's outward normal.
+    if face.get("sense").and_then(Value::as_str) == Some("reversed") {
+        planar.normal = planar.normal.map(|c| -c);
+    }
+    Ok(planar)
+}
+
+/// `planar` with a point inside its outline, and the way its cap faces when it is the cap of
+/// the extrusion just before the hole.
+fn interior(
+    feature: &Value,
+    mut planar: PlanarFace,
+    ctx: &Context,
+) -> Result<(PlanarFace, V3), String> {
     let outer = &planar.corners;
     // As in faces.rs, choose the centroid of a nondegenerate corner triangle
     // inside the earlier cap's filled outline.
-    planar.point = (0..outer.len())
+    let point = (0..outer.len())
         .find_map(|i| {
             let a = *outer.get((i + outer.len() - 1) % outer.len())?;
             let b = *outer.get(i)?;
@@ -720,21 +883,17 @@ fn earlier_face(
             (dot(area, area) > 1e-18 && planar.contains(centre)).then_some(centre)
         })
         .ok_or("its face has no resolved interior point")?;
-    if !earlier_cap(feature, &planar, ctx) {
-        return Err("its face is not proven to exist before the hole".to_owned());
-    }
-    // The underlying surface normal need not be the face's outward normal.
-    if face.get("sense").and_then(Value::as_str) == Some("reversed") {
-        planar.normal = planar.normal.map(|c| -c);
-    }
-    Ok(planar)
+    planar.point = point;
+    let outward = earlier_cap(feature, &planar, ctx)
+        .ok_or("its face is not proven to exist before the hole")?;
+    Ok((planar, outward))
 }
 
 /// A deliberately narrow proof: one polygonal profile, extruded as a new body,
 /// with no intervening solid operation. Matching the cap's entire outer boundary
 /// rules out a blind bottom or shoulder introduced by this hole or a later cut.
-fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
-    let Some(previous) = ctx
+fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> {
+    let previous = ctx
         .arena("features")
         .iter()
         .filter(|row| {
@@ -748,10 +907,7 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
                 && row.get("ordinal").and_then(Value::as_u64)
                     < feature.get("ordinal").and_then(Value::as_u64)
         })
-        .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))
-    else {
-        return false;
-    };
+        .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))?;
     let op = previous.get("definition").unwrap_or(&Value::Null);
     if op.get("definition").and_then(Value::as_str) != Some("extrude")
         || op.get("op").and_then(Value::as_str) != Some("new_body")
@@ -765,54 +921,45 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
             .get("start")
             .is_some_and(|s| s.get("kind").and_then(Value::as_str) != Some("profile_plane"))
     {
-        return false;
+        return None;
     }
     if !matches!(
         op.pointer("/profile/kind").and_then(Value::as_str),
         Some("sketch" | "sketch_profiles")
     ) {
-        return false;
+        return None;
     }
-    let Some(length) = number(op.pointer("/extent/side/termination/length")) else {
-        return false;
-    };
+    let length = number(op.pointer("/extent/side/termination/length"))?;
     let Ok((sketch_id, _)) = super::profile::profile(op.get("profile"), ctx) else {
-        return false;
+        return None;
     };
-    let Some(sketch) = ctx.sketches.get(&sketch_id) else {
-        return false;
-    };
-    let Some(profiles) = ctx
+    let sketch = ctx.sketches.get(&sketch_id)?;
+    let profiles = ctx
         .row("sketches", &sketch_id)
         .and_then(|row| row.get("profiles"))
-        .and_then(Value::as_array)
-    else {
-        return false;
-    };
+        .and_then(Value::as_array)?;
     let [profile] = profiles.as_slice() else {
-        return false;
+        return None;
     };
-    let Some(uses) = profile.as_array() else {
-        return false;
-    };
+    let uses = profile.as_array()?;
     let outer = &face.corners;
     if uses.len() != outer.len() || dot(face.normal, sketch.normal).abs() < 1.0 - 1e-9 {
-        return false;
+        return None;
     }
     let unique: BTreeSet<_> = uses
         .iter()
         .filter_map(|entry| entry.get("entity").and_then(Value::as_str))
         .collect();
     if unique.len() != uses.len() {
-        return false;
+        return None;
     }
     let direction = match op.pointer("/direction/kind").and_then(Value::as_str) {
         None | Some("profile_normal") => 1.0,
         Some("reversed_profile_normal") => -1.0,
-        _ => return false,
+        _ => return None,
     };
-    [0.0, direction * length].into_iter().any(|height| {
-        uses.iter().all(|entry| {
+    [0.0, direction * length].into_iter().find_map(|height| {
+        let all = uses.iter().all(|entry| {
             let Some(curve) = entry
                 .get("entity")
                 .and_then(Value::as_str)
@@ -837,6 +984,11 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
                     (close(start, *a) && close(end, *b)) || (close(start, *b) && close(end, *a))
                 })
             })
+        });
+        // The cap at the start faces back against the extrusion, the one at the end ahead.
+        all.then(|| {
+            let along = if height == 0.0 { -direction } else { direction };
+            sketch.normal.map(|c| c * along)
         })
     })
 }
