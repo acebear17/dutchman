@@ -92,7 +92,7 @@ pub(crate) fn map(
     report: &mut Report,
 ) -> Result<Value, String> {
     let binding = definition.get("sketch").unwrap_or(&Value::Null);
-    if binding.get("space").and_then(Value::as_str) != Some("planar") {
+    if binding.get("kind").and_then(Value::as_str) != Some("planar") {
         return Err("only planar sketches are mapped".to_owned());
     }
     let sketch_id = binding
@@ -1162,7 +1162,7 @@ fn rational_conic(curve: Option<&Value>) -> Option<(P2, P2, P2, f64)> {
         return None;
     }
     let poles = curve.get("poles")?;
-    if poles.get("form")?.as_str()? != "rational" {
+    if poles.get("kind")?.as_str()? != "rational" {
         return None;
     }
     let points = poles.get("points")?.as_array()?;
@@ -1309,7 +1309,7 @@ fn spline(curve: Option<&Value>) -> Result<Spline, String> {
     if rows.len() > MAX_POLES {
         return Err("its spline has more than SolidCraft's 500 control points".to_owned());
     }
-    let rational = poles.get("form").and_then(Value::as_str) == Some("rational");
+    let rational = poles.get("kind").and_then(Value::as_str) == Some("rational");
     if rational {
         let first = rows
             .first()
@@ -1646,8 +1646,7 @@ mod tests {
     }
 
     fn point(key: &str, at: P2) -> Value {
-        json!({"id": key, "construction": false,
-            "geometry": {"kind": "point", "position": {"u": at[0], "v": at[1]}}})
+        json!({"id": key, "construction": false, "geometry": {"kind": "point", "position": {"u": at[0], "v": at[1]}}})
     }
 
     #[test]
@@ -1751,8 +1750,7 @@ mod tests {
 
     fn nurbs(degree: u64, knots: &[f64], points: &[P2]) -> Value {
         json!({"degree": degree, "knots": knots, "periodic": false,
-               "poles": {"form": "polynomial",
-                         "points": points.iter().map(|p| json!({"u": p[0], "v": p[1]})).collect::<Vec<_>>()}})
+               "poles": {"kind": "polynomial", "points": points.iter().map(|p| json!({"u": p[0], "v": p[1]})).collect::<Vec<_>>()}})
     }
 
     #[test]
@@ -1838,7 +1836,7 @@ mod tests {
             .unwrap_err()
             .contains("200 exact pieces"));
         let mut curve = nurbs(3, &[0., 0., 0., 0., 0.3, 1., 1., 1., 1.], &poles[..5]);
-        curve["poles"] = json!({"form": "rational", "points": poles[..5].iter().enumerate().map(|(i,p)|
+        curve["poles"] = json!({"kind": "rational", "points": poles[..5].iter().enumerate().map(|(i,p)|
             json!({"point": {"u": p[0], "v": p[1]}, "weight": i+1})).collect::<Vec<_>>()});
         assert!(spline(Some(&curve))
             .unwrap_err()
@@ -1974,7 +1972,7 @@ mod tests {
         let (knots, points) = periodic_curve(3);
         let mut curve = nurbs(3, &knots, &points);
         curve["periodic"] = json!(true);
-        curve["poles"] = json!({"form": "rational", "points": points.iter().enumerate()
+        curve["poles"] = json!({"kind": "rational", "points": points.iter().enumerate()
             .map(|(i, p)| json!({"point": {"u": p[0], "v": p[1]}, "weight": i + 1})).collect::<Vec<_>>()});
         assert!(spline(Some(&curve))
             .unwrap_err()
@@ -2076,7 +2074,7 @@ mod tests {
         )
         .unwrap();
         let wire = serde_json::to_value(&model.ir.model).unwrap();
-        let mut ctx = Context::new(&wire);
+        let mut ctx = Context::testing(&wire);
         ctx.params = super::super::params::map(&model, &mut Report::default()).1;
         let feature = ctx.arena("features").first().unwrap();
         let sketch = map(

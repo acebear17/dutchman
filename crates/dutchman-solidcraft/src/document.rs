@@ -377,7 +377,7 @@ pub(crate) fn component_name(design: &str) -> String {
 pub(crate) fn feature_name(model: &Model) -> String {
     model
         .ir
-        .model
+        .geometry
         .bodies
         .first()
         .and_then(|body| body.name.as_deref())

@@ -23,10 +23,10 @@ pub(crate) fn map(
         return Err("a hole with an exit treatment is not mapped yet".to_owned());
     }
     let construction = shape.get("construction").unwrap_or(&Value::Null);
-    if construction.get("construction").and_then(Value::as_str) == Some("native_thread") {
+    if construction.get("kind").and_then(Value::as_str) == Some("native_thread") {
         return Err("a hole with native thread geometry is not mapped yet".to_owned());
     }
-    let form = construction.get("kind").unwrap_or(&Value::Null);
+    let form = construction.pointer("/value/kind").unwrap_or(&Value::Null);
     // Newer SolidCraft drills an entry-recess hole to a point as well.
     let recess_tip = crate::VersionGate::EntryRecessTip.supported(ctx.target_version);
     if definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
@@ -39,9 +39,10 @@ pub(crate) fn map(
         return Err("SolidCraft holes take a drill point only on a plain drilled hole".to_owned());
     }
     let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
-    let (thread, thread_note) = cosmetic_thread(construction.get("specification"), diameter)?;
+    let (thread, thread_note) =
+        cosmetic_thread(construction.pointer("/value/specification"), diameter)?;
     let mut hole = match (
-        construction.get("construction").and_then(Value::as_str),
+        construction.get("kind").and_then(Value::as_str),
         form.get("kind").and_then(Value::as_str),
     ) {
         (Some("form"), Some("simple")) => json!({"type": "simple"}),
@@ -752,7 +753,7 @@ fn earlier_face(
         .get("surface")
         .and_then(Value::as_str)
         .and_then(|id| ctx.row("surfaces", id))
-        .and_then(|row| row.get("geometry"))
+        .and_then(|row| row.pointer("/geometry/value"))
         .ok_or("its face's surface is missing")?;
     if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
         return Err("a hole referring to a curved face is not mapped yet".to_owned());
@@ -773,7 +774,7 @@ fn earlier_face(
     // loops in the saved result may have been introduced by this very hole; the
     // proven earlier cap has the single, filled profile reconstructed below.
     let boundary = face.get("loops").ok_or("its face's boundary is missing")?;
-    let id = match boundary.get("classification").and_then(Value::as_str) {
+    let id = match boundary.get("kind").and_then(Value::as_str) {
         Some("classified") => boundary.get("outer"),
         _ => boundary
             .get("loops")
@@ -807,7 +808,7 @@ fn earlier_face(
             .and_then(Value::as_str)
             .and_then(|id| ctx.row("curves", id));
         if curve
-            .and_then(|row| row.pointer("/geometry/kind"))
+            .and_then(|row| row.pointer("/geometry/value/kind"))
             .and_then(Value::as_str)
             != Some("line")
         {
@@ -817,7 +818,8 @@ fn earlier_face(
         }
         let reversed = coedge.get("sense").and_then(Value::as_str) == Some("reversed");
         let vertex = edge
-            .get(if reversed { "end" } else { "start" })
+            .get("ends")
+            .and_then(|ends| ends.get(if reversed { "end" } else { "start" }))
             .and_then(Value::as_str)
             .and_then(|id| ctx.row("vertices", id))
             .ok_or("its face's vertex is missing")?;
@@ -900,16 +902,13 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> 
             row.get("id")
                 .and_then(Value::as_str)
                 .is_some_and(|id| ctx.feature_names.contains_key(id))
-                && super::operation(row)
-                    .get("definition")
-                    .and_then(Value::as_str)
-                    != Some("sketch")
+                && super::operation_kind(row) != Some("sketch")
                 && row.get("ordinal").and_then(Value::as_u64)
                     < feature.get("ordinal").and_then(Value::as_u64)
         })
         .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))?;
-    let op = previous.get("definition").unwrap_or(&Value::Null);
-    if op.get("definition").and_then(Value::as_str) != Some("extrude")
+    let op = super::operation(previous);
+    if super::operation_kind(previous) != Some("extrude")
         || op.get("op").and_then(Value::as_str) != Some("new_body")
         || op.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
         || op
@@ -924,7 +923,10 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> 
         return None;
     }
     if !matches!(
-        op.pointer("/profile/kind").and_then(Value::as_str),
+        op.get("profile")
+            .map(super::profile::planar)
+            .and_then(|profile| profile.get("kind"))
+            .and_then(Value::as_str),
         Some("sketch" | "sketch_profiles")
     ) {
         return None;
@@ -1107,14 +1109,8 @@ mod tests {
     }
 
     fn hole(extra: Value) -> Value {
-        let mut hole = json!({
-            "definition": "hole",
-            "profile": {"kind": "sketch", "value": "s"},
-            "profile_filter": "circles",
-            "direction": {"x": 0.0, "y": 0.0, "z": -1.0},
-            "shape": {"construction": {"construction": "form", "kind": {"kind": "simple"}}, "diameter": 5.0},
-            "extent": {"kind": "through_all"},
-        });
+        let mut hole = json!({"kind": "hole", "value": {"profile": {"kind": "sketch", "value": "s"}, "profile_filter": "circles", "direction": {"x": 0.0, "y": 0.0, "z": -1.0}, "shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "simple"}}}, "diameter": 5.0}, "extent": {"kind": "through_all"}}});
+        let mut hole = hole["value"].take();
         if let (Some(fields), Some(more)) = (hole.as_object_mut(), extra.as_object()) {
             fields.extend(more.clone());
         }
@@ -1123,7 +1119,7 @@ mod tests {
 
     fn mapped(definition: &Value) -> Result<Value, String> {
         let model = json!({});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), sketch());
         map(
             &json!({"name": "Hole"}),
@@ -1185,7 +1181,7 @@ mod tests {
         for (entity, expected) in [("point", "p1"), ("circle", "p2")] {
             let model = json!({"sketch_entities": [
                 {"id": entity, "sketch": "s", "construction": true}]});
-            let mut ctx = Context::new(&model);
+            let mut ctx = Context::testing(&model);
             ctx.sketches.insert("s".to_owned(), sketch());
             let definition = hole(json!({"profile_filter": "all"}));
             let feature = json!({"name": "Hole"});
@@ -1255,8 +1251,9 @@ mod tests {
                 "its countersink angle is not given",
             ),
         ] {
-            let definition = hole(json!({"shape": {"construction": {
-                "construction": "form", "kind": form}, "diameter": 5.0}}));
+            let definition = hole(
+                json!({"shape": {"construction": {"kind": "form", "value": {"kind": form}}, "diameter": 5.0}}),
+            );
             assert_eq!(mapped(&definition).unwrap_err(), reason);
         }
     }
@@ -1279,7 +1276,7 @@ mod tests {
         ] {
             for to_tip in [false, true] {
                 let definition = hole(json!({
-                    "shape": {"construction": {"construction": "form", "kind": form}, "diameter": 5.0},
+                    "shape": {"construction": {"kind": "form", "value": {"kind": form}}, "diameter": 5.0},
                     "extent": {"kind": "blind", "length": 6.0},
                     "bottom": {"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip},
                 }));
@@ -1289,7 +1286,7 @@ mod tests {
                 assert_eq!(out["hole"]["tip_angle"], "118.00000000000001");
                 // Older SolidCraft would silently drop the point: refused.
                 let model = json!({});
-                let mut ctx = Context::new(&model);
+                let mut ctx = Context::testing(&model);
                 ctx.target_version = "0.22.0".parse().unwrap();
                 ctx.sketches.insert("s".to_owned(), sketch());
                 assert_eq!(
@@ -1308,10 +1305,11 @@ mod tests {
 
     #[test]
     fn other_holes_say_why_they_are_not_mapped() {
-        let counterbore = hole(json!({"shape": {"construction": {"construction": "form",
-            "kind": {"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
-                "drill_point_angle": 118_f64.to_radians()}}, "diameter": 5.0},
-            "extent": {"kind": "blind", "length": 6.0}}));
+        let counterbore = hole(
+            json!({"shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
+                "drill_point_angle": 118_f64.to_radians()}}}, "diameter": 5.0},
+            "extent": {"kind": "blind", "length": 6.0}}),
+        );
         assert_eq!(
             mapped(&counterbore).unwrap_err(),
             "SolidCraft holes take a drill point only on a plain drilled hole"

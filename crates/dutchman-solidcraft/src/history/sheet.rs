@@ -143,10 +143,12 @@ fn prove_picks(
     let geometry = state
         .get("edge_geometry")
         .and_then(Value::as_array)
+        .filter(|geometry| !geometry.is_empty())
         .ok_or("its input topology has no edge geometry")?;
     let members = state
         .get("edges")
         .and_then(Value::as_array)
+        .filter(|members| !members.is_empty())
         .ok_or("its input topology has no edges")?;
     let mut picks = Vec::new();
     let mut taken = Vec::new();
@@ -408,7 +410,7 @@ pub(super) fn attached_plate(
         .flatten()
         .find(|f| {
             let op = super::operation(f);
-            op.get("definition").and_then(Value::as_str) == Some("sheet_metal_bend")
+            super::operation_kind(f) == Some("sheet_metal_bend")
                 && op.get("plate").and_then(Value::as_str) == plate_id
         })
         .ok_or("its paired bend is missing, so the plate has no joining region")?;

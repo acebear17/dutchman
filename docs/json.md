@@ -128,6 +128,11 @@ completed documents with an unknown total. A heartbeat says the worker is runnin
 claiming that the decoder completed more work. Final report schemas remain unchanged.
 MCP and the web app return their final reports without a progress stream.
 
+A CADIR v11 design-only history uses the existing history refusal and loss fields:
+its ordered selections and evaluation states have no model-history projection, so
+conversion keeps the final geometry. This adds no report fields or schema version.
+See [the port audit](cadir-v11.md).
+
 ## Exit codes
 
 A geometry-only retry removes history, sketches, parameters and associated design records

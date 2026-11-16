@@ -68,8 +68,8 @@ fn decodes_a_fusion_unit_cube() {
     .unwrap();
 
     assert_eq!(model.name, "generated_unit_cube");
-    assert_eq!(model.ir.model.bodies.len(), 1);
-    assert_eq!(model.ir.model.faces.len(), 6);
+    assert_eq!(model.ir.geometry.bodies.len(), 1);
+    assert_eq!(model.ir.geometry.faces.len(), 6);
     assert!(model.fidelity.is_some());
 }
 
@@ -85,8 +85,8 @@ fn decodes_an_inventor_unit_cube() {
 
     assert_eq!(model.name, "synthetic_cube");
     assert_eq!(model.source_file.as_deref(), Some("synthetic_cube.ipt"));
-    assert_eq!(model.ir.model.bodies.len(), 1);
-    assert_eq!(model.ir.model.faces.len(), 6);
+    assert_eq!(model.ir.geometry.bodies.len(), 1);
+    assert_eq!(model.ir.geometry.faces.len(), 6);
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn decodes_a_solidworks_unit_cube() {
 
     assert_eq!(model.name, "solidworks_cube");
     assert_eq!(model.source_file.as_deref(), Some("solidworks_cube.sldprt"));
-    assert_eq!(model.ir.model.bodies.len(), 1);
-    assert_eq!(model.ir.model.faces.len(), 6);
+    assert_eq!(model.ir.geometry.bodies.len(), 1);
+    assert_eq!(model.ir.geometry.faces.len(), 6);
     assert!(
         model.ir.model.features.is_empty(),
         "the cube has no history"
@@ -366,7 +366,7 @@ fn progress_counts_successful_documents_and_preserves_read_results() {
         Some(&progress),
     )
     .unwrap();
-    assert_eq!(model.ir.model.bodies.len(), 1);
+    assert_eq!(model.ir.geometry.bodies.len(), 1);
     let events = events.into_inner().unwrap();
     assert_eq!(events.last().unwrap().designs_read, 1);
     assert_eq!(events.last().unwrap().designs_total, Some(1));

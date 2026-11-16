@@ -764,8 +764,8 @@ fn inspect_inner(
     Ok(Inspection {
         conversion,
         report,
-        bodies: model.ir.model.bodies.len(),
-        faces: model.ir.model.faces.len(),
+        bodies: model.ir.geometry.bodies.len(),
+        faces: model.ir.geometry.faces.len(),
         assembly: model
             .assembly
             .as_ref()

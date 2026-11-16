@@ -337,7 +337,7 @@ fn nurbs(curve: Option<&Value>) -> Result<(Vec<V3>, Vec<V3>), String> {
         .get("points")
         .and_then(Value::as_array)
         .ok_or("a spline without poles")?;
-    let rational = poles.get("form").and_then(Value::as_str) == Some("rational");
+    let rational = poles.get("kind").and_then(Value::as_str) == Some("rational");
     let mut points: Vec<V3> = Vec::with_capacity(rows.len());
     let mut weights: Vec<f64> = Vec::with_capacity(rows.len());
     for row in rows {

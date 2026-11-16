@@ -16,8 +16,11 @@ pub(crate) fn map(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Result<Value, String> {
-    let face_profile =
-        definition.pointer("/profile/kind").and_then(Value::as_str) == Some("historical_faces");
+    let reference = definition.get("profile").map(super::profile::planar);
+    let face_profile = reference
+        .and_then(|profile| profile.get("kind"))
+        .and_then(Value::as_str)
+        == Some("historical_faces");
     if face_profile
         && feature
             .get("id")
@@ -49,11 +52,13 @@ pub(crate) fn map(
         }
         super::face_profile::map(
             feature,
-            definition.pointer("/profile/value").unwrap_or(&Value::Null),
+            reference
+                .and_then(|profile| profile.get("value"))
+                .unwrap_or(&Value::Null),
             ctx,
         )?
     } else {
-        profile(definition.get("profile"), ctx)?
+        profile(reference, ctx)?
     };
     let profile_sketch = if face_profile {
         None
@@ -197,7 +202,7 @@ pub(crate) fn map(
     if !face_profile {
         let proven = match (operation, end) {
             ("new_body", Some(end)) if ctx.sole_builder => {
-                match super::cap::check(definition.get("profile"), ctx, &end) {
+                match super::cap::check(reference, ctx, &end) {
                     Ok(proven) => proven,
                     Err(reason) => {
                         ctx.profile_mismatch = true;
@@ -545,7 +550,7 @@ mod tests {
             &Value::Null,
             extent,
             forward,
-            &Context::new(&Value::Null),
+            &Context::testing(&Value::Null),
             [0.0, 0.0, 1.0],
         )
     }

@@ -227,7 +227,7 @@ pub(crate) fn whole(history: &History, model: &Model) -> bool {
     !held.is_empty()
         && model
             .ir
-            .model
+            .geometry
             .bodies
             .iter()
             .all(|body| held.contains(body.id.as_str()))
@@ -265,12 +265,10 @@ mod tests {
         let definition = json!({"bodies": {"kind": "resolved", "value": {"bodies": ["body#1"]}}});
         let model = json!({"features": [
             base(1),
-            {"id": "e", "name": "Extrude 1", "kind": "extrude", "ordinal": 2,
-                "definition": {"definition": "extrude", "op": "join"}, "outputs": ["body#1"]},
-            {"id": "m", "name": "Move 1", "kind": "move_body", "ordinal": 3,
-                "definition": {"definition": "move_body"}, "outputs": ["body#1"]},
+            {"id": "e", "name": "Extrude 1", "kind": "extrude", "ordinal": 2, "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"op": "join"}}}, "outputs": ["body#1"], "dependencies": [], "source_properties": {}, "source_content": []},
+            {"id": "m", "name": "Move 1", "kind": "move_body", "ordinal": 3, "definition": {"kind": "operation", "value": {"kind": "move_body", "value": {}}}, "outputs": ["body#1"], "dependencies": [], "source_properties": {}, "source_content": []},
         ]});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         let err = map(&base(1), &definition, &mut ctx).unwrap_err();
         assert_eq!(
             err,
@@ -281,12 +279,12 @@ mod tests {
 
     #[test]
     fn later_joins_and_cuts_re_apply_and_others_do_not() {
-        let row = |kind: &str, op: &str| json!({"kind": kind, "definition": {"definition": kind, "op": op}});
+        let row = |kind: &str, op: &str| json!({"kind": kind, "definition": {"kind":"operation", "value": {"kind": kind, "value": {"op": op}}}});
         assert!(reapplies(&row("extrude", "join")));
         assert!(reapplies(&row("revolve", "cut")));
         assert!(reapplies(&row("loft", "intersect")));
         assert!(reapplies(
-            &json!({"kind": "hole", "definition": {"definition": "hole"}})
+            &json!({"kind": "hole", "definition": {"kind":"operation", "value": {"kind": "hole", "value": {}}}})
         ));
         assert!(!reapplies(&row("extrude", "new_body")));
         assert!(!reapplies(&row("fillet", "")));
@@ -298,7 +296,7 @@ mod tests {
             {"id": "s", "name": "Move 2", "ordinal": 3, "outputs": ["body#1"], "suppressed": true},
             {"id": "o", "name": "Extrude 1", "ordinal": 4, "outputs": ["body#2"]},
         ]});
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         assert!(later_changes(&base(1), &["body#1"], &ctx).is_empty());
     }
 }

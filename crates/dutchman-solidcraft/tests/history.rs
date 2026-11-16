@@ -19,12 +19,7 @@ use zip::ZipArchive;
 const SKETCH: &str = "f3d:model:sketch#1";
 
 fn entity(key: u32, geometry: Value) -> Value {
-    json!({
-        "id": format!("f3d:model:sketch-entity#{key}"),
-        "sketch": SKETCH,
-        "construction": false,
-        "geometry": geometry,
-    })
+    json!({"id": format!("f3d:model:sketch-entity#{key}"), "sketch": SKETCH, "construction": false, "geometry": geometry, "endpoint_refs": []})
 }
 
 fn line(key: u32, a: [f64; 2], b: [f64; 2]) -> Value {
@@ -39,8 +34,8 @@ fn line(key: u32, a: [f64; 2], b: [f64; 2]) -> Value {
 fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
     let mut wire = serde_json::to_value(&ir).unwrap();
+    wire["geometry"]["bodies"][0]["color"] = json!({"r": 0.8, "g": 0.2, "b": 0.1, "a": 1.0});
     let model = &mut wire["model"];
-    model["bodies"][0]["color"] = json!({"r": 0.8, "g": 0.2, "b": 0.1, "a": 1.0});
     model["sketches"] = json!([{
         "id": SKETCH,
         "name": "Base",
@@ -50,10 +45,10 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
             "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
         }},
         "profiles": [[
-            {"entity": "f3d:model:sketch-entity#1"},
-            {"entity": "f3d:model:sketch-entity#2"},
-            {"entity": "f3d:model:sketch-entity#3"},
-            {"entity": "f3d:model:sketch-entity#4"},
+            {"entity": "f3d:model:sketch-entity#1", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#2", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#3", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#4", "reversed": false},
         ]],
     }]);
     model["sketch_entities"] = json!([
@@ -100,53 +95,19 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         ),
         constraint(
             6,
-            json!({"kind": "native", "native_kind": "Fusion only", "entities": ["f3d:model:sketch-entity#3"]})
+            json!({"kind": "native", "native_kind": "Fusion only", "entities": ["f3d:model:sketch-entity#3"], "native_properties": {}, "operands": []})
         ),
     ]);
     let extent = extent.unwrap_or_else(|| {
         json!({"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": length}}})
     });
     model["features"] = json!([
-        {
-            "id": "f3d:model:feature#1",
-            "ordinal": 0,
-            "name": "Base sketch",
-            "suppressed": false,
-            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": SKETCH}},
-        },
-        {
-            "id": "f3d:model:feature#2",
-            "ordinal": 1,
-            "name": "Block",
-            "suppressed": false,
-            "dependencies": ["f3d:model:feature#1"],
-            "outputs": ["synthetic:cube:body#0"],
-            "definition": {
-                "definition": "extrude",
-                "profile": profile,
-                "direction": {"kind": "profile_normal"},
-                "start": {"kind": "profile_plane"},
-                "extent": extent,
-                "op": "new_body",
-            },
-        },
+        {"id": "f3d:model:feature#1", "ordinal": 0, "name": "Base sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": SKETCH}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+        {"id": "f3d:model:feature#2", "ordinal": 1, "name": "Block", "suppressed": false, "dependencies": ["f3d:model:feature#1"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": profile}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": extent, "op": "new_body"}}}, "source_properties": {}, "source_content": []},
     ]);
     model["parameters"] = json!([
-        {
-            "id": "f3d:model:parameter#1",
-            "owner": "f3d:model:feature#2",
-            "name": "d1",
-            "expression": format!("{length} mm"),
-            "value": {"kind": "length", "value": length},
-        },
-        {
-            "id": "f3d:model:parameter#2",
-            "owner": "f3d:model:feature#1",
-            "ordinal": 1,
-            "name": "side",
-            "expression": "10 mm",
-            "value": {"kind": "length", "value": 10.0},
-        },
+        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "d1", "expression": format!("{length} mm"), "value": {"kind": "length", "value": length}, "ordinal": 0, "dependencies": [], "properties": {}},
+        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#1", "ordinal": 1, "name": "side", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "dependencies": [], "properties": {}},
     ]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -162,6 +123,19 @@ const TOP: &str = "f3d:model:sketch#2";
 
 /// The example cube built instead by a loft from its 10 mm base square to a square of side
 /// `top` centred above it, 10 mm up; `change` edits the loft's definition.
+fn loft_section(section: Value) -> Value {
+    let kind = match section["kind"].as_str() {
+        Some("point" | "native_point" | "vertex") => "point",
+        _ => "profile",
+    };
+    let section = if kind == "profile" {
+        json!({"kind": "planar", "value": section})
+    } else {
+        section
+    };
+    json!({"kind": kind, "value": section})
+}
+
 fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
@@ -169,7 +143,7 @@ fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
     let mut sketches = model["sketches"].as_array().unwrap().clone();
     let (a, b) = (5.0 - top / 2.0, 5.0 + top / 2.0);
     let top_loop: Vec<Value> = [11, 12, 13, 14]
-        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}"), "reversed": false}))
         .to_vec();
     sketches.push(json!({
         "id": TOP,
@@ -194,34 +168,24 @@ fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
         top_line(13, [b, b], [a, b]),
         top_line(14, [a, b], [a, a]),
     ]);
-    let mut definition = json!({
-        "definition": "loft",
-        "sections": [
+    let mut definition = json!({"kind": "loft", "value": {"sections": [
             first_profile(),
             {"kind": "sketch_profiles", "value": {"sketch": TOP, "profiles": [0]}},
-        ],
-        "guidance": {"kind": "guides", "path": []},
-        "op": "new_body",
-    });
-    change(&mut definition);
+        ], "guidance": {"kind": "guides", "value": []}, "op": "new_body", "closed": false, "solid": true, "ruled": false, "linearize": false}});
+    change(&mut definition["value"]);
+    if definition["value"].get("kind").is_some() {
+        definition = definition["value"].take();
+    } else {
+        let sections = definition["value"]["sections"].as_array_mut().unwrap();
+        for section in sections {
+            *section = loft_section(section.take());
+        }
+    }
+
     model["features"] = json!([
         model["features"][0].clone(),
-        {
-            "id": "f3d:model:feature#3",
-            "ordinal": 1,
-            "name": "Top sketch",
-            "suppressed": false,
-            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": TOP}},
-        },
-        {
-            "id": "f3d:model:feature#2",
-            "ordinal": 2,
-            "name": "Block",
-            "suppressed": false,
-            "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"],
-            "outputs": ["synthetic:cube:body#0"],
-            "definition": definition,
-        },
+        {"id": "f3d:model:feature#3", "ordinal": 1, "name": "Top sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": TOP}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+        {"id": "f3d:model:feature#2", "ordinal": 2, "name": "Block", "suppressed": false, "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": definition}, "source_properties": {}, "source_content": []},
     ]);
     // The extrude's length parameter has no feature to own it now.
     model["parameters"] = json!([model["parameters"][1].clone()]);
@@ -254,35 +218,13 @@ fn sweep_history(change: impl FnOnce(&mut Value)) -> Model {
     let mut path = line(21, [0.0, 0.0], [0.0, 10.0]);
     path["sketch"] = json!(PATH);
     model["sketch_entities"].as_array_mut().unwrap().push(path);
-    let mut definition = json!({
-        "definition": "sweep",
-        "shape": {"mode": "solid", "op": "new_body",
-                  "section": {"kind": "profile", "value": first_profile()}},
-        "path": {"kind": "sketch_curves",
-                 "value": {"sketch": PATH, "curves": ["f3d:model:sketch-entity#21"]}},
-        "path_tangent": false,
-        "linearize": false,
-        "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0},
-    });
-    change(&mut definition);
+    let mut definition = json!({"kind": "sweep", "value": {"shape": {"kind": "solid", "op": "new_body", "section": {"kind": "profile", "value": first_profile()}, "sections": []}, "path": {"kind": "sketch_curves",
+                 "value": {"sketch": PATH, "curves": ["f3d:model:sketch-entity#21"]}}, "path_tangent": false, "linearize": false, "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0}}});
+    change(&mut definition["value"]);
     model["features"] = json!([
         model["features"][0].clone(),
-        {
-            "id": "f3d:model:feature#3",
-            "ordinal": 1,
-            "name": "Path sketch",
-            "suppressed": false,
-            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": PATH}},
-        },
-        {
-            "id": "f3d:model:feature#2",
-            "ordinal": 2,
-            "name": "Block",
-            "suppressed": false,
-            "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"],
-            "outputs": ["synthetic:cube:body#0"],
-            "definition": definition,
-        },
+        {"id": "f3d:model:feature#3", "ordinal": 1, "name": "Path sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": PATH}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+        {"id": "f3d:model:feature#2", "ordinal": 2, "name": "Block", "suppressed": false, "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": definition}, "source_properties": {}, "source_content": []},
     ]);
     model["parameters"] = json!([model["parameters"][1].clone()]);
     Model {
@@ -336,12 +278,7 @@ fn xyz(p: [f64; 3]) -> Value {
 }
 
 fn spatial_entity(key: u32, geometry: Value) -> Value {
-    json!({
-        "id": format!("f3d:model:spatial-sketch-entity#{key}"),
-        "sketch": SPATIAL,
-        "construction": false,
-        "geometry": geometry,
-    })
+    json!({"id": format!("f3d:model:spatial-sketch-entity#{key}"), "sketch": SPATIAL, "construction": false, "geometry": geometry, "endpoint_refs": []})
 }
 
 fn spatial_id(key: u32) -> String {
@@ -355,7 +292,7 @@ fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Mo
     let base = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
-    model["spatial_sketches"] = json!([{"id": SPATIAL, "name": "Rail"}]);
+    model["spatial_sketches"] = json!([{"id": SPATIAL, "name": "Rail", "profiles": []}]);
     let mut entities = vec![
         spatial_entity(
             1,
@@ -372,42 +309,20 @@ fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Mo
             json!({"kind": "nurbs", "curve": {
                 "degree": 3,
                 "knots": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
-                "poles": {"form": "polynomial", "points": [
+                "poles": {"kind": "polynomial", "points": [
                     xyz([20.0, 0.0, 50.0]), xyz([30.0, 0.0, 50.0]),
                     xyz([40.0, 5.0, 52.0]), xyz([50.0, 10.0, 60.0])]},
                 "periodic": false}}),
         ),
     ];
-    let mut definition = json!({
-        "definition": "sweep",
-        "shape": {"mode": "solid", "op": "new_body",
-                  "section": {"kind": "profile", "value": first_profile()}},
-        "path": {"kind": "spatial_sketch_curves",
-                 "value": {"sketch": SPATIAL, "curves": [spatial_id(1), spatial_id(2), spatial_id(3)]}},
-        "path_tangent": false,
-        "linearize": false,
-        "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0},
-    });
-    change(&mut entities, &mut definition);
+    let mut definition = json!({"kind": "sweep", "value": {"shape": {"kind": "solid", "op": "new_body", "section": {"kind": "profile", "value": first_profile()}, "sections": []}, "path": {"kind": "spatial_sketch_curves",
+                 "value": {"sketch": SPATIAL, "curves": [spatial_id(1), spatial_id(2), spatial_id(3)]}}, "path_tangent": false, "linearize": false, "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0}}});
+    change(&mut entities, &mut definition["value"]);
     model["spatial_sketch_entities"] = Value::Array(entities);
     model["features"] = json!([
         model["features"][0].clone(),
-        {
-            "id": "f3d:model:feature#3",
-            "ordinal": 1,
-            "name": "Rail sketch",
-            "suppressed": false,
-            "definition": {"definition": "spatial_sketch", "sketch": SPATIAL},
-        },
-        {
-            "id": "f3d:model:feature#2",
-            "ordinal": 2,
-            "name": "Block",
-            "suppressed": false,
-            "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"],
-            "outputs": ["synthetic:cube:body#0"],
-            "definition": definition,
-        },
+        {"id": "f3d:model:feature#3", "ordinal": 1, "name": "Rail sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "spatial_sketch", "value": {"sketch": SPATIAL}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+        {"id": "f3d:model:feature#2", "ordinal": 2, "name": "Block", "suppressed": false, "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": definition}, "source_properties": {}, "source_content": []},
     ]);
     model["parameters"] = json!([model["parameters"][1].clone()]);
     Model {
@@ -608,7 +523,7 @@ fn sweep_options_keep_their_units_and_result_mode() {
         ] {
             let model = sweep_history(|d| {
                 if surface {
-                    d["shape"]["mode"] = json!("surface");
+                    d["shape"]["kind"] = json!("surface");
                     d["shape"].as_object_mut().unwrap().remove("op");
                 }
                 for (key, value) in change.as_object().unwrap() {
@@ -738,11 +653,7 @@ fn railed_sweep_history(whole_sketch: bool) -> Model {
         .push(json!("f3d:model:feature#4"));
     features.insert(
         2,
-        json!({
-            "id": "f3d:model:feature#4", "ordinal": 2, "name": "Rail sketch",
-            "suppressed": false,
-            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": RAIL}},
-        }),
+        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Rail sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": RAIL}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     );
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -834,7 +745,7 @@ fn solidcraft_replays_scaled_and_binormal_sweeps_and_surface_sweeps() {
     assert!((volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE);
 
     let surface = sweep_history(|d| {
-        d["shape"]["mode"] = json!("surface");
+        d["shape"]["kind"] = json!("surface");
         d["shape"].as_object_mut().unwrap().remove("op");
     });
     let boxes = bounds(&cli, &written(&surface).0);
@@ -853,7 +764,7 @@ fn solidcraft_replays_scaled_and_binormal_sweeps_and_surface_sweeps() {
 fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
     for (change, reason) in [
         (
-            json!({"shape": {"mode": "surface", "section": {"kind": "unresolved", "value": null}}}),
+            json!({"shape": {"kind": "surface", "section": {"kind": "unresolved"}, "sections": []}}),
             "its sweep section is not resolved",
         ),
         (
@@ -895,9 +806,7 @@ fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
             "sweeps with linear section interpolation are not mapped yet",
         ),
         (
-            json!({"shape": {"mode": "solid", "op": "new_body",
-                "section": {"kind": "profile", "value": first_profile()},
-                "sections": [{"kind": "profile", "value": first_profile()}]}}),
+            json!({"shape": {"kind": "solid", "op": "new_body", "section": {"kind": "profile", "value": first_profile()}, "sections": [{"kind": "profile", "value": first_profile()}]}}),
             "sweeps through several sections are not mapped yet",
         ),
         (
@@ -938,9 +847,8 @@ fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
             "sweeps with native smooth section interpolation are not mapped yet",
         ),
         (
-            json!({"shape": {"mode": "solid", "op": "new_body",
-                "section": {"kind": "generated", "value": {
-                    "shape": "circular_region", "region": {"outer_radius": 2.0}}}}}),
+            json!({"shape": {"kind": "solid", "op": "new_body", "section": {"kind": "generated", "value": {
+                    "kind": "circular_region", "region": {"outer_radius": 2.0}}}, "sections": []}}),
             "sweeps with generated circular sections are not mapped yet",
         ),
     ] {
@@ -1061,7 +969,7 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
             "lofts with a degree limit are not mapped yet",
         ),
         (
-            json!({"guidance": {"kind": "centerline", "path": {"kind": "native", "value": "n"}}}),
+            json!({"guidance": {"kind": "centerline", "value": {"kind": "native", "value": "n"}}}),
             "lofts along a centreline are not mapped yet",
         ),
         (
@@ -1123,19 +1031,22 @@ fn pointed_loft(vertex: bool, first: bool) -> Model {
         return model;
     }
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["points"].as_array_mut().unwrap().push(json!({
-        "id": "synthetic:apex:point#0",
-        "position": {"x": 5.0, "y": 5.0, "z": 10.0},
-    }));
-    wire["model"]["vertices"]
+    wire["geometry"]["points"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "synthetic:apex:point#0",
+            "position": {"x": 5.0, "y": 5.0, "z": 10.0},
+        }));
+    wire["geometry"]["vertices"]
         .as_array_mut()
         .unwrap()
         .push(json!({
             "id": "synthetic:apex:vertex#0", "point": "synthetic:apex:point#0",
         }));
     let index = if first { 0 } else { 1 };
-    wire["model"]["features"][2]["definition"]["sections"][index] =
-        json!({"kind": "vertex", "value": "synthetic:apex:vertex#0"});
+    wire["model"]["features"][2]["definition"]["value"]["value"]["sections"][index] =
+        loft_section(json!({"kind": "vertex", "value": "synthetic:apex:vertex#0"}));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1195,7 +1106,7 @@ fn shared_sketch_loft() -> Model {
     let model = loft_history(10.0, |definition| {
         definition["sections"].as_array_mut().unwrap().push(json!({
             "kind": "sketch_regions", "value": {"sketch": SKETCH,
-            "regions": [{"region": "loops", "outer": 1, "holes": []}]},
+            "regions": [{"kind": "loops", "outer": 1, "holes": []}]},
         }));
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
@@ -1204,10 +1115,10 @@ fn shared_sketch_loft() -> Model {
         .as_array_mut()
         .unwrap()
         .push(json!([
-            {"entity": "f3d:model:sketch-entity#41"},
-            {"entity": "f3d:model:sketch-entity#42"},
-            {"entity": "f3d:model:sketch-entity#43"},
-            {"entity": "f3d:model:sketch-entity#44"},
+            {"entity": "f3d:model:sketch-entity#41", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#42", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#43", "reversed": false},
+            {"entity": "f3d:model:sketch-entity#44", "reversed": false},
         ]));
     m["sketch_entities"].as_array_mut().unwrap().extend([
         line(41, [20.0, 0.0], [30.0, 0.0]),
@@ -1238,9 +1149,9 @@ fn a_loft_section_taking_several_loops_of_its_sketch_is_refused() {
             .as_array_mut()
             .unwrap()
             .iter_mut()
-            .find(|f| f["definition"]["definition"] == "loft")
+            .find(|f| f["definition"]["value"]["kind"] == "loft")
             .unwrap();
-        loft["definition"]["sections"][0] = section;
+        loft["definition"]["value"]["value"]["sections"][0] = loft_section(section);
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..model
@@ -1363,7 +1274,7 @@ const RAIL: &str = "f3d:model:sketch#4";
 /// its own sketch on XZ before the loft.
 fn railed_loft(top: f64) -> Model {
     let model = loft_history(top, |definition| {
-        definition["guidance"] = json!({"kind": "guides", "path": [
+        definition["guidance"] = json!({"kind": "guides", "value": [
             {"kind": "sketch_curves", "value": {"sketch": RAIL, "curves": ["f3d:model:sketch-entity#31"]}}
         ]});
     });
@@ -1385,13 +1296,7 @@ fn railed_loft(top: f64) -> Model {
     let features = m["features"].as_array_mut().unwrap();
     features.insert(
         2,
-        json!({
-            "id": "f3d:model:feature#4",
-            "ordinal": 2,
-            "name": "Rail sketch",
-            "suppressed": false,
-            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": RAIL}},
-        }),
+        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Rail sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": RAIL}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     );
     features[3]["ordinal"] = json!(3);
     Model {
@@ -1406,7 +1311,8 @@ fn whole_sketch_railed_loft(split: bool) -> Model {
     let model = railed_loft(10.0);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
-    m["features"][3]["definition"]["guidance"]["path"] = json!([{"kind": "sketch", "value": RAIL}]);
+    m["features"][3]["definition"]["value"]["value"]["guidance"]["value"] =
+        json!([{"kind": "sketch", "value": RAIL}]);
     let entities = m["sketch_entities"].as_array_mut().unwrap();
     if split {
         let first = entities
@@ -1471,7 +1377,7 @@ fn a_whole_sketch_loft_rail_is_its_one_curve() {
 #[test]
 fn a_loft_rail_of_edges_is_refused() {
     let model = loft_history(10.0, |definition| {
-        definition["guidance"] = json!({"kind": "guides", "path": [
+        definition["guidance"] = json!({"kind": "guides", "value": [
             {"kind": "edges", "value": []}
         ]});
     });
@@ -1529,7 +1435,7 @@ fn a_loft_along_a_guide_rail_keeps_its_rail() {
     let three = loft_history(10.0, |definition| {
         let rail = json!({"kind": "sketch_curves", "value": {"sketch": TOP, "curves": ["f3d:model:sketch-entity#11"]}});
         definition["guidance"] =
-            json!({"kind": "guides", "path": [rail.clone(), rail.clone(), rail]});
+            json!({"kind": "guides", "value": [rail.clone(), rail.clone(), rail]});
     });
     let (_, report) = convert(
         &three,
@@ -1593,8 +1499,8 @@ fn ruled_and_surface_lofts_map_to_what_solidcraft_builds() {
     let railed = railed_loft(10.0);
     let mut wire = serde_json::to_value(&railed.ir).unwrap();
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
-        if feature["definition"]["definition"] == "loft" {
-            feature["definition"]["ruled"] = json!(true);
+        if feature["definition"]["value"]["kind"] == "loft" {
+            feature["definition"]["value"]["value"]["ruled"] = json!(true);
         }
     }
     let model = Model {
@@ -1702,8 +1608,8 @@ fn transition_geometry_history(property: Option<&str>) -> Model {
     cut["id"] = json!("f3d:model:feature#3");
     cut["ordinal"] = json!(2);
     cut["name"] = json!("Missed cut");
-    cut["definition"]["op"] = json!("cut");
-    cut["definition"]["profile"] = json!({
+    cut["definition"]["value"]["value"]["op"] = json!("cut");
+    cut["definition"]["value"]["value"]["profile"]["value"] = json!({
         "kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [99]}
     });
     if let Some(property) = property {
@@ -1713,8 +1619,8 @@ fn transition_geometry_history(property: Option<&str>) -> Model {
     later["id"] = json!("f3d:model:feature#4");
     later["ordinal"] = json!(3);
     later["name"] = json!("Later cut");
-    later["definition"]["op"] = json!("cut");
-    later["definition"]["extent"]["side"]["termination"]["length"] = json!(1.0);
+    later["definition"]["value"]["value"]["op"] = json!("cut");
+    later["definition"]["value"]["value"]["extent"]["side"]["termination"]["length"] = json!(1.0);
     features.extend([cut, later]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
@@ -1831,7 +1737,7 @@ fn as_built_joints_between_features_do_not_stop_history() {
                 "id": "f3d:model:feature#3", "ordinal": 1,
                 // Recognition must use the source kind, not a user-editable display name.
                 "name": "Renamed joint", "source_tag": source_tag, "suppressed": false,
-                "definition": {"definition": "native", "kind": source_tag, "parameters": {}},
+                "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": source_tag, "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [],
             }));
         let changed = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -1868,19 +1774,11 @@ fn a_native_feature_named_as_built_still_stops_history() {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3", "ordinal": 1, "name": "As-built Joint 1",
-            "suppressed": false,
-            "definition": {"definition": "native", "kind": "Other operation", "parameters": {}},
-        }));
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 1, "name": "As-built Joint 1", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Other operation", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#4", "ordinal": 2, "name": "Renamed joint",
-            "source_tag": "As-built", "suppressed": false,
-            "definition": {"definition": "native", "kind": "As-built", "parameters": {}},
-        }));
+        .push(json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Renamed joint", "source_tag": "As-built", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "As-built", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     let changed = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1946,7 +1844,8 @@ fn a_symmetric_through_all_extent_is_mapped() {
 /// The final cube with a blocked feature between two otherwise mapped sketch features.
 fn reference_sketch_history() -> Model {
     let mut model = loft_history(10.0, |definition| {
-        *definition = json!({"definition": "native", "kind": "Reference blocker"});
+        *definition =
+            json!({"kind": "native", "value": {"kind": "Reference blocker", "parameters": {}}});
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["ordinal"] = json!(2);
@@ -2242,25 +2141,10 @@ fn ring_history(extent: Value) -> Model {
         line(4, [5.0, -10.0], [5.0, 0.0]),
     ]);
     m["sketch_constraints"] = json!([]);
-    m["features"][1] = json!({
-        "id": "f3d:model:feature#2",
-        "ordinal": 1,
-        "name": "Ring",
-        "suppressed": false,
-        "definition": {
-            "definition": "revolve",
-            "construction": {
-                "state": "resolved",
-                "profile": whole_sketch(),
-                "axis": {
+    m["features"][1] = json!({"id": "f3d:model:feature#2", "ordinal": 1, "name": "Ring", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "revolve", "value": {"construction": {"kind": "resolved", "value": {"profile": whole_sketch(), "axis": {
                     "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "direction": {"x": 0.0, "y": 0.0, "z": 1.0},
-                },
-                "extent": extent,
-            },
-            "op": "new_body",
-        },
-    });
+                }, "extent": extent}}, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -2269,7 +2153,7 @@ fn changed_ring(change: impl FnOnce(&mut Value)) -> Model {
     let mut model = ring_history(json!({"kind": "one_sided",
         "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    change(&mut wire["model"]["features"][1]["definition"]["construction"]);
+    change(&mut wire["model"]["features"][1]["definition"]["value"]["value"]["construction"]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -2296,33 +2180,28 @@ fn helical_history(change: impl FnOnce(&mut Value)) -> Model {
             "kind": "circle", "center": {"u": 10.0, "v": 0.0}, "radius": 1.0
         })
     )]);
-    m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+    m["sketches"][0]["profiles"] =
+        json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
     m["sketches"][0]["placement"]["frame"] = json!({
         "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
         "normal": {"x": 0.0, "y": -0.9968486721503291, "z": -0.0793266968436579},
         "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
     });
     m["parameters"] = json!([
-        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "Pitch",
-         "expression": "5 mm", "value": {"kind": "length", "value": 5.0}},
-        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#2", "name": "Height",
-         "expression": "20 mm", "value": {"kind": "length", "value": 20.0}},
-        {"id": "f3d:model:parameter#3", "owner": "f3d:model:feature#2", "name": "Turns",
-         "expression": "4", "value": {"kind": "real", "value": 4.0}}
+        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "Pitch", "expression": "5 mm", "value": {"kind": "length", "value": 5.0}, "ordinal": 0, "dependencies": [], "properties": {}},
+        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#2", "name": "Height", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "ordinal": 0, "dependencies": [], "properties": {}},
+        {"id": "f3d:model:parameter#3", "owner": "f3d:model:feature#2", "name": "Turns", "expression": "4", "value": {"kind": "real", "value": 4.0}, "ordinal": 0, "dependencies": [], "properties": {}}
     ]);
-    m["features"][1]["definition"] = json!({
-        "definition": "post_process", "refine": true, "fuzzy_tolerance": {"kind": "kernel_default"},
-        "operation": {"definition": "helical_sweep", "op": "join", "construction": {
-            "profile": {"kind": "sketch", "value": SKETCH},
-            "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "axis_direction": {"x": 1e-16, "y": -1e-16, "z": 1.0},
-            "law": "pitch_height_angle", "pitch": 5.0,
-            "travel": {"kind": "axial", "height": 20.0}, "turns": 4.0,
-            "cone_angle": 0.0, "left_handed": false, "reversed": false,
-            "tolerance": 0.0001, "allow_multi_profile_faces": false
-        }}
-    });
-    change(&mut m["features"][1]["definition"]["operation"]);
+    m["features"][1]["definition"] = json!({"kind": "post_process", "value": {"refine": true, "fuzzy_tolerance": {"kind": "kernel_default"}, "operation": {"kind": "helical_sweep", "value": {"op": "join", "construction": {
+        "profile": {"kind": "sketch", "value": SKETCH},
+        "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "axis_direction": {"x": 1e-16, "y": -1e-16, "z": 1.0},
+        "law": "pitch_height_angle", "pitch": 5.0,
+        "travel": {"kind": "axial", "height": 20.0}, "turns": 4.0,
+        "cone_angle": 0.0, "left_handed": false, "reversed": false,
+        "tolerance": 0.0001, "allow_multi_profile_faces": false
+    }}}}});
+    change(&mut m["features"][1]["definition"]["value"]["operation"]["value"]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -2556,8 +2435,8 @@ fn one_sided_revolves_follow_the_oriented_axis() {
                     let mut wire = serde_json::to_value(&model.ir).unwrap();
                     wire["model"]["sketches"][0]["placement"]["frame"]["normal"]["y"] =
                         json!(normal);
-                    wire["model"]["features"][1]["definition"]["construction"]["axis"]
-                        ["direction"]["z"] = json!(axis);
+                    wire["model"]["features"][1]["definition"]["value"]["value"]["construction"]
+                        ["value"]["axis"]["direction"]["z"] = json!(axis);
                     for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
                         for end in ["start", "end"] {
                             let point = &mut entity["geometry"][end];
@@ -2573,7 +2452,8 @@ fn one_sided_revolves_follow_the_oriented_axis() {
                             "normal": {"x": 0.0, "y": 0.0, "z": normal},
                             "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}
                         });
-                        wire["model"]["features"][1]["definition"]["construction"]["axis"] = json!({
+                        wire["model"]["features"][1]["definition"]["value"]["value"]
+                            ["construction"]["value"]["axis"] = json!({
                             "origin": {"x": 11.0, "y": 22.0, "z": 33.0},
                             "direction": {"x": axis, "y": 0.0, "z": 0.0}
                         });
@@ -2648,7 +2528,8 @@ fn one_sided_revolves_keep_selected_curves_and_a_sketch_axis() {
             "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         // Move the axis to the inner profile edge. Its sketch line runs opposite +Z.
-        let construction = &mut wire["model"]["features"][1]["definition"]["construction"];
+        let construction = &mut wire["model"]["features"][1]["definition"]["value"]["value"]
+            ["construction"]["value"];
         construction["axis"]["origin"]["x"] = json!(5.0);
         construction["axis"]["direction"]["z"] = json!(axis);
         construction["axis"]["reference"] = json!({"kind": "sketch_curves", "value": {
@@ -2698,9 +2579,10 @@ fn one_sided_revolves_bound_circular_profiles() {
             json!({"kind": "circle",
             "center": {"u": radial, "v": -5.0}, "radius": 2.0})
         )]);
-        wire["model"]["features"][1]["definition"]["construction"]["profile"] = whole_sketch();
+        wire["model"]["features"][1]["definition"]["value"]["value"]["construction"]["value"]
+            ["profile"] = whole_sketch();
         wire["model"]["sketches"][0]["profiles"] =
-            json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+            json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (design, report) = written(&model);
         if radial == 0.0 {
@@ -2869,10 +2751,10 @@ fn revolve_axis_sources_use_the_resolved_line_placement() {
     ] {
         let model = changed_ring(|construction| {
             if !reference.is_null() {
-                construction["axis"]["reference"] = reference;
+                construction["value"]["axis"]["reference"] = reference;
             }
-            construction["axis"]["origin"]["z"] = json!(3.0);
-            construction["axis"]["direction"]["z"] = json!(-2.0);
+            construction["value"]["axis"]["origin"]["z"] = json!(3.0);
+            construction["value"]["axis"]["direction"]["z"] = json!(-2.0);
         });
         let (document, report) = convert(
             &model,
@@ -2892,8 +2774,8 @@ fn revolve_axis_sources_use_the_resolved_line_placement() {
 fn a_revolve_about_a_line_of_its_sketch_keeps_that_line() {
     // The rectangle's inner side, 5 mm out from Z, turns the ring into a cylinder.
     let model = changed_ring(|construction| {
-        construction["axis"]["origin"]["x"] = json!(5.0);
-        construction["axis"]["reference"] = json!({"kind": "sketch_curves", "value": {
+        construction["value"]["axis"]["origin"]["x"] = json!(5.0);
+        construction["value"]["axis"]["reference"] = json!({"kind": "sketch_curves", "value": {
             "sketch": SKETCH, "curves": ["f3d:model:sketch-entity#4"]}});
     });
     let (document, report) = convert(
@@ -2926,9 +2808,9 @@ fn surface_revolves_short_of_a_full_turn_map() {
     let quarter = json!({"kind": "symmetric",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
     let model = changed_ring(|construction| {
-        construction["solid"] = json!(false);
-        construction["face_maker_class"] = json!("Part::FaceMakerBullseye");
-        construction["extent"] = quarter;
+        construction["value"]["solid"] = json!(false);
+        construction["value"]["face_maker_class"] = json!("Part::FaceMakerBullseye");
+        construction["value"]["extent"] = quarter;
     });
     let (document, report) = convert(
         &model,
@@ -2953,7 +2835,7 @@ fn surface_revolves_short_of_a_full_turn_map() {
         assert!((min[1] + max[1]).abs() < 1e-6 && max[1] > 0.0, "{boxes:?}");
     }
 
-    let model = changed_ring(|construction| construction["solid"] = json!(false));
+    let model = changed_ring(|construction| construction["value"]["solid"] = json!(false));
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -2974,7 +2856,8 @@ fn revolve_construction_options_map_or_name_the_face_maker() {
         "Part::FaceMakerUnified",
         "SyntheticFaceMaker",
     ] {
-        let model = changed_ring(|construction| construction["face_maker_class"] = json!(maker));
+        let model =
+            changed_ring(|construction| construction["value"]["face_maker_class"] = json!(maker));
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -2992,7 +2875,7 @@ fn revolve_construction_options_map_or_name_the_face_maker() {
     ] {
         let model = changed_ring(|construction| {
             for (key, value) in change.as_object().unwrap() {
-                construction[key] = value.clone();
+                construction["value"][key] = value.clone();
             }
         });
         let (document, report) = convert(
@@ -3012,9 +2895,12 @@ fn revolve_construction_options_map_or_name_the_face_maker() {
 fn unresolved_revolve_inputs_name_the_missing_operand() {
     for missing in ["profile", "axis", "extent"] {
         let model = changed_ring(|construction| {
-            construction["state"] = json!("unresolved");
-            construction["missing"] = json!(missing);
-            construction.as_object_mut().unwrap().remove(missing);
+            construction["kind"] = json!("unresolved");
+            construction["value"]["kind"] = json!(missing);
+            construction["value"]
+                .as_object_mut()
+                .unwrap()
+                .remove(missing);
         });
         let (_, report) = convert(
             &model,
@@ -3036,47 +2922,20 @@ fn holed_cube(diameter: f64, change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
-    m["sketches"].as_array_mut().unwrap().push(json!({
-        "id": HOLES,
-        "name": "Holes",
-        "placement": {"kind": "resolved", "frame": {
+    m["sketches"].as_array_mut().unwrap().push(
+        json!({"id": HOLES, "name": "Holes", "placement": {"kind": "resolved", "frame": {
             "origin": {"x": 0.0, "y": 0.0, "z": 10.0},
             "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
             "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
-        }},
-    }));
-    m["sketch_entities"].as_array_mut().unwrap().push(json!({
-        "id": "f3d:model:sketch-entity#9",
-        "sketch": HOLES,
-        "construction": false,
-        "geometry": {"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 2.0},
-    }));
-    let mut hole = json!({
-        "definition": "hole",
-        "profile": {"kind": "sketch", "value": HOLES},
-        "profile_filter": "circles",
-        "direction": {"x": 0.0, "y": 0.0, "z": -1.0},
-        "shape": {"construction": {"construction": "form", "kind": {"kind": "simple"}},
-                  "diameter": diameter},
-        "extent": {"kind": "through_all"},
-    });
-    change(&mut hole);
+        }}, "profiles": []}),
+    );
+    m["sketch_entities"].as_array_mut().unwrap().push(json!({"id": "f3d:model:sketch-entity#9", "sketch": HOLES, "construction": false, "geometry": {"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 2.0}, "endpoint_refs": []}));
+    let mut hole = json!({"kind": "hole", "value": {"profile": {"kind": "sketch", "value": HOLES}, "profile_filter": "circles", "direction": {"x": 0.0, "y": 0.0, "z": -1.0}, "shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "simple"}}},
+                  "diameter": diameter}, "extent": {"kind": "through_all"}}});
+    change(&mut hole["value"]);
     let features = m["features"].as_array_mut().unwrap();
-    features.push(json!({
-        "id": "f3d:model:feature#3",
-        "ordinal": 2,
-        "name": "Hole sketch",
-        "suppressed": false,
-        "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": HOLES}},
-    }));
-    features.push(json!({
-        "id": "f3d:model:feature#4",
-        "ordinal": 3,
-        "name": "Hole",
-        "suppressed": false,
-        "dependencies": ["f3d:model:feature#3", "f3d:model:feature#2"],
-        "definition": hole,
-    }));
+    features.push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Hole sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": HOLES}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
+    features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Hole", "suppressed": false, "dependencies": ["f3d:model:feature#3", "f3d:model:feature#2"], "definition": {"kind": "operation", "value": hole}, "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -3129,7 +2988,7 @@ fn counterbores_and_countersinks_keep_their_entry_dimensions() {
                     expected["tip_angle"] = json!("180");
                 }
                 let model = holed_cube(4.0, |hole| {
-                    hole["shape"]["construction"]["kind"] = form.clone();
+                    hole["shape"]["construction"]["value"]["kind"] = form.clone();
                     if blind {
                         hole["extent"] = json!({"kind": "blind", "length": 6.0});
                         hole["bottom"] = json!({"kind": "flat"});
@@ -3189,7 +3048,7 @@ fn solidcraft_drills_counterbores_and_countersinks() {
     ] {
         for depth in [None, Some(6.0)] {
             let model = holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = form.clone();
+                hole["shape"]["construction"]["value"]["kind"] = form.clone();
                 if let Some(depth) = depth {
                     hole["extent"] = json!({"kind": "blind", "length": depth});
                     hole["bottom"] = json!({"kind": "flat"});
@@ -3209,7 +3068,7 @@ fn solidcraft_drills_counterbores_and_countersinks() {
 #[test]
 fn a_plain_drilled_form_keeps_its_angle_and_shoulder_depth() {
     let model = holed_cube(4.0, |hole| {
-        hole["shape"]["construction"]["kind"] = json!({"kind": "simple_drilled",
+        hole["shape"]["construction"]["value"]["kind"] = json!({"kind": "simple_drilled",
             "drill_point_angle": std::f64::consts::FRAC_PI_2});
         hole["extent"] = json!({"kind": "blind", "length": 6.0});
     });
@@ -3236,7 +3095,7 @@ fn entry_recesses_write_flat_tips_only_for_new_targets() {
             json!({"kind": "chamfer", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
         ] {
             let model = holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = form;
+                hole["shape"]["construction"]["value"]["kind"] = form;
                 hole["extent"] = json!({"kind": "blind", "length": 6.0});
                 hole["bottom"] = json!({"kind": "flat"});
             });
@@ -3499,10 +3358,7 @@ fn historical_hole(round: bool, placement: Value) -> Model {
             .unwrap();
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["feature_input_topologies"] = json!([{
-        "id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE],
-        "edge_geometry": input["edge_geometry"],
-    }]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE], "edge_geometry": input["edge_geometry"], "bodies": [], "vertices": []}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -3680,14 +3536,11 @@ fn a_hole_can_select_sketch_points_or_circle_centres() {
                 json!({"kind": "point", "position": {"u": 5.0, "v": 5.0}});
         }
         // An unselected entity of the same family must not create a second hole.
-        entities.push(json!({
-            "id": "f3d:model:sketch-entity#10", "sketch": HOLES, "construction": false,
-            "geometry": if point {
+        entities.push(json!({"id": "f3d:model:sketch-entity#10", "sketch": HOLES, "construction": false, "geometry": if point {
                 json!({"kind": "point", "position": {"u": 3.0, "v": 3.0}})
             } else {
                 json!({"kind": "circle", "center": {"u": 3.0, "v": 3.0}, "radius": 1.0})
-            },
-        }));
+            }, "endpoint_refs": []}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
@@ -3708,7 +3561,7 @@ fn a_hole_can_select_sketch_points_or_circle_centres() {
 fn a_drilled_form_keeps_its_included_angle_and_shoulder_depth() {
     let (document, report) = convert(
         &holed_cube(4.0, |hole| {
-            hole["shape"]["construction"]["kind"] = json!({"kind": "simple_drilled",
+            hole["shape"]["construction"]["value"]["kind"] = json!({"kind": "simple_drilled",
                 "drill_point_angle": std::f64::consts::FRAC_PI_2});
             hole["extent"] = json!({"kind": "blind", "length": 6.0});
         }),
@@ -3735,7 +3588,7 @@ fn cosmetic_hole_thread() -> Value {
 fn cosmetic_hole_threads_keep_the_designation_and_resolved_bore() {
     for blind in [false, true] {
         let model = holed_cube(4.0, |hole| {
-            hole["shape"]["construction"]["specification"] = cosmetic_hole_thread();
+            hole["shape"]["construction"]["value"]["specification"] = cosmetic_hole_thread();
             if blind {
                 hole["extent"] = json!({"kind": "blind", "length": 6.0});
             }
@@ -3767,7 +3620,7 @@ fn solidcraft_keeps_the_bore_of_a_cosmetic_tapped_hole() {
     let Some(cli) = solidcraft() else { return };
     for depth in [None, Some(6.0)] {
         let model = holed_cube(4.0, |hole| {
-            hole["shape"]["construction"]["specification"] = cosmetic_hole_thread();
+            hole["shape"]["construction"]["value"]["specification"] = cosmetic_hole_thread();
             if let Some(depth) = depth {
                 hole["extent"] = json!({"kind": "blind", "length": depth});
             }
@@ -3792,7 +3645,7 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
                 .as_object_mut()
                 .unwrap()
                 .retain(|_, v| !v.is_null());
-            hole["shape"]["construction"]["specification"] = specification;
+            hole["shape"]["construction"]["value"]["specification"] = specification;
         });
         let (document, report) = convert(
             &model,
@@ -3842,7 +3695,7 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
     let model = holed_cube(4.0, |hole| {
         let mut specification = cosmetic_hole_thread();
         specification["modeled"] = json!(true);
-        hole["shape"]["construction"]["specification"] = specification;
+        hole["shape"]["construction"]["value"]["specification"] = specification;
     });
     let (_, report) = convert(
         &model,
@@ -3876,7 +3729,7 @@ fn unsupported_hole_forms_have_specific_reasons() {
         ),
     ] {
         let model = holed_cube(4.0, |hole| {
-            hole["shape"]["construction"]["kind"] = form.clone()
+            hole["shape"]["construction"]["value"]["kind"] = form.clone()
         });
         let (_, report) = convert(
             &model,
@@ -3891,7 +3744,7 @@ fn unsupported_hole_forms_have_specific_reasons() {
     for kind in ["counterbore", "countersink", "chamfer"] {
         for blind in [false, true] {
             let model = holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = if kind == "counterbore" {
+                hole["shape"]["construction"]["value"]["kind"] = if kind == "counterbore" {
                     json!({"kind": kind, "diameter": 8.0, "depth": 2.0})
                 } else {
                     json!({"kind": kind, "diameter": 8.0, "angle": 1.5})
@@ -3978,14 +3831,11 @@ fn unsupported_hole_ends_have_specific_reasons() {
 fn native_threads_and_exit_treatments_are_refused() {
     for (change, reason) in [
         (
-            json!({"shape": {"diameter": 4.0, "construction": {"construction": "native_thread",
-                "major_diameter": 6.0, "thread_depth": 6.0, "pitch": 1.0,
-                "drill_point_angle": 1.5}}}),
+            json!({"shape": {"diameter": 4.0, "construction": {"kind": "native_thread", "value": {"major_diameter": 6.0, "thread_depth": 6.0, "pitch": 1.0, "drill_point_angle": 1.5}}}}),
             "a hole with native thread geometry is not mapped yet",
         ),
         (
-            json!({"shape": {"diameter": 4.0, "construction": {"construction": "form",
-                "kind": {"kind": "simple"}}, "exit_kind": {"kind": "chamfer", "diameter": 6.0,
+            json!({"shape": {"diameter": 4.0, "construction": {"kind": "form", "value": {"kind": {"kind": "simple"}}}, "exit_kind": {"kind": "chamfer", "diameter": 6.0,
                 "angle": 1.5}}}),
             "a hole with an exit treatment is not mapped yet",
         ),
@@ -4015,9 +3865,8 @@ fn holes_refuse_unproven_faces_and_unsupported_geometry() {
             "a tapered hole is not mapped yet",
         ),
         (
-            json!({"shape": {"diameter": 4.0, "construction": {"construction": "form",
-            "kind": {"kind": "simple"}, "specification": {"kind": "threaded", "standard": "ISO",
-                "modeled": true, "cosmetic": false, "hand": "right", "depth": {"kind": "hole_depth"}}}}}),
+            json!({"shape": {"diameter": 4.0, "construction": {"kind": "form", "value": {"kind": {"kind": "simple"}, "specification": {"kind": "threaded", "standard": "ISO",
+                "modeled": true, "cosmetic": false, "hand": "right", "depth": {"kind": "hole_depth"}}}}}}),
             "a hole with a modeled thread is not mapped yet",
         ),
         (
@@ -4065,8 +3914,8 @@ fn holes_refuse_unproven_faces_and_unsupported_geometry() {
             }
         });
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["length"] =
-            json!(8.0);
+        wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]
+            ["termination"]["length"] = json!(8.0);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
@@ -4097,7 +3946,7 @@ fn solidcraft_drills_spatial_and_to_face_holes_and_drilled_forms() {
         ),
         (
             holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = json!({"kind": "simple_drilled",
+                hole["shape"]["construction"]["value"]["kind"] = json!({"kind": "simple_drilled",
                 "drill_point_angle": std::f64::consts::FRAC_PI_2});
                 hole["extent"] = json!({"kind": "blind", "length": 6.0});
             }),
@@ -4128,12 +3977,12 @@ fn triangle_history() -> Model {
         json!({"id": format!("f3d:model:sketch-constraint#{key}"), "sketch": SKETCH,
                "definition": definition})
     };
-    let start = json!({"kind": "start", "entity": "f3d:model:sketch-entity#1"});
+    let start = json!({"kind": "start", "value": "f3d:model:sketch-entity#1"});
     m["sketch_constraints"] = json!([
         constraint(
             1,
             json!({"kind": "coincident_loci",
-            "loci": [start, {"kind": "start", "entity": "f3d:model:sketch-entity#2"}]})
+            "loci": [start, {"kind": "start", "value": "f3d:model:sketch-entity#2"}]})
         ),
         constraint(
             2,
@@ -4158,14 +4007,7 @@ fn triangle_history() -> Model {
     m["parameters"][1]["expression"] = json!("40 mm");
     m["parameters"][1]["value"] = json!({"kind": "length", "value": 40.0});
     let theta = 30.0_f64.atan2(40.0);
-    m["parameters"].as_array_mut().unwrap().push(json!({
-        "id": "f3d:model:parameter#3",
-        "owner": "f3d:model:feature#1",
-        "ordinal": 2,
-        "name": "theta",
-        "expression": format!("{} deg", theta.to_degrees()),
-        "value": {"kind": "angle", "value": theta},
-    }));
+    m["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "owner": "f3d:model:feature#1", "ordinal": 2, "name": "theta", "expression": format!("{} deg", theta.to_degrees()), "value": {"kind": "angle", "value": theta}, "dependencies": [], "properties": {}}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -4198,7 +4040,7 @@ fn a_converted_angle_drives_the_geometry_in_solidcraft() {
 fn crossed_profile_history(region: bool) -> Model {
     let profile = if region {
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-            "regions": [{"region": "loops", "outer": 0}]}})
+            "regions": [{"kind": "loops", "outer": 0, "holes": []}]}})
     } else {
         first_profile()
     };
@@ -4297,7 +4139,7 @@ fn solidcraft_replays_only_the_selected_crossed_region() {
 /// uses: a line through the square past both sides, and an open segment inside it.
 fn stray_curve_history(change: impl FnOnce(&mut Value)) -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-        "regions": [{"region": "loops", "outer": 0}]}});
+        "regions": [{"kind": "loops", "outer": 0, "holes": []}]}});
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["sketch_entities"]
@@ -4373,7 +4215,7 @@ fn solidcraft_replays_a_region_beside_curves_no_loop_uses() {
 /// left of a divider. Both selections must keep their own complete source region.
 fn whole_and_trimmed_history() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-        "regions": [{"region": "loops", "outer": 0, "holes": [1]}]}});
+        "regions": [{"kind": "loops", "outer": 0, "holes": [1]}]}});
     let mut model = cube_with_history(2.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
@@ -4385,24 +4227,20 @@ fn whole_and_trimmed_history() -> Model {
         .as_array_mut()
         .unwrap()
         .push(json!([
-            {"entity": "f3d:model:sketch-entity#6"}
+            {"entity": "f3d:model:sketch-entity#6", "reversed": false}
         ]));
-    let boundary = |key: u32, range: [f64; 2]| {
-        json!({
-            "entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range
-        })
-    };
+    let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
     let mut cut = m["features"][1].clone();
     cut["id"] = json!("synthetic:strip:feature#cut");
     cut["name"] = json!("Strip cut");
     cut["ordinal"] = json!(2);
     cut["outputs"] = json!([]);
-    cut["definition"]["op"] = json!("cut");
-    cut["definition"]["extent"]["side"]["termination"]["length"] = json!(1.0);
-    cut["definition"]["profile"] = json!({"kind": "sketch_regions", "value": {
-        "sketch": SKETCH, "regions": [{"region": "trimmed", "outer_boundary": [
+    cut["definition"]["value"]["value"]["op"] = json!("cut");
+    cut["definition"]["value"]["value"]["extent"]["side"]["termination"]["length"] = json!(1.0);
+    cut["definition"]["value"]["value"]["profile"]["value"] = json!({"kind": "sketch_regions", "value": {
+        "sketch": SKETCH, "regions": [{"kind": "trimmed", "outer_boundary": [
             boundary(1, [0.0, 0.3]), boundary(5, [0.0, 1.0]),
-            boundary(3, [0.7, 1.0]), boundary(4, [0.0, 1.0])]}]}});
+            boundary(3, [0.7, 1.0]), boundary(4, [0.0, 1.0])], "hole_boundaries": []}]}});
     m["features"].as_array_mut().unwrap().push(cut);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
@@ -4457,23 +4295,19 @@ fn solidcraft_replays_whole_and_trimmed_regions_of_the_same_source_sketch() {
 }
 
 fn shared_circle_regions() -> Model {
-    let boundary = |key: u32, range: [f64; 2]| {
-        json!({
-            "entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range
-        })
-    };
+    let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
     let pi = std::f64::consts::PI;
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
     "regions": [
-        {"region": "trimmed", "outer_boundary": [boundary(1, [0.0, pi / 2.0]),
-            {"entity": "f3d:model:sketch-entity#3", "parameter_range": [0.0, 1.0], "reversed": true}, boundary(2, [0.5, 1.0])]},
-        {"region": "trimmed", "outer_boundary": [boundary(1, [pi, 2.0 * pi]),
-            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.0, 1.0], "reversed": true}]}
+        {"kind": "trimmed", "outer_boundary": [boundary(1, [0.0, pi / 2.0]),
+            {"entity": "f3d:model:sketch-entity#3", "parameter_range": [0.0, 1.0], "reversed": true}, boundary(2, [0.5, 1.0])], "hole_boundaries": []},
+        {"kind": "trimmed", "outer_boundary": [boundary(1, [pi, 2.0 * pi]),
+            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.0, 1.0], "reversed": true}], "hole_boundaries": []}
     ]}});
     let mut model = cube_with_history(2.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["sketches"][0]["profiles"] = json!([
-        [{"entity": "f3d:model:sketch-entity#1"}]
+        [{"entity": "f3d:model:sketch-entity#1", "reversed": false}]
     ]);
     wire["model"]["sketch_constraints"] = json!([]);
     wire["model"]["sketch_entities"] = json!([
@@ -4526,17 +4360,19 @@ fn trimmed_half_disc_revolve(upper: bool, angle: f64) -> Model {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
     m["sketch_entities"] = json!([circle(1, [0.0, 0.0], 4.0), line(2, [-8.0, 0.0], [8.0, 0.0])]);
-    m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+    m["sketches"][0]["profiles"] =
+        json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
     let pi = std::f64::consts::PI;
     let regions = [
-        json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.25, 0.75]},
-            {"entity": "f3d:model:sketch-entity#1", "parameter_range": [0.0, pi]}]}),
-        json!({"region": "trimmed", "outer_boundary": [
+        json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.25, 0.75], "reversed": false},
+            {"entity": "f3d:model:sketch-entity#1", "parameter_range": [0.0, pi], "reversed": false}], "hole_boundaries": []}),
+        json!({"kind": "trimmed", "outer_boundary": [
             {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.25, 0.75], "reversed": true},
-            {"entity": "f3d:model:sketch-entity#1", "parameter_range": [pi, 2.0 * pi]}]}),
+            {"entity": "f3d:model:sketch-entity#1", "parameter_range": [pi, 2.0 * pi], "reversed": false}], "hole_boundaries": []}),
     ];
-    let construction = &mut m["features"][1]["definition"]["construction"];
+    let construction =
+        &mut m["features"][1]["definition"]["value"]["value"]["construction"]["value"];
     construction["profile"] = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
         "regions": [regions[usize::from(!upper)].clone()]}});
     construction["axis"]["direction"] = json!({"x": 1.0, "y": 0.0, "z": 0.0});
@@ -4594,15 +4430,16 @@ fn circle(key: u32, center: [f64; 2], radius: f64) -> Value {
 /// hole the region keeps (loop 1) inside a 2 mm ring (loop 2).
 fn unused_loop_history(tab: bool) -> Model {
     let region = if tab {
-        json!({"region": "loops", "outer": 0})
+        json!({"kind": "loops", "outer": 0, "holes": []})
     } else {
-        json!({"region": "loops", "outer": 0, "holes": [1]})
+        json!({"kind": "loops", "outer": 0, "holes": [1]})
     };
     let profile =
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH, "regions": [region]}});
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let id = |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}")});
+    let id =
+        |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false});
     let (entities, loops) = if tab {
         (
             vec![
@@ -4680,8 +4517,8 @@ fn solidcraft_replays_a_region_beside_a_loop_no_feature_takes() {
 fn tab_taken_history() -> Model {
     let mut model = unused_loop_history(true);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["definition"]["profile"]["value"]["regions"] =
-        json!([{"region": "loops", "outer": 0}, {"region": "loops", "outer": 1}]);
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"]["value"]
+        ["regions"] = json!([{"kind": "loops", "outer": 0, "holes": []}, {"kind": "loops", "outer": 1, "holes": []}]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -4719,10 +4556,11 @@ fn solidcraft_replays_loops_that_share_part_of_an_edge() {
 /// centred in it, so the square's corners stick out of the circle (a nut pocket over a bolt hole).
 fn crossing_holes_history() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-        "regions": [{"region": "loops", "outer": 0, "holes": [1, 2]}]}});
+        "regions": [{"kind": "loops", "outer": 0, "holes": [1, 2]}]}});
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let id = |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}")});
+    let id =
+        |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false});
     let source = &mut wire["model"];
     source["sketch_entities"].as_array_mut().unwrap().extend([
         circle(11, [5.0, 5.0], 2.0),
@@ -4782,7 +4620,8 @@ fn listed_square_history() -> Model {
         "profiles": [0]}});
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let id = |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}")});
+    let id =
+        |key: u32| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false});
     let source = &mut wire["model"];
     source["sketch_entities"].as_array_mut().unwrap().extend([
         circle(11, [5.0, 5.0], 3.0),
@@ -4833,17 +4672,9 @@ fn a_curve_another_feature_names_stays_real_geometry() {
     // sketch is demoted.
     let model = stray_curve_history(|model| {
         let section = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-            "regions": [{"region": "loops", "outer": 0}]}});
-        model["features"][1]["definition"] = json!({
-            "definition": "sweep",
-            "shape": {"mode": "solid", "op": "new_body",
-                      "section": {"kind": "profile", "value": section}},
-            "path": {"kind": "sketch_curves", "value": {
-                "sketch": SKETCH, "curves": ["f3d:model:sketch-entity#5"]}},
-            "path_tangent": false,
-            "linearize": false,
-            "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0},
-        });
+            "regions": [{"kind": "loops", "outer": 0, "holes": []}]}});
+        model["features"][1]["definition"] = json!({"kind":"operation", "value": {"kind": "sweep", "value": {"shape": {"kind": "solid", "op": "new_body", "section": {"kind": "profile", "value": section}, "sections": []}, "path": {"kind": "sketch_curves", "value": {
+                "sketch": SKETCH, "curves": ["f3d:model:sketch-entity#5"]}}, "path_tangent": false, "linearize": false, "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0}}}});
     });
     let (document, report) = convert(
         &model,
@@ -4945,7 +4776,7 @@ fn nested_native_profile(radii: &[f64]) -> Model {
     let profiles: Vec<Value> = radii
         .iter()
         .enumerate()
-        .map(|(i, _)| json!([{"entity": format!("f3d:model:sketch-entity#{}", i + 1)}]))
+        .map(|(i, _)| json!([{"entity": format!("f3d:model:sketch-entity#{}", i + 1), "reversed": false}]))
         .collect();
     m["sketch_entities"] = json!(entities);
     m["sketches"][0]["profiles"] = json!(profiles);
@@ -5002,8 +4833,7 @@ fn solidcraft_replays_a_native_annulus_with_its_hole() {
 /// The region selects the panel and circles; the inner rectangle is a layout helper.
 fn panel_region() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-        "regions": [{"region": "loops", "outer": 0,
-            "holes": (2..22).rev().collect::<Vec<_>>()}]}});
+        "regions": [{"kind": "loops", "outer": 0, "holes": (2..22).rev().collect::<Vec<_>>()}]}});
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
@@ -5021,9 +4851,9 @@ fn panel_region() -> Model {
     let boundary = |keys: Vec<u32>| {
         json!(keys
             .into_iter()
-            .map(|key| json!({
-                "entity": format!("f3d:model:sketch-entity#{key}")
-            }))
+            .map(
+                |key| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false})
+            )
             .collect::<Vec<_>>())
     };
     let mut profiles = vec![boundary((1..5).collect()), boundary((5..9).collect())];
@@ -5077,18 +4907,16 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
         json!({"kind": "native", "value": "unresolved profile"}),
         json!({"kind": "feature", "value": "f3d:model:feature#1"}),
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-            "regions": [{"region": "loops", "outer": 1, "holes": []}]}}),
+            "regions": [{"kind": "loops", "outer": 1, "holes": []}]}}),
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-        "regions": [{"region": "trimmed", "outer_boundary": [{
-            "entity": "f3d:model:sketch-entity#9", "parameter_range": [0.0, 1.0]
-        }]}]}}),
+        "regions": [{"kind": "trimmed", "outer_boundary": [{"entity": "f3d:model:sketch-entity#9", "parameter_range": [0.0, 1.0], "reversed": false}], "hole_boundaries": []}]}}),
     ] {
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         let mut other = wire["model"]["features"][1].clone();
         other["id"] = json!("synthetic:panel:feature#3");
         other["ordinal"] = json!(2);
-        other["definition"]["profile"] = profile;
-        if other["definition"]["profile"]["kind"] == "feature" {
+        other["definition"]["value"]["value"]["profile"]["value"] = profile;
+        if other["definition"]["value"]["value"]["profile"]["value"]["kind"] == "feature" {
             other["dependencies"] = json!([]);
         }
         wire["model"]["features"]
@@ -5098,7 +4926,9 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
         let mut shared = model.clone();
         shared.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, report) = convert(&shared, &writer);
-        if wire["model"]["features"][2]["definition"]["profile"]["kind"] == "native" {
+        if wire["model"]["features"][2]["definition"]["value"]["value"]["profile"]["value"]["kind"]
+            == "native"
+        {
             assert!(history_line(&report).contains("native profiles are not mapped yet"));
         }
         assert!(document["features"][0]["sketch"]["curves"]
@@ -5331,9 +5161,10 @@ fn assembly_with_face_colours() -> Model {
     for (part, recolour) in assembly.parts.iter_mut().zip([true, false]) {
         let mut wire = serde_json::to_value(&part.ir).unwrap();
         if recolour {
-            wire["model"]["bodies"][0]["color"] = json!({"r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0});
+            wire["geometry"]["bodies"][0]["color"] =
+                json!({"r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0});
         } else {
-            for face in wire["model"]["faces"].as_array_mut().unwrap() {
+            for face in wire["geometry"]["faces"].as_array_mut().unwrap() {
                 if face["id"] == "synthetic:cube:face#top" {
                     face["color"] = json!({"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0});
                 }
@@ -5432,17 +5263,7 @@ fn patterned(layout: Value) -> Model {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3",
-            "ordinal": 2,
-            "name": "Copies",
-            "suppressed": false,
-            "definition": {
-                "definition": "pattern",
-                "seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}],
-                "pattern": layout,
-            },
-        }));
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}], "pattern": layout}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -5450,7 +5271,7 @@ fn patterned(layout: Value) -> Model {
 /// Change a synthetic pattern's operands without passing through a native decoder.
 fn pattern_seeds(mut model: Model, seeds: Value) -> Model {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][2]["definition"]["seeds"] = seeds;
+    wire["model"]["features"][2]["definition"]["value"]["value"]["seeds"] = seeds;
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -5465,8 +5286,9 @@ fn body_patterns_use_names_assigned_by_earlier_features() {
             {"body": "synthetic:cube:body#0", "native": "selection"}]}}),
     ] {
         let model = pattern_seeds(
-            patterned(json!({"kind": "linear",
-                "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3})),
+            patterned(
+                json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}),
+            ),
             json!([{"kind": "bodies", "value": selection}]),
         );
         let (document, report) = convert(
@@ -5530,10 +5352,8 @@ fn regular_explicit_pattern_locations_map_to_spacing_and_span() {
 #[test]
 fn two_linear_stages_become_a_rectangular_pattern() {
     let model = patterned(json!({"kind": "composite", "stages": [
-        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
-            "spacing": 20.0, "count": 3}},
-        {"pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0},
-            "spacing": 30.0, "count": 2}},
+        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}},
+        {"pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 30.0, "count": 2, "omitted_instances": [], "symmetric": false}},
     ]}));
     let (document, report) = convert(
         &model,
@@ -5589,8 +5409,7 @@ fn composite_mirrors_multiply_the_previous_instance_set_in_order() {
     let mirror = json!({"pattern": {"kind": "mirror",
         "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
         "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
-    let linear = json!({"pattern": {"kind": "linear",
-        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3}});
+    let linear = json!({"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3, "omitted_instances": [], "symmetric": false}});
     for (stages, expected) in [
         (
             json!([mirror, linear]),
@@ -5647,8 +5466,7 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
     let mirror = json!({"kind": "mirror",
         "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
         "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}});
-    let linear = json!({"kind": "linear",
-        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3});
+    let linear = json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3, "omitted_instances": [], "symmetric": false});
     let writer = SolidCraftWriter::new()
         .verification(Verification::Off)
         .target_version(Some("0.18.2".parse().unwrap()));
@@ -5694,12 +5512,8 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
         wire["model"]["features"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-            "id": "f3d:model:feature#4", "ordinal": 3, "name": "Later copies", "suppressed": false,
-            "definition": {"definition": "pattern",
-                "seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}],
-                "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 20.0, "z": 0.0},
-                    "plane_normal": {"x": 0.0, "y": 1.0, "z": 0.0}}}}));
+            .push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Later copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}], "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 20.0, "z": 0.0},
+                    "plane_normal": {"x": 0.0, "y": 1.0, "z": 0.0}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..patterned(layout)
@@ -5749,8 +5563,7 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
         "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
         "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
     let model = patterned(json!({"kind": "composite", "stages": [mirror,
-        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
-            "spacing": 20.0, "count": 5001}}]}));
+        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 5001, "omitted_instances": [], "symmetric": false}}]}));
     let (document, report) = convert(&model, &composite_writer());
     assert!(
         history_line(&report).contains("more than 10000 instances"),
@@ -5781,17 +5594,12 @@ fn later_patterns_can_select_a_whole_composite_mirror_result() {
     let model = patterned(json!({"kind": "composite", "stages": [
         {"pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
             "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}},
-        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
-            "spacing": 60.0, "count": 3}}
+        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3, "omitted_instances": [], "symmetric": false}}
     ]}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     // Colliding source and helper names must still select the right timeline features.
     wire["model"]["features"][0]["name"] = json!("Copies stage 1");
-    wire["model"]["features"].as_array_mut().unwrap().push(json!({
-        "id": "f3d:model:feature#4", "ordinal": 3, "name": "Copies", "suppressed": false,
-        "definition": {"definition": "pattern", "seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}],
-            "pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0},
-                "spacing": 30.0, "count": 2}}}));
+    wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}], "pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 30.0, "count": 2, "omitted_instances": [], "symmetric": false}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -5820,8 +5628,7 @@ fn unfinished_pattern_replays_keep_the_original_geometry() {
         json!({"kind": "composite", "stages": [{"pattern": {"kind": "mirror",
             "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
             "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}},
-            {"pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0},
-                "spacing": 30.0, "count": 2}}]}),
+            {"pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 30.0, "count": 2, "omitted_instances": [], "symmetric": false}}]}),
     ] {
         let (document, report) = convert(
             &patterned(layout),
@@ -5903,7 +5710,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
             let mut wire = serde_json::to_value(&model.ir).unwrap();
             for feature in wire["model"]["features"].as_array_mut().unwrap() {
                 if feature["name"] == "PolarPattern" {
-                    feature["definition"]["operation"]["pattern"]["axis_dir"] =
+                    feature["definition"]["value"]["operation"]["value"]["pattern"]["axis_dir"] =
                         json!({"x": 0.0, "y": 0.0, "z": 1.0});
                 }
             }
@@ -5927,9 +5734,10 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
             }
             for feature in wire["model"]["features"].as_array_mut().unwrap() {
                 if feature["name"] == "PolarPattern" {
-                    feature["definition"]["operation"]["pattern"]["angles"] = json!((0..8)
-                        .map(|i| i as f64 * std::f64::consts::TAU / 8.0)
-                        .collect::<Vec<_>>());
+                    feature["definition"]["value"]["operation"]["value"]["pattern"]["angles"] =
+                        json!((0..8)
+                            .map(|i| i as f64 * std::f64::consts::TAU / 8.0)
+                            .collect::<Vec<_>>());
                 }
             }
             Model {
@@ -5984,10 +5792,7 @@ fn path_pattern(whole_sketch: bool) -> Model {
         json!({"kind": "sketch_curves", "value": {"sketch": PATH,
             "curves": ["f3d:model:sketch-entity#21"]}})
     };
-    features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3,
-        "name": "Copies", "suppressed": false, "definition": {
-            "definition": "pattern", "seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}],
-            "pattern": {"kind": "curve_driven", "path": path, "spacing": 20.0, "count": 3}}}));
+    features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}], "pattern": {"kind": "curve_driven", "path": path, "spacing": 20.0, "count": 3}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -6059,8 +5864,7 @@ fn pattern_refusals_identify_the_unrepresentable_option() {
             "progressively scaled patterns",
         ),
         (
-            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
-            "spacing": 20.0, "count": 10001}),
+            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 10001, "omitted_instances": [], "symmetric": false}),
             "more than 10000 instances",
         ),
     ] {
@@ -6078,8 +5882,7 @@ fn pattern_refusals_identify_the_unrepresentable_option() {
 
 #[test]
 fn unresolved_pattern_seeds_and_mixed_seed_kinds_have_specific_refusals() {
-    let layout = json!({"kind": "linear",
-        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3});
+    let layout = json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false});
     for (seeds, reason) in [
         (
             json!([{"kind": "bodies", "value": {"kind": "unresolved"}}]),
@@ -6120,8 +5923,7 @@ fn unresolved_pattern_seeds_and_mixed_seed_kinds_have_specific_refusals() {
 fn patterns_refuse_unnamed_bodies_and_excessive_rectangular_products() {
     let model = pattern_seeds(
         patterned(
-            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
-            "spacing": 20.0, "count": 3}),
+            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}),
         ),
         json!([{"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
     );
@@ -6137,9 +5939,9 @@ fn patterns_refuse_unnamed_bodies_and_excessive_rectangular_products() {
     );
     assert!(history_line(&report).contains("body without an earlier mapped name"));
 
-    let too_many = patterned(json!({"kind": "linear",
-        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 101,
-        "second": {"direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 20.0, "count": 100}}));
+    let too_many = patterned(
+        json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 101, "second": {"direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 20.0, "count": 100, "symmetric": false}, "omitted_instances": [], "symmetric": false}),
+    );
     let (_, report) = convert(
         &too_many,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -6149,8 +5951,9 @@ fn patterns_refuse_unnamed_bodies_and_excessive_rectangular_products() {
 
 #[test]
 fn a_feature_pattern_names_its_seed() {
-    let model = patterned(json!({"kind": "linear",
-        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3}));
+    let model = patterned(
+        json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}),
+    );
     let (document, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -6168,8 +5971,9 @@ fn a_feature_pattern_names_its_seed() {
 #[test]
 fn solidcraft_replays_feature_patterns() {
     let Some(cli) = solidcraft() else { return };
-    let linear = patterned(json!({"kind": "linear",
-        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3}));
+    let linear = patterned(
+        json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}),
+    );
     let mut copies = volumes(&cli, &written(&linear).0);
     copies.sort_by(f64::total_cmp);
     assert_eq!(copies.iter().sum::<f64>(), 3000.0, "{copies:?}");
@@ -6265,7 +6069,7 @@ fn bounds(cli: &Path, design: &[u8]) -> Vec<([f64; 3], [f64; 3])> {
 fn a_face_colour_becomes_a_face_look_on_that_face() {
     let mut model = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    for face in wire["model"]["faces"].as_array_mut().unwrap() {
+    for face in wire["geometry"]["faces"].as_array_mut().unwrap() {
         if face["id"] == "synthetic:cube:face#top" {
             face["color"] = json!({"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0});
         }
@@ -6330,7 +6134,7 @@ fn freecad_periodic_spline_recipes_keep_their_history() {
 fn nonuniform_spline_geometry() -> Value {
     json!({"kind": "nurbs", "curve": {"degree": 3, "periodic": false,
         "knots": [0.,0.,0.,0.,0.3,1.,1.,1.,1.],
-        "poles": {"form": "polynomial", "points": [
+        "poles": {"kind": "polynomial", "points": [
             {"u": 0., "v": 0.}, {"u": 1., "v": 4.}, {"u": 4., "v": 6.},
             {"u": 8., "v": 4.}, {"u": 10., "v": 0.}]}}})
 }
@@ -6342,7 +6146,7 @@ fn nonuniform_spline_profiles_keep_one_closed_loop_and_extrude() {
         json!({"kind": "sketch_entities", "value": {"sketch": SKETCH,
             "entities": ["f3d:model:sketch-entity#1", "f3d:model:sketch-entity#2"]}}),
         json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
-            "regions": [{"region": "loops", "outer": 0, "holes": []}]}}),
+            "regions": [{"kind": "loops", "outer": 0, "holes": []}]}}),
     ] {
         let mut model = cube_with_history(10., profile, None);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
@@ -6351,7 +6155,7 @@ fn nonuniform_spline_profiles_keep_one_closed_loop_and_extrude() {
             entity(1, nonuniform_spline_geometry()),
             line(2, [10., 0.], [0., 0.])
         ]);
-        m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}, {"entity": "f3d:model:sketch-entity#2"}]]);
+        m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}, {"entity": "f3d:model:sketch-entity#2", "reversed": false}]]);
         m["sketch_constraints"] = json!([]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, report) = convert(
@@ -6445,13 +6249,13 @@ fn nonuniform_spline_constraints_follow_chain_endpoints_and_fixed_pieces() {
          "definition": {"kind": "fixed", "entity": "f3d:model:sketch-entity#1"}},
         {"id": "f3d:model:sketch-constraint#2", "sketch": SKETCH,
          "definition": {"kind": "coincident_loci", "loci": [
-             {"kind": "end", "entity": "f3d:model:sketch-entity#1"},
-             {"kind": "start", "entity": "f3d:model:sketch-entity#2"}]}},
+             {"kind": "end", "value": "f3d:model:sketch-entity#1"},
+             {"kind": "start", "value": "f3d:model:sketch-entity#2"}]}},
         {"id": "f3d:model:sketch-constraint#3", "sketch": SKETCH,
          "definition": {"kind": "distance", "entities": ["f3d:model:sketch-entity#1"], "parameter": "f3d:model:parameter#2"}},
         {"id": "f3d:model:sketch-constraint#4", "sketch": SKETCH,
-         "definition": {"kind": "tangent_loci", "first": {"kind": "end", "entity": "f3d:model:sketch-entity#1"},
-             "second": {"kind": "start", "entity": "f3d:model:sketch-entity#3"}}},
+         "definition": {"kind": "tangent_loci", "first": {"kind": "end", "value": "f3d:model:sketch-entity#1"},
+             "second": {"kind": "start", "value": "f3d:model:sketch-entity#3"}}},
         {"id": "f3d:model:sketch-constraint#5", "sketch": SKETCH,
          "definition": {"kind": "curvature", "first": "f3d:model:sketch-entity#1", "second": "f3d:model:sketch-entity#3"}}
     ]);
@@ -6566,13 +6370,14 @@ fn nonuniform_spline_projected_copies_keep_every_control_point() {
 fn periodic_spline_profile(profile: Value) -> Model {
     let mut model = cube_with_history(10.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+    wire["model"]["sketches"][0]["profiles"] =
+        json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
     wire["model"]["sketch_constraints"] = json!([]);
     wire["model"]["sketch_entities"] = json!([entity(
         1,
         json!({"kind": "nurbs", "curve": {"degree": 2, "periodic": true,
             "knots": [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-            "poles": {"form": "polynomial", "points": [
+            "poles": {"kind": "polynomial", "points": [
                 {"u": -10.0, "v": -10.0}, {"u": 10.0, "v": -10.0},
                 {"u": 10.0, "v": 10.0}, {"u": -10.0, "v": 10.0},
                 {"u": -10.0, "v": -10.0}, {"u": 10.0, "v": -10.0}]}}})
@@ -6608,7 +6413,7 @@ fn weighted_periodic_splines_name_solidcrafts_missing_weights() {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let curve = &mut wire["model"]["sketch_entities"][0]["geometry"]["curve"];
     let points = curve["poles"]["points"].as_array().unwrap().clone();
-    curve["poles"] = json!({"form": "rational", "points": points.iter().enumerate()
+    curve["poles"] = json!({"kind": "rational", "points": points.iter().enumerate()
         .map(|(i, p)| json!({"point": p, "weight": if i % 4 == 0 { 2.0 } else { 1.0 }})).collect::<Vec<_>>()});
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (_, report) = convert(
@@ -6647,7 +6452,7 @@ fn solidcraft_extrudes_a_spline_profile() {
             2,
             json!({"kind": "nurbs", "curve": {"degree": 2, "periodic": false,
             "knots": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-            "poles": {"form": "polynomial", "points": [
+            "poles": {"kind": "polynomial", "points": [
                 {"u": 0.0, "v": 0.0}, {"u": 15.0, "v": 30.0}, {"u": 30.0, "v": 0.0}]}}})
         ),
     ]);
@@ -6765,14 +6570,7 @@ fn primitive_history(definition: Value) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
-    model["features"] = json!([{
-        "id": "f3d:model:feature#2",
-        "ordinal": 0,
-        "name": "Ball",
-        "suppressed": false,
-        "outputs": ["synthetic:cube:body#0"],
-        "definition": definition,
-    }]);
+    model["features"] = json!([{"id": "f3d:model:feature#2", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": []}]);
     model["parameters"] = json!([]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -6781,13 +6579,11 @@ fn primitive_history(definition: Value) -> Model {
 }
 
 fn sphere() -> Value {
-    json!({"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"})
+    json!({"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}})
 }
 
 fn torus(axis: [f64; 3]) -> Value {
-    json!({"definition": "torus", "center": {"x": 0.0, "y": 0.0, "z": 2.0},
-           "axis": {"x": axis[0], "y": axis[1], "z": axis[2]},
-           "major_radius": 10.0, "minor_radius": 2.0, "op": "new_body"})
+    json!({"kind": "torus", "value": {"center": {"x": 0.0, "y": 0.0, "z": 2.0}, "axis": {"x": axis[0], "y": axis[1], "z": axis[2]}, "major_radius": 10.0, "minor_radius": 2.0, "op": "new_body"}})
 }
 
 #[test]
@@ -6819,9 +6615,7 @@ fn spheres_and_tori_become_solidcraft_primitives() {
 
 fn placed_primitive(solid: Value) -> Value {
     // Its frame's z axis along model +y, its origin at (1, 2, 3).
-    json!({"definition": "primitive", "solid": solid,
-           "placement": [[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 2.0], [0.0, -1.0, 0.0, 3.0]],
-           "op": "new_body"})
+    json!({"kind": "primitive", "value": {"solid": solid, "placement": [[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 2.0], [0.0, -1.0, 0.0, 3.0]], "op": "new_body"}})
 }
 
 #[test]
@@ -6889,7 +6683,7 @@ fn placed_cylinders_and_cones_become_solidcraft_primitives() {
 /// A box (a block) of `size` along its frame's x, y and z from the frame origin, its minimum
 /// corner; `placement` gives the frame as three rows of a 3x4 transform.
 fn block(size: [f64; 3], placement: [[f64; 4]; 3]) -> Value {
-    json!({"definition": "block", "dimensions": size, "placement": placement, "op": "new_body"})
+    json!({"kind": "block", "value": {"dimensions": size, "placement": placement, "op": "new_body"}})
 }
 
 #[test]
@@ -7009,8 +6803,7 @@ fn solidcraft_builds_the_primitives() {
 /// section, `extent` long, turning clockwise as CADIR sees it (from its base, along its axis)
 /// when `clockwise`.
 fn coil(extent: Value, radial: [f64; 3], clockwise: bool) -> Value {
-    json!({"definition": "coil",
-           "construction": {
+    json!({"kind": "coil", "value": {"construction": {
                "placement": {"kind": "explicit",
                    "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                    "axis": {"x": 0.0, "y": 0.0, "z": 1.0},
@@ -7020,8 +6813,7 @@ fn coil(extent: Value, radial: [f64; 3], clockwise: bool) -> Value {
                "section": {"kind": "circular", "diameter": 2.0},
                "section_placement": "center",
                "clockwise": clockwise,
-               "taper": 0.0},
-           "result": {"kind": "new_body"}})
+               "taper": 0.0}, "result": {"kind": "new_body"}}})
 }
 
 fn turns_and_pitch(revolutions: f64, pitch: f64) -> Value {
@@ -7062,9 +6854,9 @@ fn coils_become_solidcraft_coils() {
         [0.0, 1.0, 0.0],
         false,
     );
-    other["construction"]["section"] = json!({"kind": "square", "size": 1.5});
-    other["construction"]["section_placement"] = json!("inside");
-    other["result"] = json!({"kind": "boolean", "operation": "join", "targets": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}});
+    other["value"]["construction"]["section"] = json!({"kind": "square", "size": 1.5});
+    other["value"]["construction"]["section_placement"] = json!("inside");
+    other["value"]["result"] = json!({"kind": "boolean", "operation": "join", "targets": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}});
     let (document, _) = convert(&primitive_history(other), &writer);
     let spring = &document["features"][0];
     assert_eq!(spring["clockwise"], true);
@@ -7094,7 +6886,7 @@ fn coils_map_signed_extents_and_reverse_the_axis_and_turning_flag_together() {
         ] {
             for clockwise in [true, false] {
                 let mut definition = coil(extent.clone(), [0.0, 1.0, 0.0], clockwise);
-                definition["construction"]["placement"]["axis"] =
+                definition["value"]["construction"]["placement"]["axis"] =
                     json!({"x": 1.0, "y": 0.0, "z": 0.0});
                 let (document, report) = convert(&primitive_history(definition), &writer);
                 let spring = &document["features"][0];
@@ -7118,7 +6910,7 @@ fn coils_solidcraft_cannot_build_flatten_the_history() {
     let plain = || coil(turns_and_pitch(4.0, 5.0), [1.0, 0.0, 0.0], true);
     let with = |path: &[&str], value: Value| {
         let mut definition = plain();
-        let mut at = &mut definition;
+        let mut at = &mut definition["value"];
         for key in path {
             at = &mut at[*key];
         }
@@ -7217,10 +7009,10 @@ fn solidcraft_turns_the_coil_the_way_cadir_says() {
         for clockwise in [true, false] {
             for pitch in [4.0, -4.0] {
                 let mut definition = coil(turns_and_pitch(0.25, pitch), radial, clockwise);
-                definition["construction"]["placement"]["axis"] =
+                definition["value"]["construction"]["placement"]["axis"] =
                     json!({"x": axis[0], "y": axis[1], "z": axis[2]});
                 let base = [3.0, -2.0, 5.0];
-                definition["construction"]["placement"]["origin"] =
+                definition["value"]["construction"]["placement"]["origin"] =
                     json!({"x": base[0], "y": base[1], "z": base[2]});
                 let design = written(&primitive_history(definition)).0;
                 let boxes = bounds(&cli, &design);
@@ -7272,18 +7064,15 @@ fn solidcraft_turns_the_coil_the_way_cadir_says() {
 fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
     let base = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let model = &mut wire["model"];
+    let model = &mut wire["geometry"];
     // One of the cube's faces on a coil's swept surface, as Fusion stores a coil's.
     let surface = model["faces"][0]["surface"].clone();
     for row in model["surfaces"].as_array_mut().unwrap() {
         if row["id"] == surface {
-            row["geometry"] = json!({"kind": "procedural", "construction": "synthetic:cube:procedural_surface#0"});
+            row["geometry"] = json!({"kind": "procedural", "value": {"construction": "synthetic:cube:procedural_surface#0"}});
         }
     }
-    model["procedural_surfaces"] = json!([{
-        "id": "synthetic:cube:procedural_surface#0",
-        "surface": surface,
-        "definition": {"kind": "helix", "construction": {
+    model["procedural_surfaces"] = json!([{"id": "synthetic:cube:procedural_surface#0", "surface": surface, "definition": {"kind": "helix", "construction": {
             "angle_range": [-std::f64::consts::PI, std::f64::consts::PI],
             "dimension_range": [0.0, 250.0],
             "path": {"angle_range": [0.0, 25.0],
@@ -7293,9 +7082,7 @@ fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
                      "pitch": {"x": 0.0, "y": 0.0, "z": 5.0},
                      "apex_factor": 0.0,
                      "axis": {"x": 0.0, "y": 0.0, "z": 1.0}},
-            "profile": {"kind": "circle", "angle": 0.0, "radius": 1.0}}},
-        "record_bounds": [null, null, null, null],
-    }]);
+            "profile": {"kind": "circle", "angle": 0.0, "radius": 1.0}}}, "record_bounds": [null, null, null, null]}]);
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -7323,18 +7110,11 @@ fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
 fn based_cube() -> Model {
     let mut model = holed_cube(4.0, |_| {});
     let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
     let m = &mut wire["model"];
-    let body = m["bodies"][0]["id"].clone();
     let features = m["features"].as_array_mut().unwrap();
     features.retain(|feature| feature["ordinal"].as_u64() >= Some(2));
-    features.push(json!({
-        "id": "f3d:model:feature#1",
-        "ordinal": 0,
-        "name": "Base Feature 1",
-        "suppressed": false,
-        "definition": {"definition": "base_feature",
-            "bodies": {"kind": "resolved", "value": {"bodies": [body], "native": "f3d:base#1"}}},
-    }));
+    features.push(json!({"id": "f3d:model:feature#1", "ordinal": 0, "name": "Base Feature 1", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": [body], "native": "f3d:base#1"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -7343,13 +7123,14 @@ fn based_cube() -> Model {
 fn stored_cube(with_hole: bool) -> Model {
     let mut model = based_cube();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     if !with_hole {
         features.retain(|feature| feature["ordinal"] == 0);
     }
     let base = features.iter_mut().find(|f| f["ordinal"] == 0).unwrap();
-    base["definition"] = json!({"definition": "stored_geometry"});
+    base["definition"] =
+        json!({"kind":"operation", "value": {"kind": "stored_geometry", "value": {}}});
     base["outputs"] = json!([body]);
     base["name"] = json!("Stored solid");
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -7534,14 +7315,7 @@ fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#9",
-            "ordinal": 9,
-            "name": "Base Feature 2",
-            "suppressed": false,
-            "definition": {"definition": "base_feature",
-                "bodies": {"kind": "resolved", "value": {"bodies": [], "native": "f3d:base#2"}}},
-        }));
+        .push(json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Base Feature 2", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": [], "native": "f3d:base#2"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
@@ -7628,14 +7402,9 @@ fn flanged_cube(thickness: f64, side: &str) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
-        if feature["definition"]["definition"] == "extrude" {
+        if feature["definition"]["value"]["kind"] == "extrude" {
             feature["name"] = json!("BaseFlange 1");
-            feature["definition"] = json!({
-                "definition": "sheet_metal_base_flange",
-                "profile": whole_sketch(),
-                "thickness": thickness,
-                "side": side,
-            });
+            feature["definition"] = json!({"kind":"operation", "value": {"kind": "sheet_metal_base_flange", "value": {"profile": whole_sketch(), "thickness": thickness, "side": side}}});
         }
     }
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -7694,14 +7463,11 @@ fn solidcraft_builds_the_base_flange_as_the_original() {
 fn sheet_operation(mut definition: Value) -> Model {
     let mut model = flanged_cube(10.0, "forward");
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    definition["edges"] = json!({"kind": "edges", "value": ["synthetic:cube:edge#4"]});
+    definition["value"]["edges"] = json!({"kind": "edges", "value": ["synthetic:cube:edge#4"]});
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall",
-            "suppressed": false, "definition": definition,
-        }));
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -7709,15 +7475,9 @@ fn sheet_operation(mut definition: Value) -> Model {
 #[test]
 fn edge_flanges_refuse_final_body_edge_selections() {
     // The selected edge exists only on the final body, where it has become the bend.
-    let model = sheet_operation(json!({
-        "definition": "sheet_metal_edge_flange",
-        "height": {"kind": "distance", "value": 30.0},
-        "angle": std::f64::consts::FRAC_PI_2,
-        "height_datum": "outer_faces",
-        "bend_position": "outside",
-        "width": {"kind": "full_edge"},
-        "bend_radius": 2.0,
-    }));
+    let model = sheet_operation(
+        json!({"kind": "sheet_metal_edge_flange", "value": {"height": {"kind": "distance", "value": 30.0}, "angle": std::f64::consts::FRAC_PI_2, "height_datum": "outer_faces", "bend_position": "outside", "width": {"kind": "full_edge"}, "bend_radius": 2.0}}),
+    );
     let (_, report) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -7752,25 +7512,13 @@ fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Mod
             "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
-    wire["model"]["feature_input_topologies"] = json!([{
-        "id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces,
-        "edge_geometry": geometry,
-    }]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []}]);
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall",
-            "suppressed": false, "definition": {
-                "definition": "sheet_metal_edge_flange",
-                "edges": {"kind": "historical", "value": {
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sheet_metal_edge_flange", "value": {"edges": {"kind": "historical", "value": {
                     "state": state, "edges": [edges[usize::from(back)]], "native": "synthetic edge",
-                }},
-                "height": {"kind": "distance", "value": 30.0},
-                "angle": angle, "height_datum": "outer_faces", "bend_position": position,
-                "width": {"kind": "full_edge"}, "bend_radius": radius,
-            },
-        }));
+                }}, "height": {"kind": "distance", "value": 30.0}, "angle": angle, "height_datum": "outer_faces", "bend_position": position, "width": {"kind": "full_edge"}, "bend_radius": radius}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -7846,27 +7594,27 @@ fn edge_flanges_refuse_unproven_picks_and_unexpressible_options() {
             "vertices or tangent",
         ),
         (
-            "/model/features/2/definition/height_datum",
+            "/model/features/2/definition/value/value/height_datum",
             json!("inner_faces"),
             "inner faces",
         ),
         (
-            "/model/features/2/definition/bend_position",
+            "/model/features/2/definition/value/value/bend_position",
             json!("adjacent"),
             "bend position",
         ),
         (
-            "/model/features/2/definition/bend_position",
+            "/model/features/2/definition/value/value/bend_position",
             json!("tangent_to_side"),
             "bend position",
         ),
         (
-            "/model/features/2/definition/width",
-            json!({"kind": "symmetric", "value": {"width": 5.0}}),
+            "/model/features/2/definition/value/value/width",
+            json!({"kind": "symmetric", "width": 5.0}),
             "part of its edge",
         ),
         (
-            "/model/features/2/definition/height",
+            "/model/features/2/definition/value/value/height",
             json!({"kind": "to_object", "value": {
                 "target": {"kind": "native", "value": "synthetic"}, "offset": 0.0,
             }}),
@@ -7960,7 +7708,8 @@ fn solidcraft_replays_input_edge_flanges_with_the_expected_shape() {
         let mut points = vec![[5.0, if back { 10.0 } else { 0.0 }, 1.0]];
         if both {
             let mut wire = serde_json::to_value(&model.ir).unwrap();
-            wire["model"]["features"][2]["definition"]["edges"]["value"]["edges"] = json!([
+            wire["model"]["features"][2]["definition"]["value"]["value"]["edges"]["value"]
+                ["edges"] = json!([
                 "test:sheet:historical-edge#front",
                 "test:sheet:historical-edge#back",
             ]);
@@ -8019,40 +7768,39 @@ fn solidcraft_replays_input_edge_flanges_with_the_expected_shape() {
 fn hems_explain_the_form_or_dimension_that_cannot_be_expressed() {
     for (form, direction, reason) in [
         (
-            json!({"kind": "flat", "value": {"length": 20.0}}),
+            json!({"kind": "flat", "length": 20.0}),
             "forward",
             "developed length",
         ),
         (
-            json!({"kind": "open", "value": {"gap": 2.0, "length": 20.0}}),
+            json!({"kind": "open", "gap": 2.0, "length": 20.0}),
             "reverse",
             "developed length",
         ),
         (
-            json!({"kind": "gap_length", "value": {"gap": 2.0, "length": 20.0}}),
+            json!({"kind": "gap_length", "gap": 2.0, "length": 20.0}),
             "forward",
             "unresolved flat-or-open",
         ),
         (
-            json!({"kind": "rolled", "value": {"radius": 2.0, "angle": 1.0}}),
+            json!({"kind": "rolled", "radius": 2.0, "angle": 1.0}),
             "forward",
             "rolled hem",
         ),
         (
-            json!({"kind": "teardrop", "value": {"gap": 2.0, "length": 20.0, "radius": 2.0}}),
+            json!({"kind": "teardrop", "gap": 2.0, "length": 20.0, "radius": 2.0}),
             "forward",
             "teardrop hem",
         ),
         (
-            json!({"kind": "flat", "value": {"length": 20.0}}),
+            json!({"kind": "flat", "length": 20.0}),
             "unresolved",
             "unresolved fold direction",
         ),
     ] {
-        let model = sheet_operation(json!({
-            "definition": "sheet_metal_hem", "bend_position": "adjacent",
-            "form": form, "direction": direction, "bend_radius": 2.0,
-        }));
+        let model = sheet_operation(
+            json!({"kind": "sheet_metal_hem", "value": {"bend_position": "adjacent", "form": form, "direction": direction, "bend_radius": 2.0}}),
+        );
         let (_, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
@@ -8091,10 +7839,7 @@ fn attached_plate(near: f64, radius: f64, extra: bool) -> Model {
             "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
-    let state = |name: &str, owner: &str| {
-        json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner,
-               "edges": edges, "faces": faces, "edge_geometry": geometry})
-    };
+    let state = |name: &str, owner: &str| json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner, "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []});
     m["feature_input_topologies"] = json!([
         state("plate", "f3d:model:feature#4"),
         state("bend", "f3d:model:feature#5"),
@@ -8129,28 +7874,10 @@ fn attached_plate(near: f64, radius: f64, extra: bool) -> Model {
         m["sketch_entities"].as_array_mut().unwrap().push(l);
     }
     let features = m["features"].as_array_mut().unwrap();
-    features.push(json!({
-        "id": "f3d:model:feature#3", "ordinal": 2, "name": "Plate sketch", "suppressed": false,
-        "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": PLATE}},
-    }));
-    features.push(json!({
-        "id": "f3d:model:feature#4", "ordinal": 3, "name": "Plate", "suppressed": false,
-        "definition": {
-            "definition": "sheet_metal_attached_plate",
-            "profile": {"kind": "sketch", "value": PLATE},
-            "thickness": 1.0, "side": "forward", "attachment": attachment("plate"),
-        },
-    }));
-    features.push(json!({
-        "id": "f3d:model:feature#5", "ordinal": 4, "name": "Bend", "suppressed": false,
-        "definition": {
-            "definition": "sheet_metal_bend", "plate": "f3d:model:feature#4",
-            "attachment": attachment("bend"), "inside_radius": radius,
-            "relief": {"form": "style_default", "width": 1.0, "depth": 0.5,
-                       "minimum_remnant": 0.0, "seam_gap": 0.0},
-            "transition": {"form": "style_default", "radius": 0.0},
-        },
-    }));
+    features.push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Plate sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": PLATE}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
+    features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Plate", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sheet_metal_attached_plate", "value": {"profile": {"kind": "sketch", "value": PLATE}, "thickness": 1.0, "side": "forward", "attachment": attachment("plate")}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
+    features.push(json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "Bend", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sheet_metal_bend", "value": {"plate": "f3d:model:feature#4", "attachment": attachment("bend"), "inside_radius": radius, "relief": {"form": "style_default", "width": 1.0, "depth": 0.5,
+                       "minimum_remnant": 0.0, "seam_gap": 0.0}, "transition": {"form": "style_default", "radius": 0.0}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -8230,8 +7957,7 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
         .iter()
         .enumerate()
         .map(|(i, (name, definition))| {
-            json!({"id": format!("inventor:model:feature#{i}"), "ordinal": i, "name": name,
-                   "suppressed": false, "definition": definition})
+            json!({"id": format!("inventor:model:feature#{i}"), "ordinal": i, "name": name, "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []})
         })
         .collect();
     Model {
@@ -8246,8 +7972,7 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
 
 #[test]
 fn a_corner_that_leaves_its_body_unchanged_needs_no_feature() {
-    let corner = json!({"definition": "sheet_metal_corner",
-        "bend": "inventor:model:feature#0", "effect": "unchanged"});
+    let corner = json!({"kind": "sheet_metal_corner", "value": {"bend": "inventor:model:feature#0", "effect": "unchanged"}});
     let model = cube_under(&[("Corner1", corner)]);
     let (_, report) = convert(
         &model,
@@ -8269,7 +7994,8 @@ fn a_corner_that_leaves_its_body_unchanged_needs_no_feature() {
 #[test]
 fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
     // An Inventor part made of a base solid: its one feature is kept in its native form.
-    let native = json!({"definition": "native", "kind": "InventorClass:0843c7c2"});
+    let native =
+        json!({"kind": "native", "value": {"kind": "InventorClass:0843c7c2", "parameters": {}}});
     let model = cube_under(&[("Base1", native.clone())]);
     let mut report = Report::default();
     let outcome = SolidCraftWriter::new().plan(&model, &mut report);
@@ -8304,8 +8030,7 @@ fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     if let Some(features) = wire["model"]["features"].as_array_mut() {
         features.push(
-            json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Base1",
-                             "suppressed": false, "definition": native}),
+            json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Base1", "suppressed": false, "definition": {"kind": "operation", "value": native}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
         );
     }
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -8332,21 +8057,19 @@ fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
 fn parameters_alone() -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
     let mut wire = serde_json::to_value(&ir).unwrap();
-    if let Some(arenas) = wire["model"].as_object_mut() {
-        for rows in arenas.values_mut() {
-            if rows.is_array() {
-                *rows = json!([]);
+    for home in ["geometry", "model"] {
+        if let Some(arenas) = wire[home].as_object_mut() {
+            for rows in arenas.values_mut() {
+                if rows.is_array() {
+                    *rows = json!([]);
+                }
             }
         }
     }
     wire["model"]["parameters"] = json!([
-        {"id": "f3d:model:parameter#1", "ordinal": 0, "name": "W1", "expression": "20 mm",
-         "value": {"kind": "length", "value": 20.0}},
-        {"id": "f3d:model:parameter#2", "ordinal": 1, "name": "half", "expression": "W1 / 2",
-         "value": {"kind": "length", "value": 10.0},
-         "dependencies": ["f3d:model:parameter#1"]},
-        {"id": "f3d:model:parameter#3", "ordinal": 2, "name": "tilt", "expression": "15 deg",
-         "value": {"kind": "angle", "value": 15.0_f64.to_radians()}},
+        {"id": "f3d:model:parameter#1", "ordinal": 0, "name": "W1", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "dependencies": [], "properties": {}},
+        {"id": "f3d:model:parameter#2", "ordinal": 1, "name": "half", "expression": "W1 / 2", "value": {"kind": "length", "value": 10.0}, "dependencies": ["f3d:model:parameter#1"], "properties": {}},
+        {"id": "f3d:model:parameter#3", "ordinal": 2, "name": "tilt", "expression": "15 deg", "value": {"kind": "angle", "value": 15.0_f64.to_radians()}, "dependencies": [], "properties": {}},
     ]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -8404,7 +8127,7 @@ fn solidcraft_opens_a_design_of_parameters_alone() {
 fn changed_extrude(change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    change(&mut wire["model"]["features"][1]["definition"]);
+    change(&mut wire["model"]["features"][1]["definition"]["value"]["value"]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -8477,11 +8200,7 @@ fn plane_ended_extrude(z: f64, datum: bool, change: impl FnOnce(&mut Value)) -> 
         wire["model"]["features"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "f3d:model:feature#3", "ordinal": 1, "name": "End plane",
-                "suppressed": false, "dependencies": [], "outputs": [],
-                "definition": {"definition": "datum_plane", "frame": frame}
-            }));
+            .push(json!({"id": "f3d:model:feature#3", "ordinal": 1, "name": "End plane", "suppressed": false, "dependencies": [], "outputs": [], "definition": {"kind": "operation", "value": {"kind": "datum_plane", "value": {"frame": frame}}}, "source_properties": {}, "source_content": []}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     }
     model
@@ -8529,7 +8248,8 @@ fn plane_ended_extrudes_follow_a_placed_sketch_normal() {
         "normal": {"x": 1.0, "y": 0.0, "z": 0.0},
         "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}
     });
-    wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["plane"] = json!({
+    wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["plane"] = json!({
         "origin": {"x": 15.0, "y": -23.0, "z": 37.0},
         "normal": {"x": 2.0, "y": 0.0, "z": 0.0},
         "u_axis": {"x": 0.0, "y": 0.0, "z": 1.0}
@@ -8647,14 +8367,17 @@ fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
     next["outputs"] = json!([]);
     next["dependencies"] = json!(["f3d:model:feature#2"]);
     if from_face {
-        next["definition"]["start"] = json!({
+        next["definition"]["value"]["value"]["start"] = json!({
             "kind": "from_face", "face": selection, "offset": offset
         });
-        next["definition"]["extent"]["side"]["termination"]["length"] = json!(2.0);
+        next["definition"]["value"]["value"]["extent"]["side"]["termination"]["length"] =
+            json!(2.0);
     } else {
-        next["definition"]["start"] = json!({"kind": "offset_profile_plane", "offset": 12.0});
-        next["definition"]["direction"] = json!({"kind": "reversed_profile_normal"});
-        next["definition"]["extent"]["side"]["termination"] = json!({
+        next["definition"]["value"]["value"]["start"] =
+            json!({"kind": "offset_profile_plane", "offset": 12.0});
+        next["definition"]["value"]["value"]["direction"] =
+            json!({"kind": "reversed_profile_normal"});
+        next["definition"]["value"]["value"]["extent"]["side"]["termination"] = json!({
             "kind": "to_face", "face": selection, "offset": offset
         });
     }
@@ -8678,7 +8401,8 @@ fn extrude_ending_at_plane(z: f64, source: Option<&str>) -> Model {
     if let Some(source) = source {
         termination["source"] = json!(source);
     }
-    wire["model"]["features"][2]["definition"]["extent"]["side"]["termination"] = termination;
+    wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]["termination"] =
+        termination;
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -8707,7 +8431,7 @@ fn plane_started_extrudes_start_at_the_plane_offset() {
     // face; the same start given as a plane gives the same start offset.
     let mut model = face_ended_extrude(false, 0.0, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][2]["definition"]["start"] = json!({
+    wire["model"]["features"][2]["definition"]["value"]["value"]["start"] = json!({
         "kind": "from_plane", "native": "synthetic plane", "source": "face_surface", "plane": {
             "origin": {"x": 0.0, "y": 0.0, "z": 12.0},
             "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
@@ -8887,8 +8611,8 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
     ] {
         let mut model = face_ended_extrude(false, 0.0, false);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let termination =
-            &mut wire["model"]["features"][2]["definition"]["extent"]["side"]["termination"];
+        let termination = &mut wire["model"]["features"][2]["definition"]["value"]["value"]
+            ["extent"]["side"]["termination"];
         termination["face"] = selection;
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, report) = convert(
@@ -8925,7 +8649,7 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
 fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
     let mut model = face_ended_extrude(false, 0.0, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let definition = &mut wire["model"]["features"][2]["definition"];
+    let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
     let first = definition["extent"]["side"].clone();
     definition["direction"] = json!({"kind": "profile_normal"});
     definition["start"] = json!({"kind": "offset_profile_plane", "offset": 5.0});
@@ -8952,7 +8676,8 @@ fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
 fn a_face_end_does_not_silently_reverse_the_extrude() {
     let mut model = face_ended_extrude(false, 0.0, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][2]["definition"]["direction"] = json!({"kind": "profile_normal"});
+    wire["model"]["features"][2]["definition"]["value"]["value"]["direction"] =
+        json!({"kind": "profile_normal"});
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
@@ -9004,7 +8729,7 @@ fn sketch_relation_history(definition: Value) -> Model {
 }
 
 fn sketch_locus(kind: &str, key: u32) -> Value {
-    json!({"kind": kind, "entity": format!("f3d:model:sketch-entity#{key}")})
+    json!({"kind": kind, "value": format!("f3d:model:sketch-entity#{key}")})
 }
 
 #[test]
@@ -9167,10 +8892,7 @@ fn fixed_curves_hold_the_radius_and_ellipse_radius_dimensions_use_the_minor_radi
         } else {
             2.0
         };
-        wire["model"]["parameters"].as_array_mut().unwrap().push(json!({
-            "id": "f3d:model:parameter#3", "name": "round_size", "expression": format!("{value} mm"),
-            "value": {"kind": "length", "value": value},
-        }));
+        wire["model"]["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "name": "round_size", "expression": format!("{value} mm"), "value": {"kind": "length", "value": value}, "ordinal": 0, "dependencies": [], "properties": {}}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, report) = convert(
             &model,
@@ -9231,7 +8953,7 @@ fn bounded_conics_and_weighted_beziers_preserve_their_shape() {
         ),
         (
             json!({"kind": "nurbs", "curve": {"degree": 2, "periodic": false,
-            "knots": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0], "poles": {"form": "rational", "points": [
+            "knots": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0], "poles": {"kind": "rational", "points": [
                 {"point": {"u": 4.0, "v": 0.0}, "weight": 1.0},
                 {"point": {"u": 4.0, "v": 2.0}, "weight": std::f64::consts::FRAC_1_SQRT_2},
                 {"point": {"u": 0.0, "v": 2.0}, "weight": 1.0}]}}}),
@@ -9355,10 +9077,7 @@ fn vertical_axis_angles_use_a_fixed_construction_axis_and_keep_the_parameter() {
     wire["model"]["parameters"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:parameter#3", "name": "theta", "expression": "90 deg",
-            "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2},
-        }));
+        .push(json!({"id": "f3d:model:parameter#3", "name": "theta", "expression": "90 deg", "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}, "ordinal": 0, "dependencies": [], "properties": {}}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
@@ -9411,7 +9130,7 @@ fn equal_weight_rational_splines_are_polynomial_control_splines() {
     let model = bounded_conic_history(
         json!({"kind": "nurbs", "curve": {
         "degree": 3, "periodic": false, "knots": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
-        "poles": {"form": "rational", "points": [
+        "poles": {"kind": "rational", "points": [
             {"point": {"u": 0.0, "v": 0.0}, "weight": 2.0},
             {"point": {"u": 10.0, "v": 20.0}, "weight": 2.0},
             {"point": {"u": 20.0, "v": 20.0}, "weight": 2.0},
@@ -9517,10 +9236,7 @@ fn modifying(definition: Value) -> Model {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Modify",
-            "suppressed": false, "definition": definition,
-        }));
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Modify", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -9537,9 +9253,8 @@ fn cube_body() -> Value {
 }
 
 fn body_mirror_definition() -> Value {
-    json!({"definition": "pattern", "seeds": [{"kind": "bodies", "value": cube_body()}],
-        "pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
-            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}})
+    json!({"kind": "pattern", "value": {"seeds": [{"kind": "bodies", "value": cube_body()}], "pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}})
 }
 
 #[test]
@@ -9559,7 +9274,7 @@ fn body_mirrors_select_named_bodies_and_keep_the_plane() {
 fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
     let base = primitive_history(sphere());
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let model = &mut wire["model"];
+    let model = &mut wire["geometry"];
     // A second, independent synthetic topology, with its own arena identities.
     for arena in [
         "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces", "shells",
@@ -9573,15 +9288,12 @@ fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
         }
         model[arena].as_array_mut().unwrap().extend(rows);
     }
+    let model = &mut wire["model"];
     let mut sphere = sphere();
-    sphere["center"]["x"] = json!(10.0);
+    sphere["value"]["center"]["x"] = json!(10.0);
     model["features"].as_array_mut().unwrap().extend([
-        json!({"id": "f3d:model:feature#3", "ordinal": 1, "name": "Tool ball",
-            "suppressed": false, "outputs": ["synthetic:tool:body#0"], "definition": sphere}),
-        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Boolean",
-            "suppressed": false, "definition": {"definition": "combine",
-                "operands": {"target": cube_body(), "tools": {"kind": "bodies", "value": ["synthetic:tool:body#0"]}},
-                "op": operation, "keep_tools": keep_tools}}),
+        json!({"id": "f3d:model:feature#3", "ordinal": 1, "name": "Tool ball", "suppressed": false, "outputs": ["synthetic:tool:body#0"], "definition": {"kind": "operation", "value": sphere}, "dependencies": [], "source_properties": {}, "source_content": []}),
+        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Boolean", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"operands": {"target": cube_body(), "tools": {"kind": "bodies", "value": ["synthetic:tool:body#0"]}}, "op": operation, "keep_tools": keep_tools, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     ]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -9595,7 +9307,7 @@ fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
 fn split_cube(x: f64, shifted: bool, after: Option<Value>) -> Model {
     let base = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let model = &mut wire["model"];
+    let model = &mut wire["geometry"];
     let mut outputs = vec![json!("synthetic:cube:body#0")];
     if shifted {
         for arena in [
@@ -9617,19 +9329,15 @@ fn split_cube(x: f64, shifted: bool, after: Option<Value>) -> Model {
     }
     let frame = json!({"origin": {"x": x, "y": 0.0, "z": 0.0},
         "normal": {"x": 1.0, "y": 0.0, "z": 0.0}, "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}});
+    let model = &mut wire["model"];
     let features = model["features"].as_array_mut().unwrap();
     features.extend([
-        json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Cutting plane",
-            "suppressed": false, "definition": {"definition": "datum_plane", "frame": frame}}),
-        json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Split",
-            "suppressed": false, "outputs": outputs,
-            "definition": {"definition": "split_body", "targets": cube_body(),
-                "tool": {"kind": "plane", "value": {"plane": "f3d:model:feature#3"}}}}),
+        json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Cutting plane", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_plane", "value": {"frame": frame}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
+        json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Split", "suppressed": false, "outputs": outputs, "definition": {"kind": "operation", "value": {"kind": "split_body", "value": {"targets": cube_body(), "tool": {"kind": "plane", "value": {"plane": "f3d:model:feature#3"}}}}}, "dependencies": [], "source_properties": {}, "source_content": []}),
     ]);
     if let Some(definition) = after {
         features.push(
-            json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "After",
-            "suppressed": false, "definition": definition}),
+            json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "After", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
         );
     }
     Model {
@@ -9641,7 +9349,7 @@ fn split_cube(x: f64, shifted: bool, after: Option<Value>) -> Model {
 /// The largest X any of the example cube's points has.
 fn cube_right(model: &Model) -> f64 {
     let wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["points"]
+    wire["geometry"]["points"]
         .as_array()
         .unwrap()
         .iter()
@@ -9655,10 +9363,8 @@ fn a_body_split_by_a_datum_plane_keeps_each_piece_named() {
     // The moved copy lies on the side the normal points to and keeps the cube's name; the
     // cube itself, behind the plane, becomes the new piece. A mirror after the split names
     // the cube's body, so it mirrors the new piece.
-    let mirror = json!({"definition": "pattern",
-        "seeds": [{"kind": "bodies", "value": cube_body()}],
-        "pattern": {"kind": "mirror", "plane_origin": {"x": 40.0, "y": 0.0, "z": 0.0},
-            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let mirror = json!({"kind": "pattern", "value": {"seeds": [{"kind": "bodies", "value": cube_body()}], "pattern": {"kind": "mirror", "plane_origin": {"x": 40.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}});
     let (document, report) = convert(
         &split_cube(right, true, Some(mirror)),
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -9683,10 +9389,8 @@ fn split_pieces_that_cannot_be_told_apart_are_not_selected_later() {
     // the cube's identity, and a later feature selecting it stops the history.
     let model = split_cube(0.0, false, None);
     let middle = cube_right(&model) - 5.0;
-    let mirror = json!({"definition": "pattern",
-        "seeds": [{"kind": "bodies", "value": cube_body()}],
-        "pattern": {"kind": "mirror", "plane_origin": {"x": 40.0, "y": 0.0, "z": 0.0},
-            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let mirror = json!({"kind": "pattern", "value": {"seeds": [{"kind": "bodies", "value": cube_body()}], "pattern": {"kind": "mirror", "plane_origin": {"x": 40.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}});
     let (document, report) = convert(
         &split_cube(middle, false, Some(mirror)),
         &SolidCraftWriter::new().verification(Verification::Off),
@@ -9709,7 +9413,8 @@ fn splitting_by_faces_is_refused_by_name() {
         .iter_mut()
         .find(|f| f["name"] == "Split")
         .unwrap();
-    split["definition"]["tool"] = json!({"kind": "faces", "value": cube_faces(&["top"])});
+    split["definition"]["value"]["value"]["tool"] =
+        json!({"kind": "faces", "value": cube_faces(&["top"])});
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (_, report) = convert(
         &model,
@@ -9763,7 +9468,7 @@ fn a_boolean_whose_operands_keep_a_native_member_per_body_maps_those_bodies() {
         .iter_mut()
         .find(|f| f["name"] == "Boolean")
         .unwrap();
-    boolean["definition"]["operands"] = json!({
+    boolean["definition"]["value"]["value"]["operands"] = json!({
         "target": {"kind": "resolved_set", "value": {"members": [
             {"body": "synthetic:cube:body#0", "native": "body:1"}]}},
         "tools": {"kind": "resolved_set", "value": {"members": [
@@ -9785,7 +9490,7 @@ fn a_boolean_referencing_a_removed_tool_reports_a_history_blocker() {
     let mut model = combined_spheres("cut", false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     // Match core's consumed-body filtering: preserve history, remove the tool's topology.
-    for (arena, values) in wire["model"].as_object_mut().unwrap() {
+    for (arena, values) in wire["geometry"].as_object_mut().unwrap() {
         if arena == "features" {
             continue;
         }
@@ -9817,38 +9522,32 @@ fn unsupported_modify_options_explain_what_stops_history() {
     let mut cases = Vec::new();
     // Shell and draft faces exist only on the final body, which the feature has changed.
     cases.push((
-        json!({"definition": "shell", "bodies": cube_body(),
-        "removed_faces": cube_faces(&["top"]), "thickness": 1.0, "outward": false}),
+        json!({"kind": "shell", "value": {"bodies": cube_body(), "removed_faces": cube_faces(&["top"]), "thickness": 1.0, "outward": false}}),
         "shell requires faces from its own input topology",
     ));
     cases.push((
-        json!({"definition": "draft", "faces": cube_faces(&["right"]),
-        "anchor": {"kind": "neutral_plane", "plane": cube_faces(&["bottom"]),
-            "pull": {"direction": {"x": 0.0, "y": 0.0, "z": 1.0}}},
-        "angle": 0.1, "outward": false}),
+        json!({"kind": "draft", "value": {"faces": cube_faces(&["right"]), "anchor": {"kind": "neutral_plane", "plane": cube_faces(&["bottom"]),
+            "pull": {"direction": {"x": 0.0, "y": 0.0, "z": 1.0}}}, "angle": 0.1, "outward": false}}),
         "draft waits on input face geometry",
     ));
     cases.push((
-        json!({"definition": "mirror_shape", "source": cube_body(),
-        "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
-        "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}),
+        json!({"kind": "mirror_shape", "value": {"source": cube_body(), "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0}, "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}),
         "SolidCraft mirrors keep the original body",
     ));
     cases.push((
-        json!({"definition": "cosmetic_thread", "face": cube_faces(&["right"]),
-        "diameter": 8.0, "extent": {"kind": "through"}}),
+        json!({"kind": "cosmetic_thread", "value": {"face": cube_faces(&["right"]), "diameter": 8.0, "extent": {"kind": "through"}}}),
         "cosmetic threads require a resolved diameter and pitch",
     ));
     for family in ["thread", "detailed_thread"] {
         cases.push((
-            json!({"definition": "unresolved", "family": family}),
+            json!({"kind": "unresolved", "value": {"family": family}}),
             "threads whose construction is unresolved are not supported yet",
         ));
     }
     cases.push((
-        json!({"definition": "combine", "operands": {
+        json!({"kind": "combine", "value": {"operands": {
         "target": {"kind": "native", "value": "Body1"},
-        "tools": {"kind": "native", "value": "Body2"}}, "op": "cut"}),
+        "tools": {"kind": "native", "value": "Body2"}}, "op": "cut", "keep_tools": false, "destination": "target_component"}}),
         "a native body reference is not supported yet",
     ));
     for (definition, reason) in cases {
@@ -9897,15 +9596,12 @@ fn later_body_mirrors_require_boolean_tools_to_be_retained() {
         let base = combined_spheres("join", keep_tools);
         let mut wire = serde_json::to_value(&base.ir).unwrap();
         let mut mirror = body_mirror_definition();
-        mirror["seeds"][0]["value"] = json!({"kind": "resolved", "value": {
+        mirror["value"]["seeds"][0]["value"] = json!({"kind": "resolved", "value": {
             "bodies": ["synthetic:tool:body#0"], "native": "Tool"}});
         wire["model"]["features"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "f3d:model:feature#5", "ordinal": 3, "name": "Mirror tool",
-                "suppressed": false, "definition": mirror,
-            }));
+            .push(json!({"id": "f3d:model:feature#5", "ordinal": 3, "name": "Mirror tool", "suppressed": false, "definition": {"kind": "operation", "value": mirror}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..base
@@ -9967,12 +9663,14 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Edge treatment",
-            "suppressed": false, "dependencies": ["f3d:model:feature#2"],
-            "outputs": ["synthetic:cube:body#0"],
-            "definition": {"definition": kind, "groups": [group]},
-        }));
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#2"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": kind, "value": {"groups": [group]}}}, "source_properties": {}, "source_content": []}));
+    if kind == "chamfer" {
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()["definition"]["value"]["value"]["flip_direction"] = json!(false);
+    }
     let sample = |edge: &str, xy: f64| {
         json!({
             "edge": edge, "interior": {"x": xy, "y": xy, "z": z0 + 5.0},
@@ -9982,11 +9680,7 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
             "faces": if edge == "near" { json!(["front", "left"]) } else { json!(["back", "right"]) },
         })
     };
-    wire["model"]["feature_input_topologies"] = json!([{
-        "id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3",
-        "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"],
-        "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)],
-    }]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"], "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)], "bodies": [], "vertices": []}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -9999,26 +9693,27 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
 fn multibody_blend(kind: &str, dimension: Value) -> Model {
     let base = input_blend(kind, dimension, false);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let m = &mut wire["model"];
+    let m = &mut wire["geometry"];
     let mut body = m["bodies"][0].clone();
     body["id"] = json!("synthetic:lower:body#0");
     body["name"] = json!("Lower block");
     let mut region = m["regions"][0].clone();
     region["id"] = json!("synthetic:lower:region#0");
-    body["regions"] = json!(["synthetic:lower:region#0"]);
+    region["body"] = json!("synthetic:lower:body#0");
     m["regions"].as_array_mut().unwrap().push(region);
     m["bodies"].as_array_mut().unwrap().push(body);
+    let m = &mut wire["model"];
     let mut extrude = m["features"][1].clone();
     extrude["id"] = json!("synthetic:lower:feature#0");
     extrude["ordinal"] = json!(2);
     extrude["name"] = json!("Lower extrusion");
     extrude["outputs"] = json!(["synthetic:lower:body#0"]);
-    extrude["definition"]["direction"] =
+    extrude["definition"]["value"]["value"]["direction"] =
         json!({"kind": "explicit", "vector": {"x": 0.0, "y": 0.0, "z": -1.0}});
     m["features"].as_array_mut().unwrap().insert(2, extrude);
     m["features"][3]["ordinal"] = json!(3);
     m["features"][3]["outputs"] = json!(["synthetic:cube:body#0", "synthetic:lower:body#0"]);
-    m["features"][3]["definition"]["groups"][0]["edges"]["value"]["edges"] =
+    m["features"][3]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
         json!(["lower", "near"]);
     let state = &mut m["feature_input_topologies"][0];
     state["edges"].as_array_mut().unwrap().push(json!("lower"));
@@ -10035,9 +9730,10 @@ fn multibody_blend(kind: &str, dimension: Value) -> Model {
     later["ordinal"] = json!(4);
     later["name"] = json!("Later treatment");
     later["outputs"] = json!(["synthetic:cube:body#0"]);
-    later["definition"]["groups"][0]["edges"]["value"]["state"] =
+    later["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["state"] =
         json!("synthetic:later:feature-input-topology#0");
-    later["definition"]["groups"][0]["edges"]["value"]["edges"] = json!(["opposite"]);
+    later["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+        json!(["opposite"]);
     let mut later_state = m["feature_input_topologies"][0].clone();
     later_state["id"] = json!("synthetic:later:feature-input-topology#0");
     later_state["input_of"] = json!("synthetic:later:feature#0");
@@ -10428,7 +10124,7 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
     check(
         cli,
         |m| {
-            m["features"][2]["definition"]["groups"][0]["edges"] =
+            m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] =
                 json!({"kind": "edges", "value": ["synthetic:cube:edge#8"]})
         },
         "require edges from their own feature input topology",
@@ -10436,7 +10132,7 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
     check(
         cli,
         |m| {
-            m["features"][2]["definition"]["groups"][0]["edges"] = json!({
+            m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] = json!({
                 "kind": "resolved", "value": {
                     "edges": ["synthetic:cube:edge#8"], "native": "synthetic base selection"}})
         },
@@ -10445,7 +10141,7 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
     check(
         cli,
         |m| {
-            m["features"][2]["definition"]["groups"][0]["edges"] =
+            m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"] =
                 json!({"kind": "native", "value": "feature-property:93"})
         },
         "a native edge reference is not supported yet",
@@ -10453,7 +10149,7 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
     check(
         cli,
         |m| {
-            let edges = &mut m["features"][2]["definition"]["groups"][0]["edges"];
+            let edges = &mut m["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"];
             let value = edges["value"].clone();
             *edges = json!({"kind": "historical_partial", "value": {"state": value["state"],
                 "edges": [], "unresolved": ["op:1"], "native": value["native"]}})
@@ -10676,7 +10372,8 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
     let writer = replaying(&cli.path);
     for (weight, maps) in [(1.0, true), (0.999, false), (2.0, false)] {
         let mut wire = serde_json::to_value(&base.ir).unwrap();
-        wire["model"]["features"][2]["definition"]["groups"][0]["tangency_weight"] = json!(weight);
+        wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]
+            ["tangency_weight"] = json!(weight);
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..base.clone()
@@ -10710,8 +10407,8 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
 fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weights() {
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    wire["model"]["features"][2]["definition"]["groups"][0]["edges"]["value"]["edges"] =
-        json!(["near", "opposite"]);
+    wire["model"]["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]
+        ["edges"] = json!(["near", "opposite"]);
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base.clone()
@@ -10738,7 +10435,7 @@ fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weight
     );
     for multiple_groups in [false, true] {
         let mut wire = serde_json::to_value(&base.ir).unwrap();
-        let groups = &mut wire["model"]["features"][2]["definition"]["groups"];
+        let groups = &mut wire["model"]["features"][2]["definition"]["value"]["value"]["groups"];
         if multiple_groups {
             let group = groups[0].clone();
             groups.as_array_mut().unwrap().push(group);
@@ -10777,8 +10474,8 @@ fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() 
         let id = format!("f3d:model:sketch-entity#{edge}");
         m["sketch_constraints"][4]["definition"] = json!({
             "kind": kind,
-            "first": {"kind": "end", "entity": id},
-            "second": {"kind": "start", "entity": id},
+            "first": {"kind": "end", "value": id},
+            "second": {"kind": "start", "value": id},
             "parameter": "f3d:model:parameter#2",
         });
         m["sketch_entities"].as_array_mut().unwrap().push(entity(
@@ -10792,10 +10489,7 @@ fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() 
         m["parameters"][1]["expression"] = json!("-span");
         m["parameters"][1]["value"]["value"] = json!(-10.0);
         m["parameters"][1]["dependencies"] = json!(["f3d:model:parameter#3"]);
-        m["parameters"].as_array_mut().unwrap().push(json!({
-            "id": "f3d:model:parameter#3", "name": "span", "expression": "10 mm",
-            "value": {"kind": "length", "value": 10.0},
-        }));
+        m["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "name": "span", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, _) = convert(&model, &SolidCraftWriter::new());
         let dimension = &document["features"][0]["sketch"]["constraints"][4];
@@ -10833,12 +10527,12 @@ fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() 
 fn used_datum_helpers_keep_the_resolved_dependent_sketch_and_replay() {
     let base = cube_with_history(10.0, first_profile(), None);
     for definition in [
-        json!({"definition": "datum_point", "position": {"x": 0.0, "y": 0.0, "z": 0.0}}),
-        json!({"definition": "datum_coordinate_system", "frame": {
+        json!({"kind": "datum_point", "value": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}),
+        json!({"kind": "datum_coordinate_system", "value": {"frame": {
             "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
             "x_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
             "y_axis": {"x": 0.0, "y": 1.0, "z": 0.0},
-            "z_axis": {"x": 0.0, "y": 0.0, "z": 1.0}}}),
+            "z_axis": {"x": 0.0, "y": 0.0, "z": 1.0}}}}),
     ] {
         let mut wire = serde_json::to_value(&base.ir).unwrap();
         let features = wire["model"]["features"].as_array_mut().unwrap();
@@ -10848,8 +10542,7 @@ fn used_datum_helpers_keep_the_resolved_dependent_sketch_and_replay() {
         features[0]["dependencies"] = json!(["f3d:model:feature#datum"]);
         features.insert(
             0,
-            json!({"id": "f3d:model:feature#datum", "ordinal": 0,
-            "name": "Attachment", "suppressed": false, "definition": definition}),
+            json!({"id": "f3d:model:feature#datum", "ordinal": 0, "name": "Attachment", "suppressed": false, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
         );
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -10925,12 +10618,9 @@ fn helper_info_survives_mapping_and_replay_fallbacks() {
         let base = cube_with_history(if blocked { 10.0 } else { 20.0 }, first_profile(), None);
         let mut wire = serde_json::to_value(&base.ir).unwrap();
         let features = wire["model"]["features"].as_array_mut().unwrap();
-        features.push(json!({"id": "f3d:model:feature#unused", "ordinal": 4,
-            "name": "Unused point", "suppressed": false, "definition": {
-                "definition": "datum_point", "position": {"x": 0.0, "y": 0.0, "z": 0.0}}}));
+        features.push(json!({"id": "f3d:model:feature#unused", "ordinal": 4, "name": "Unused point", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_point", "value": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         if blocked {
-            features.push(json!({"id": "f3d:model:feature#unknown", "ordinal": 3,
-                "name": "Later", "suppressed": false, "definition": {"definition": "native", "kind": "Mystery"}}));
+            features.push(json!({"id": "f3d:model:feature#unknown", "ordinal": 3, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         }
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -11011,21 +10701,21 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
     for named_prefix in [false, true] {
         let mut model = partial_history_model();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let body = wire["model"]["bodies"][0]["id"].clone();
+        let body = wire["geometry"]["bodies"][0]["id"].clone();
         if !named_prefix {
             for feature in wire["model"]["features"].as_array_mut().unwrap() {
-                if feature["definition"]["definition"] == "extrude" {
+                if feature["definition"]["value"]["kind"] == "extrude" {
                     feature["outputs"] = json!([]);
                 }
             }
         }
         wire["model"]["appearances"] = json!([
-            {"id":"synthetic:test:appearance#red", "base_color":{"r":1.0,"g":0.0,"b":0.0,"a":1.0}},
-            {"id":"synthetic:test:appearance#blue", "base_color":{"r":0.0,"g":0.0,"b":1.0,"a":1.0}}
+            {"id": "synthetic:test:appearance#red", "base_color": {"r":1.0,"g":0.0,"b":0.0,"a":1.0}, "properties": {}, "textures": []},
+            {"id": "synthetic:test:appearance#blue", "base_color": {"r":0.0,"g":0.0,"b":1.0,"a":1.0}, "properties": {}, "textures": []}
         ]);
         wire["model"]["appearance_bindings"] = json!([
-            {"id":"synthetic:test:binding#body", "target":{"kind":"body","id":body},"appearance":"synthetic:test:appearance#red"},
-            {"id":"synthetic:test:binding#face", "target":{"kind":"face","id":"synthetic:cube:face#top"},"appearance":"synthetic:test:appearance#blue"}
+            {"id": "synthetic:test:binding#body", "target": {"kind":"body","value":body}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#face", "target": {"kind":"face","value":"synthetic:cube:face#top"}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
         ]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (doc, report) = convert(
@@ -11126,11 +10816,7 @@ fn with_later_blocker(mut model: Model) -> Model {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#99", "ordinal": 99,
-            "name": "Later blocker", "suppressed": false,
-            "definition": {"definition": "native", "kind": "Mystery"}
-        }));
+        .push(json!({"id": "f3d:model:feature#99", "ordinal": 99, "name": "Later blocker", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -11143,7 +10829,7 @@ fn partial_entry_recesses_keep_the_target_in_parts_and_assemblies() {
             json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
         ] {
             let part = with_later_blocker(holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = form;
+                hole["shape"]["construction"]["value"]["kind"] = form;
                 hole["extent"] = json!({"kind": "blind", "length": 6.0});
                 hole["bottom"] = json!({"kind": "flat"});
             }));
@@ -11611,10 +11297,7 @@ fn a_later_sketch_that_fails_replay_does_not_discard_the_valid_body_prefix() {
         wire["model"]["parameters"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "f3d:model:parameter#99", "name": "bad_dimension", "expression": "-5 mm",
-                "value": {"kind": "length", "value": -5.0}
-            }));
+            .push(json!({"id": "f3d:model:parameter#99", "name": "bad_dimension", "expression": "-5 mm", "value": {"kind": "length", "value": -5.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
         wire["model"]["sketch_constraints"].as_array_mut().unwrap().push(json!({
         "id": "f3d:model:sketch-constraint#99", "sketch": TOP,
         "definition": {"kind": "distance", "entities": ["f3d:model:sketch-entity#11"], "parameter": "f3d:model:parameter#99"}
@@ -11827,13 +11510,12 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
 fn a_face_extrude_reapplied_to_a_base_body_stored_as_the_design_ends_is_refused() {
     let model = face_extrude(true, |_| {});
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
     let features = wire["model"]["features"].as_array_mut().unwrap();
     // The cube comes from a base feature holding the body as the design ends, and the face
     // extrude joins onto that same body.
     let first = features.iter_mut().find(|f| f["name"] == "Block").unwrap();
-    first["definition"] = json!({"definition": "base_feature",
-        "bodies": {"kind": "resolved", "value": {"bodies": [body.clone()], "native": "f3d:base#1"}}});
+    first["definition"] = json!({"kind":"operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": [body.clone()], "native": "f3d:base#1"}}}}});
     first["name"] = json!("Base Feature 1");
     let extrude = features
         .iter_mut()
@@ -11885,28 +11567,21 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
         .collect();
     let mut faces: Vec<String> = (0..4).map(side).collect();
     faces.push(face.to_owned());
-    wire["model"]["feature_input_topologies"] = json!([{
-        "id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces,
-        "edge_geometry": geometry,
-    }]);
-    let mut definition = json!({
-        "definition": "extrude",
-        "profile": {"kind": "historical_faces", "value": {
+    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []}]);
+    let mut definition = json!({"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "historical_faces", "value": {
             "state": state, "faces": [face], "native": ["synthetic profile group"],
-        }},
-        "direction": {"kind": "profile_normal"},
-        "start": {"kind": "profile_plane"},
-        "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}},
-        "op": "join",
-    });
-    change(&mut definition);
+        }}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}}, "op": "join"}});
+    let mut payload = definition["value"].take();
+    change(&mut payload);
+    if payload.get("kind").is_some() {
+        definition = payload;
+    } else {
+        definition["value"] = payload;
+    }
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Face extrude",
-            "suppressed": false, "dependencies": ["f3d:model:feature#2"], "definition": definition,
-        }));
+        .push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Face extrude", "suppressed": false, "dependencies": ["f3d:model:feature#2"], "definition": {"kind": "operation", "value": definition}, "source_properties": {}, "source_content": [], "outputs": []}));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -11917,11 +11592,7 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
 /// before the feature, or a native selection.
 fn face_delete(selection: impl FnOnce(&str, &str) -> Value, heal: bool) -> Model {
     face_extrude(true, |definition| {
-        *definition = json!({
-            "definition": "delete_face",
-            "faces": selection("test:face:feature-input#3", "test:face:historical-face#target"),
-            "heal": heal,
-        });
+        *definition = json!({"kind": "delete_face", "value": {"faces": selection("test:face:feature-input#3", "test:face:historical-face#target"), "heal": heal}});
     })
 }
 
@@ -11964,13 +11635,9 @@ fn a_historical_face_is_deleted_by_a_point_inside_it() {
 
 fn face_move(motion: Value) -> Model {
     face_extrude(true, |definition| {
-        *definition = json!({
-            "definition": "move_face",
-            "faces": {"kind": "historical", "value": {
+        *definition = json!({"kind": "move_face", "value": {"faces": {"kind": "historical", "value": {
                 "state": "test:face:feature-input#3",
-                "faces": ["test:face:historical-face#target"], "native": "synthetic selection"}},
-            "motion": motion,
-        });
+                "faces": ["test:face:historical-face#target"], "native": "synthetic selection"}}, "motion": motion}});
     })
 }
 
@@ -12115,30 +11782,21 @@ fn face_extrude_then_chamfer(up: bool) -> Model {
     wire["model"]["feature_input_topologies"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": state, "input_of": "f3d:model:feature#4",
-            "edges": ["corner"], "faces": ["front", "end"],
-            "edge_geometry": [{
+        .push(json!({"id": state, "input_of": "f3d:model:feature#4", "edges": ["corner"], "faces": ["front", "end"], "edge_geometry": [{
                 "edge": "corner", "interior": {"x": 5.0, "y": 0.0, "z": z},
                 "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
                 "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
                 "faces": ["front", "end"],
-            }],
-        }));
+            }], "bodies": [], "vertices": []}));
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "f3d:model:feature#4", "ordinal": 3, "name": "Corner chamfer",
-            "suppressed": false, "dependencies": ["f3d:model:feature#3"],
-            "outputs": ["synthetic:cube:body#0"],
-            "definition": {"definition": "chamfer", "groups": [{
+        .push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Corner chamfer", "suppressed": false, "dependencies": ["f3d:model:feature#3"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": "chamfer", "value": {"groups": [{
                 "edges": {"kind": "historical", "value": {
                     "state": state, "edges": ["corner"], "native": "synthetic input edge",
                 }},
                 "spec": {"kind": "distance", "distance": 1.0},
-            }]},
-        }));
+            }], "flip_direction": false}}}, "source_properties": {}, "source_content": []}));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -12192,10 +11850,7 @@ fn sketch_entity_distances_keep_expressions_driving_geometry() {
         m["sketch_constraints"][4]["definition"]["entities"] = operands;
         m["parameters"][1]["expression"] = json!("Width / 2");
         m["parameters"][1]["dependencies"] = json!(["f3d:model:parameter#3"]);
-        m["parameters"].as_array_mut().unwrap().push(json!({
-            "id": "f3d:model:parameter#3", "name": "Width", "expression": "20 mm",
-            "value": {"kind": "length", "value": 20.0}
-        }));
+        m["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#3", "name": "Width", "expression": "20 mm", "value": {"kind": "length", "value": 20.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, _) = convert(
             &model,
@@ -12230,10 +11885,7 @@ fn cube_with_height_parameter(sign: f64) -> Model {
     parameters[0]["value"]["value"] = json!(sign * 10.0);
     parameters[0]["dependencies"] = json!(["f3d:model:parameter#3"]);
     parameters[0]["properties"] = json!({"source_kind": "AlongDistance"});
-    parameters.push(json!({
-        "id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm",
-        "value": {"kind": "length", "value": 10.0}
-    }));
+    parameters.push(json!({"id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "ordinal": 0, "dependencies": [], "properties": {}}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -12278,12 +11930,8 @@ fn a_partial_revolve_angle_follows_the_parameter_that_sets_it() {
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["parameters"] = json!([
-        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "d1",
-         "expression": "Turn", "dependencies": ["f3d:model:parameter#2"],
-         "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2},
-         "properties": {"source_kind": "AlongAngle"}},
-        {"id": "f3d:model:parameter#2", "name": "Turn", "expression": "90 deg",
-         "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}},
+        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "d1", "expression": "Turn", "dependencies": ["f3d:model:parameter#2"], "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}, "properties": {"source_kind": "AlongAngle"}, "ordinal": 0},
+        {"id": "f3d:model:parameter#2", "name": "Turn", "expression": "90 deg", "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}, "ordinal": 0, "dependencies": [], "properties": {}},
     ]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, _) = convert(
@@ -12306,12 +11954,12 @@ fn a_partial_revolve_angle_follows_the_parameter_that_sets_it() {
 fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
     let mut model = nested_native_profile(&[5.0, 3.0]);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["definition"]["profile"] =
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"] =
         json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [1, 0]}});
     // End where the synthetic final cube has no face: this test is about the written profile,
     // not the end-cap comparison.
-    wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["length"] =
-        json!(5.0);
+    wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["length"] = json!(5.0);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
@@ -12388,7 +12036,7 @@ fn block_with_height_parameter() -> Model {
                "definition": definition})
     };
     let at = |key: u32| format!("f3d:model:sketch-entity#{key}");
-    let locus = |kind: &str, key: u32| json!({"kind": kind, "entity": at(key)});
+    let locus = |kind: &str, key: u32| json!({"kind": kind, "value": at(key)});
     m["sketch_constraints"] = json!([
         constraint(1, json!({"kind": "horizontal", "entity": at(1)})),
         constraint(2, json!({"kind": "vertical", "entity": at(2)})),
@@ -12411,11 +12059,8 @@ fn block_with_height_parameter() -> Model {
         ),
     ]);
     m["parameters"] = json!([
-        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#1", "ordinal": 0,
-         "name": "d2", "expression": "Height", "dependencies": ["f3d:model:parameter#3"],
-         "value": {"kind": "length", "value": 10.0}},
-        {"id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm",
-         "value": {"kind": "length", "value": 10.0}},
+        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#1", "ordinal": 0, "name": "d2", "expression": "Height", "dependencies": ["f3d:model:parameter#3"], "value": {"kind": "length", "value": 10.0}, "properties": {}},
+        {"id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm", "value": {"kind": "length", "value": 10.0}, "ordinal": 0, "dependencies": [], "properties": {}},
     ]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
@@ -12435,7 +12080,7 @@ fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
             "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
             "u_axis": {"x": -1.0, "y": 0.0, "z": 0.0},
         }},
-        "profiles": [[{"entity": "f3d:model:sketch-entity#10"}]],
+        "profiles": [[{"entity": "f3d:model:sketch-entity#10", "reversed": false}]],
     }));
     let mut circle = entity(
         10,
@@ -12443,23 +12088,9 @@ fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
     );
     circle["sketch"] = json!(pocket);
     m["sketch_entities"].as_array_mut().unwrap().push(circle);
-    m["features"].as_array_mut().unwrap().push(json!({
-        "id": "f3d:model:feature#3", "ordinal": 2, "name": "Pocket sketch", "suppressed": false,
-        "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": pocket}},
-    }));
-    m["features"].as_array_mut().unwrap().push(json!({
-        "id": "f3d:model:feature#4", "ordinal": 3, "name": "Pocket", "suppressed": false,
-        "dependencies": ["f3d:model:feature#2", "f3d:model:feature#3"],
-        "definition": {
-            "definition": "extrude",
-            "profile": {"kind": "sketch_profiles", "value": {"sketch": pocket, "profiles": [0]}},
-            "direction": {"kind": "reversed_profile_normal"},
-            "start": {"kind": "profile_plane"},
-            "extent": {"kind": "one_sided",
-                "side": {"termination": {"kind": "blind", "length": 2.0}}},
-            "op": "cut",
-        },
-    }));
+    m["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Pocket sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": pocket}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
+    m["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Pocket", "suppressed": false, "dependencies": ["f3d:model:feature#2", "f3d:model:feature#3"], "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "sketch_profiles", "value": {"sketch": pocket, "profiles": [0]}}}, "direction": {"kind": "reversed_profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided",
+                "side": {"termination": {"kind": "blind", "length": 2.0}}}, "op": "cut"}}}, "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
@@ -12499,16 +12130,12 @@ fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
 fn an_empty_base_region_does_not_consume_an_import_name() {
     let mut model = based_cube();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
     let empty = json!({"id": "test:model:region#empty", "body": body, "shells": []});
-    wire["model"]["regions"]
+    wire["geometry"]["regions"]
         .as_array_mut()
         .unwrap()
         .insert(0, empty);
-    wire["model"]["bodies"][0]["regions"]
-        .as_array_mut()
-        .unwrap()
-        .insert(0, json!("test:model:region#empty"));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
@@ -12539,14 +12166,10 @@ fn an_empty_base_region_does_not_consume_an_import_name() {
 fn an_omitted_base_region_does_not_discard_history_or_shift_body_colours() {
     let mut model = based_cube();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
     // A nonempty region whose shell is unavailable: the exporter omits it.
-    wire["model"]["regions"].as_array_mut().unwrap().insert(0,
+    wire["geometry"]["regions"].as_array_mut().unwrap().insert(0,
         json!({"id": "test:model:region#omitted", "body": body, "shells": ["test:model:shell#missing"]}));
-    wire["model"]["bodies"][0]["regions"]
-        .as_array_mut()
-        .unwrap()
-        .insert(0, json!("test:model:region#omitted"));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
@@ -12573,9 +12196,7 @@ fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-        "id": "test:model:feature#offset", "ordinal": 0, "name": "Offset datum", "suppressed": false,
-        "definition": {"definition": "datum_offset_plane", "distance": -7.0}}));
+        .push(json!({"id": "test:model:feature#offset", "ordinal": 0, "name": "Offset datum", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_offset_plane", "value": {"distance": -7.0}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     let changed = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -12621,11 +12242,10 @@ fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
 fn a_body_split_uses_the_signed_offset_datum_frame() {
     let model = split_cube(0.0, false, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][2]["definition"] = json!({"definition": "datum_offset_plane",
-        "reference": {"reference": "resolved_plane", "frame": {
+    wire["model"]["features"][2]["definition"] = json!({"kind":"operation", "value": {"kind": "datum_offset_plane", "value": {"reference": {"kind": "resolved_plane", "frame": {
             "origin": {"x": 9.0, "y": 0.0, "z": 0.0},
             "normal": {"x": 2.0, "y": 0.0, "z": 0.0},
-            "u_axis": {"x": 0.0, "y": 3.0, "z": 0.0}}}, "distance": -5.0});
+            "u_axis": {"x": 0.0, "y": 3.0, "z": 0.0}}}, "distance": -5.0}}});
     let changed = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -12661,10 +12281,9 @@ fn a_body_split_uses_the_signed_offset_datum_frame() {
 
 fn historical_shell(outward: bool) -> Model {
     face_extrude(true, |definition| {
-        *definition = json!({"definition": "shell", "removed_faces": {
+        *definition = json!({"kind": "shell", "value": {"removed_faces": {
             "kind": "historical", "value": {"state": "test:face:feature-input#3",
-                "faces": ["test:face:historical-face#target"], "native": "synthetic selection"}},
-            "thickness": 1.0, "outward": outward});
+                "faces": ["test:face:historical-face#target"], "native": "synthetic selection"}}, "thickness": 1.0, "outward": outward}});
     })
 }
 
@@ -12750,7 +12369,7 @@ fn shells_require_their_own_historical_input_faces() {
 fn a_body_the_source_leaves_unnamed_gets_a_name_later_features_can_target() {
     let model = cube_with_history(10.0, whole_sketch(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["bodies"][0]
+    wire["geometry"]["bodies"][0]
         .as_object_mut()
         .unwrap()
         .remove("name");
@@ -12780,13 +12399,13 @@ fn a_body_the_source_leaves_unnamed_gets_a_name_later_features_can_target() {
 fn a_join_before_any_body_makes_and_names_the_first_body() {
     let model = cube_with_history(10.0, whole_sketch(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["bodies"][0]
+    wire["geometry"]["bodies"][0]
         .as_object_mut()
         .unwrap()
         .remove("name");
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
-        if feature["definition"]["op"] == "new_body" {
-            feature["definition"]["op"] = json!("join");
+        if feature["definition"]["value"]["value"]["op"] == "new_body" {
+            feature["definition"]["value"]["value"]["op"] = json!("join");
         }
     }
     let changed = Model {
@@ -12833,10 +12452,11 @@ fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
         } else {
             json!(["test:model:feature#cut-sketch"])
         };
-        cut["definition"]["op"] = json!("cut");
-        cut["definition"]["extent"] =
+        cut["definition"]["value"]["value"]["op"] = json!("cut");
+        cut["definition"]["value"]["value"]["extent"] =
             json!({"kind": "symmetric", "side": {"termination": {"kind": "through_all"}}});
-        cut["definition"]["profile"] = json!({"kind": "sketch", "value": CUT_SKETCH});
+        cut["definition"]["value"]["value"]["profile"]["value"] =
+            json!({"kind": "sketch", "value": CUT_SKETCH});
         let mut circle = entity(
             5,
             json!({"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 1.0}),
@@ -12852,13 +12472,12 @@ fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
             .unwrap()
             .push(json!({"id": CUT_SKETCH,
             "name": "Cut sketch", "placement": placement,
-            "profiles": [[{"entity": "f3d:model:sketch-entity#5"}]]}));
+            "profiles": [[{"entity": "f3d:model:sketch-entity#5", "reversed": false}]]}));
         let features = wire["model"]["features"].as_array_mut().unwrap();
         if !with_boss {
             features.retain(|f| f["ordinal"] == 0);
         }
-        features.push(json!({"id": "test:model:feature#cut-sketch", "ordinal": 2, "name": "Cut sketch", "suppressed": false,
-            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": CUT_SKETCH}}}));
+        features.push(json!({"id": "test:model:feature#cut-sketch", "ordinal": 2, "name": "Cut sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": CUT_SKETCH}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         features.push(cut);
         features.reverse();
         let changed = Model {
@@ -12921,7 +12540,8 @@ fn cube_with_circle_profile(length: f64, profile: Value, radius: f64) -> Model {
             json!({"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": radius}),
         ));
     let loops = sketch["sketches"][0]["profiles"][0].clone();
-    sketch["sketches"][0]["profiles"] = json!([loops, [{"entity": "f3d:model:sketch-entity#5"}]]);
+    sketch["sketches"][0]["profiles"] =
+        json!([loops, [{"entity": "f3d:model:sketch-entity#5", "reversed": false}]]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -13211,9 +12831,7 @@ fn an_inferred_partial_profile_needs_known_bodies_at_its_own_source_state() {
             wire["model"]["features"][1]["source_properties"] =
                 json!({"body_centers": center, "body_centers_exact": "cube"});
         }
-        wire["model"]["features"].as_array_mut().unwrap().push(json!({
-            "id": "synthetic:cube:feature#later", "ordinal": 2, "name": "Later", "suppressed": false,
-            "definition": {"definition": "native", "kind": "Reference blocker"}}));
+        wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "synthetic:cube:feature#later", "ordinal": 2, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Reference blocker", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
@@ -13243,10 +12861,9 @@ fn an_inferred_partial_profile_needs_known_bodies_at_its_own_source_state() {
 fn hidden_cube_with_history() -> Model {
     let model = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
-    wire["model"]["bodies"][0]["visible"] = json!(false);
-    wire["model"]["product_definitions"] =
-        json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body]}]);
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
+    wire["geometry"]["bodies"][0]["visible"] = json!(false);
+    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": []}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -13282,9 +12899,9 @@ fn a_body_the_source_hides_stays_hidden_when_the_history_rebuilds_it() {
 /// source lists the ring and the disc inside it, and the whole square besides.
 fn square_and_disc_history() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH, "regions": [
-        {"region": "loops", "outer": 0, "holes": [1]},
-        {"region": "loops", "outer": 1},
-        {"region": "loops", "outer": 0},
+        {"kind": "loops", "outer": 0, "holes": [1]},
+        {"kind": "loops", "outer": 1, "holes": []},
+        {"kind": "loops", "outer": 0, "holes": []},
     ]}});
     cube_with_circle_profile(10.0, profile, 2.0)
 }
@@ -13326,7 +12943,7 @@ fn solidcraft_replays_a_loop_around_another_loop_the_selection_names() {
 fn a_cut_before_any_feature_builds_a_body_is_refused_when_mapping() {
     let mut model = cube_with_history(10.0, json!({"kind": "sketch", "value": SKETCH}), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["definition"]["op"] = json!("cut");
+    wire["model"]["features"][1]["definition"]["value"]["value"]["op"] = json!("cut");
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(
         &model,
@@ -13343,5 +12960,34 @@ fn a_cut_before_any_feature_builds_a_body_is_refused_when_mapping() {
         history_line(&report).contains("no earlier feature in the history builds one"),
         "{}",
         history_line(&report)
+    );
+}
+
+#[test]
+fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
+    let mut model = primitive_history(sphere());
+    model.ir.model.features.clear();
+    model.ir.design.features.push(
+        serde_json::from_value(json!({
+            "id": "test:design:feature#stored",
+            "definition": {"operation": {"kind": "stored", "value": {
+                "bodies": ["synthetic:cube:body#0"], "tessellations": [],
+                "origin": {"kind": "base"}
+            }}}
+        }))
+        .unwrap(),
+    );
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][0]["type"], "import");
+    assert!(
+        history_line(&report).contains("design-only history is not mapped yet"),
+        "{report:?}"
+    );
+    assert!(
+        history_line(&report).contains("ordered selections and evaluation states"),
+        "{report:?}"
     );
 }

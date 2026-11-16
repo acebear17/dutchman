@@ -56,10 +56,13 @@ pub(super) fn pick(
         .and_then(Value::as_str)
         .and_then(|id| ctx.row("surfaces", id))
         .ok_or("its face surface is missing")?;
-    let face_normal = v3(surface.pointer("/geometry/normal"))
+    let face_normal = v3(surface.pointer("/geometry/value/normal"))
         .and_then(super::sketch::unit)
         .ok_or("its face normal is missing")?;
-    if surface.pointer("/geometry/kind").and_then(Value::as_str) != Some("plane")
+    if surface
+        .pointer("/geometry/value/kind")
+        .and_then(Value::as_str)
+        != Some("plane")
         || dot(face_normal, normal).abs() < 1.0 - 1e-9
     {
         return Err("an extrude face not parallel to its sketch is not supported yet".to_owned());
@@ -103,7 +106,11 @@ pub(super) fn pick(
             .and_then(Value::as_str)
             .and_then(|id| ctx.row("curves", id))
             .ok_or("its face curve is missing")?;
-        if curve.pointer("/geometry/kind").and_then(Value::as_str) != Some("line") {
+        if curve
+            .pointer("/geometry/value/kind")
+            .and_then(Value::as_str)
+            != Some("line")
+        {
             return Err("a terminating face with curved edges is not supported yet".to_owned());
         }
     }
@@ -117,7 +124,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
 
     let mut bound: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
     for binding in ctx.arena("appearance_bindings") {
-        if let Some(id) = binding.pointer("/target/id").and_then(Value::as_str) {
+        if let Some(id) = binding.pointer("/target/value").and_then(Value::as_str) {
             bound.entry(id).or_default().push(binding);
         }
     }
@@ -164,7 +171,8 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
             applied.insert(body_id.as_str());
         }
         let faces = if let Some(region) = ctx.imported_regions.get(name) {
-            faces(ctx, &json!({"regions": [region]}))
+            ctx.row("regions", region)
+                .map_or_else(Vec::new, |region| region_faces(ctx, region))
         } else {
             faces(ctx, body)
         };
@@ -218,7 +226,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
         }
     }
     for binding in ctx.arena("appearance_bindings") {
-        let target = binding.pointer("/target/id").and_then(Value::as_str);
+        let target = binding.pointer("/target/value").and_then(Value::as_str);
         if !target.is_some_and(|id| applied.contains(id)) {
             let kind = binding
                 .pointer("/target/kind")
@@ -313,7 +321,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
 fn appearance_point(ctx: &Context, face: &Value) -> Option<V3> {
     let geometry = ctx
         .row("surfaces", face.get("surface")?.as_str()?)?
-        .get("geometry")?;
+        .pointer("/geometry/value")?;
     uv::point(ctx, face, geometry).or_else(|| point_on(ctx, face))
 }
 
@@ -481,47 +489,31 @@ pub(super) fn shape_count(step: &str) -> usize {
 
 /// The faces of `body`.
 fn faces<'a>(ctx: &Context<'a>, body: &Value) -> Vec<&'a Value> {
-    fn ids<'a>(row: &'a Value, key: &str) -> Vec<&'a str> {
-        row.get(key)
-            .and_then(Value::as_array)
-            .map(|ids| ids.iter().filter_map(Value::as_str).collect())
-            .unwrap_or_default()
-    }
-    let mut out = Vec::new();
-    for region in ids(body, "regions") {
-        let Some(region) = ctx.row("regions", region) else {
-            continue;
-        };
-        for shell in ids(region, "shells") {
-            let Some(shell) = ctx.row("shells", shell) else {
-                continue;
-            };
-            for member in shell
-                .get("members")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if member.get("kind").and_then(Value::as_str) != Some("face") {
-                    continue;
-                }
-                if let Some(face) = member
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .and_then(|id| ctx.row("faces", id))
-                {
-                    out.push(face);
-                }
-            }
-        }
-    }
-    out
+    let Some(body) = body.get("id").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    ctx.children("regions", "body", body)
+        .iter()
+        .flat_map(|region| region_faces(ctx, region))
+        .collect()
+}
+
+/// The faces of one imported region, without fabricating a body membership list.
+fn region_faces<'a>(ctx: &Context<'a>, region: &Value) -> Vec<&'a Value> {
+    region
+        .get("shells")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .flat_map(|shell| ctx.children("faces", "shell", shell).iter().copied())
+        .collect()
 }
 
 /// A point inside a planar face, from its outer loop.
 fn point_on(ctx: &Context, face: &Value) -> Option<V3> {
     let surface = ctx.row("surfaces", face.get("surface")?.as_str()?)?;
-    let geometry = surface.get("geometry")?;
+    let geometry = surface.pointer("/geometry/value")?;
     if matches!(geometry.get("kind")?.as_str()?, "cylinder" | "cone") {
         return cylinder_point(ctx, face, geometry);
     }
@@ -546,7 +538,10 @@ fn point_on(ctx: &Context, face: &Value) -> Option<V3> {
         let coedge = ctx.row("coedges", coedge.as_str()?)?;
         let edge = ctx.row("edges", coedge.get("edge")?.as_str()?)?;
         let reversed = coedge.get("sense").and_then(Value::as_str) == Some("reversed");
-        let vertex = edge.get(if reversed { "end" } else { "start" })?.as_str()?;
+        let vertex = edge
+            .get("ends")?
+            .get(if reversed { "end" } else { "start" })?
+            .as_str()?;
         let point = ctx.row(
             "points",
             ctx.row("vertices", vertex)?.get("point")?.as_str()?,
@@ -619,7 +614,7 @@ fn cylinder_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
         for coedge in lp.pointer("/boundary/coedges")?.as_array()? {
             let coedge = ctx.row("coedges", coedge.as_str()?)?;
             let edge = ctx.row("edges", coedge.get("edge")?.as_str()?)?;
-            let vertex = edge.get("start")?.as_str()?;
+            let vertex = edge.pointer("/ends/start")?.as_str()?;
             let point = ctx.row(
                 "points",
                 ctx.row("vertices", vertex)?.get("point")?.as_str()?,
@@ -727,7 +722,7 @@ mod tests {
             })
             .collect();
         json!({"feature_input_topologies": [
-            {"id": "st", "input_of": "f", "faces": ["face"], "edge_geometry": rows}]})
+            {"id": "st", "input_of": "f", "faces": ["face"], "edge_geometry": rows, "bodies": [], "edges": [], "vertices": []}]})
     }
 
     fn historical() -> Value {
@@ -743,7 +738,7 @@ mod tests {
             [14.0, 14.0, z],
             [10.0, 14.0, z],
         ]);
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         let feature = json!({"id": "f"});
         let point = pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap();
         assert!((point[2] - z).abs() < 1e-9, "{point:?}");
@@ -758,7 +753,7 @@ mod tests {
             [-14.0, 14.0, 2.0],
             [-14.0, -14.0, 2.0],
         ]);
-        let ctx = Context::new(&wall);
+        let ctx = Context::testing(&wall);
         assert_eq!(
             pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap_err(),
             "an extrude face not parallel to its sketch is not supported yet"
@@ -808,9 +803,9 @@ mod tests {
             .collect();
         let ids: Vec<String> = (0..loops.len()).map(|l| format!("l{l}")).collect();
         let model = json!({
-            "surfaces": [{"id": "s", "geometry": {"kind": "cylinder",
+            "surfaces": [{"id": "s", "geometry": {"kind":"solved", "value": {"kind": "cylinder",
                 "origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "axis": {"x": 0.0, "y": 0.0, "z": 1.0},
-                "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "radius": 5.0}}],
+                "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "radius": 5.0}}}],
             "faces": [{"id": "f", "surface": "s", "loops": {"loops": ids}}],
             "loops": loops, "coedges": coedges, "edges": edges,
             "vertices": vertices, "points": points,
@@ -822,7 +817,7 @@ mod tests {
     #[test]
     fn a_full_cylinder_gets_a_point_opposite_its_seam() {
         let (model, face) = cylinder_face(&[[5.0, 0.0, 0.0], [5.0, 0.0, 10.0]], 1);
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         let p = point_on(&ctx, &face).unwrap();
         assert!((p[0] + 5.0).abs() < 1e-9 && p[1].abs() < 1e-9 && (p[2] - 5.0).abs() < 1e-9);
     }
@@ -833,7 +828,7 @@ mod tests {
         model["surfaces"][0]["geometry"]["kind"] = json!("cone");
         model["surfaces"][0]["geometry"]["half_angle"] = json!(0.5_f64.atan());
         model["surfaces"][0]["geometry"]["ratio"] = json!(1.0);
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         let p = point_on(&ctx, &face).unwrap();
         assert!((p[0] + 7.5).abs() < 1e-9 && p[1].abs() < 1e-9 && (p[2] - 5.0).abs() < 1e-9);
     }
@@ -847,7 +842,7 @@ mod tests {
             [5.0, 0.0, 10.0],
         ];
         let (model, face) = cylinder_face(&corners, 4);
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         let p = point_on(&ctx, &face).unwrap();
         let half = 5.0 * std::f64::consts::FRAC_1_SQRT_2;
         assert!((p[0] - half).abs() < 1e-9 && (p[1] - half).abs() < 1e-9);
@@ -870,7 +865,7 @@ mod import_tests {
                         {"id": "rw2", "body": "wire", "shells": ["sw2"]},
                         {"id": "rb", "body": "b", "shells": ["sb"]}]
         });
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         let step = "#1=MANIFOLD_SOLID_BREP('',#2);\n#3=SHELL_BASED_SURFACE_MODEL('',(#4));\n#5=PRODUCT('Block','Block','',());";
         assert_eq!(
             import_names(&mut ctx, &["wire", "a", "b"], Some(step)),
@@ -894,7 +889,7 @@ mod import_tests {
                         {"id": "ra", "body": "a", "shells": ["sa"]},
                         {"id": "rb", "body": "b", "shells": ["sb"]}]
         });
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         let one = "#1=MANIFOLD_SOLID_BREP('a',#2);";
         assert!(import_names(&mut ctx, &["a", "b"], Some(one)).is_empty());
         assert!(ctx.named_bodies.is_empty());

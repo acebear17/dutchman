@@ -944,7 +944,7 @@ fn sheet_bodies(model: &Model) -> usize {
     use cadmpeg_ir::topology::BodyKind;
     model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| matches!(body.kind, BodyKind::Sheet | BodyKind::General))
@@ -1010,7 +1010,7 @@ const FLATTENED_ASSEMBLY: &str = "the assembly's placed parts hold no geometry S
 /// one part instead of failing the conversion.
 fn flattened_assembly(model: &Model) -> Option<Model> {
     let assembly = model.assembly.as_ref()?;
-    if assembly.placements.is_empty() || model.ir.model.bodies.is_empty() || any_part(assembly) {
+    if assembly.placements.is_empty() || model.ir.geometry.bodies.is_empty() || any_part(assembly) {
         return None;
     }
     // Restating reads only the design's own geometry, never its assembly.
@@ -1059,7 +1059,7 @@ fn count(n: usize, one: &str, many: &str) -> String {
 fn solid_bodies(model: &Model) -> usize {
     model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| body.kind == cadmpeg_ir::topology::BodyKind::Solid)
