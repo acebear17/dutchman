@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64 = { version = "0.22", optional = true }
+flate2 = { version = "1", optional = true }
 cadmpeg-core.workspace = true
 cadmpeg-codec-f3d.workspace = true
 cadmpeg-ir.workspace = true
@@ -24,7 +26,7 @@ zip = { workspace = true, optional = true }
 # sandboxed importer does), so it links only those cadmpeg codecs.
 default = ["formats"]
 formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
-onshape = ["step", "dep:zip"]
+onshape = ["step", "dep:zip", "dep:base64", "dep:flate2"]
 fusion = ["cadmpeg-registry/f3d"]
 inventor = ["cadmpeg-registry/inventor"]
 solidworks = ["cadmpeg-registry/sldprt"]

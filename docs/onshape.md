@@ -30,7 +30,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points; the writer retains its own knot and degree limits. |
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units or an evaluated quantity are required. Driven dimensions are reported; expressions needing FeatureScript evaluation are not evaluated locally. |
-| Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch selection, positive or reversed normal. Multiple-body Boolean scopes, symmetric/second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
+| Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal. Multiple-body Boolean scopes, symmetric/second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
 | Fillet | Circular, constant radius, explicit input edges | Variable, partial, conic, curvature, overflow, and tangent-chain expansion are not supported yet. The writer must prove every edge on replay. |
 | Chamfer | Equal offsets, explicit input edges | Unequal and angle forms and tangent-chain expansion are not supported yet. Replay proof still applies. |
@@ -44,8 +44,21 @@ An explicit Boolean scope must select the sole input body at that rollback index
 Face loops supply their boundary edges; historical selections belong to exactly
 one CADIR feature. Final STEP faces never stand in for historical input faces.
 Queries containing only arbitrary FeatureScript query strings cannot be evaluated
-offline. The built-in plane query forms are recognized explicitly. Deterministic
-sketch-region subsets are not supported yet and never expand to the whole sketch.
+offline. The built-in plane query forms are recognized explicitly, including literal
+`qCompressed` creation records naming `Top.planeOp`, `Front.planeOp`, or
+`Right.planeOp`. These planes supply their fixed origin, normal, and in-plane axis;
+a deterministic face ID alone cannot supply that frame.
+
+A compressed sketch-region query carries topology disambiguation naming its source
+sketch curves through `derivedFrom`, `sketchEntityId`, and the sketch's `wireOp` and
+`imprint` operations. The reader resolves each selected region to directed source
+boundaries, including separate regions and holes. It does not infer region order
+from `deterministicIds` or expand a subset to the whole sketch. Missing source
+curves, repeated carriers without trimming intervals, tied boundary connections,
+and unsupported query encodings produce specific `onshape/history.not-supported`
+losses. Lines, circles and arcs have resolved boundary parameter ranges; other
+carriers still need their source trimming chart. The writer checks boundary
+closure, interior selection and replay against the original STEP geometry.
 
 Lengths from REST geometry are converted from metres to millimetres; angles use
 radians. The source axes, origin and scale are preserved. Unsupported constructions
@@ -62,14 +75,16 @@ SolidCraft version gates apply unchanged. Fillets and chamfers need a usable
 SolidCraft CLI (or host evaluator) for their input-edge proof. An absent evaluator,
 failed proof or differing replay is reported and preserves the final geometry.
 
-These mappings have synthetic offline coverage. No real Onshape document has
-been tested here; feature-library parameter drift and the API's actual rollback
+Synthetic offline coverage includes the generic deterministic plane and region
+query shapes returned by the REST API. Feature-library parameter drift and rollback
 and tangent propagation semantics still require validation on owner-created data.
 
 The reader has defensive limits: 4,096 ZIP members, 16 MiB directory/ZIP64
 metadata, 32 MiB per JSON member, 256 MiB total expanded data, and 10,000 rows per
 input collection or topology arena. These are admission limits, not memory/time
-estimates. Bodydetails indices may be a JSON array of rollback integers (or
+estimates. Compressed query literals additionally have a 1 MiB expanded limit,
+4 MiB reference-allocation budget, 10,000 parsed nodes and 64 nesting levels.
+Bodydetails indices may be a JSON array of rollback integers (or
 `"i.json"` names), or an object with that array under `indices`.
 
 ## Fetching a document

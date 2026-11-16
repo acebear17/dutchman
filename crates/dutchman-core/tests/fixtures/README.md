@@ -164,3 +164,14 @@ sample, or third-party design was used. Run `python3 onshape.py` to regenerate.
 The plate is 20 × 10 × 2 mm with one 1 mm vertical-edge fillet; the ring is a full
 turn of a 5–10 mm radial rectangle; the hole has a 2 mm bore through a plate below
 XY. The unsupported custom feature is a synthetic no-op after the plate.
+
+`onshape-default-plane-regions.onshape-bundle` is generated from scratch by
+`onshape-regions.py` with SolidCraft CLI 0.43.0: an invented 20 × 10 mm rectangle
+on Top, a construction point, and a 5 mm extrude. Its JSON uses the REST generic
+`BTMIndividualQuery-138`, `deterministicIds`, `queryStatement`, and `queryString`
+fields, with literal and zlib `qCompressed` records. The query encoder authors
+its own dictionary references and topology disambiguation to named sketch curves;
+all identifiers and geometry are invented. It includes default features and empty
+rollback bodydetails, rather than fabricated sketch faces in bodydetails. No
+private query, identifier or geometry is copied. Regenerate with
+`python3 onshape-regions.py --cli /path/to/solidcraft-cli`.

@@ -3,6 +3,8 @@
 
 mod archive;
 mod features;
+mod query;
+mod regions;
 mod sketch;
 mod topology;
 
@@ -246,3 +248,6 @@ pub(super) fn read(
     model.ir.finalize();
     Ok(model)
 }
+
+#[cfg(test)]
+mod tests;

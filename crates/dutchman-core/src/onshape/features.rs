@@ -93,6 +93,13 @@ pub(super) fn queries<'a>(feature: &'a Value, key: &str) -> Mapping<&'a [Value]>
 
 pub(super) fn profile(feature: &Value, key: &str, model: &Model) -> Mapping<Value> {
     let query = queries(feature, key)?;
+    if query.iter().any(|q| {
+        q.get("queryString")
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.contains("qCompressed("))
+    }) {
+        return super::regions::profile(query, model);
+    }
     let [query] = query else {
         return Err("multiple profile queries are not supported yet".into());
     };

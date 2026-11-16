@@ -100,7 +100,7 @@ def plate_commands(negative=False):
             command("sketch.finish"), command("solid.extrude", distance="2 mm", direction="negative" if negative else "positive", operation="new", name="Plate")]
 
 
-def write_bundle(cli, name, features, commands, details=None):
+def write_bundle(cli, name, features, commands, details=None, default_features=None):
     details = details or {}
     with tempfile.TemporaryDirectory(prefix="onshape-fixture-") as folder:
         script = Path(folder) / "commands.json"
@@ -110,7 +110,7 @@ def write_bundle(cli, name, features, commands, details=None):
         manifest = {"schema": "dutchman.onshape-bundle/1", "fetched_at": "2026-11-11T00:00:00Z", "fetcher": "synthetic fixture generator",
                     "api_version": "v1", "document": {"id": "synthetic-document", "name": name, "workspace_or_version": "w", "wvid": "synthetic-workspace", "microversion": "synthetic-microversion"},
                     "elements": [{"id": "studio", "name": name, "type": "PARTSTUDIO", "files": {"features": f"{PREFIX}/features.json", "step": f"{PREFIX}/export.step", "bodydetails": f"{PREFIX}/bodydetails/index.json"}}], "calls": 0}
-        members = {"manifest.json": manifest, f"{PREFIX}/features.json": {"btType": "BTFeatureListResponse-2457", "features": features, "defaultFeatures": [], "sourceMicroversion": "synthetic-microversion"},
+        members = {"manifest.json": manifest, f"{PREFIX}/features.json": {"btType": "BTFeatureListResponse-2457", "features": features, "defaultFeatures": default_features or [], "sourceMicroversion": "synthetic-microversion"},
                    f"{PREFIX}/bodydetails/index.json": sorted(details)}
         members.update({f"{PREFIX}/bodydetails/{i}.json": response for i, response in details.items()})
         with zipfile.ZipFile(ROOT / f"{name}.onshape-bundle", "w", zipfile.ZIP_DEFLATED) as bundle:
