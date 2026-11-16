@@ -15,8 +15,8 @@ See it first: [converted designs in your browser](https://dutchman-cad.github.io
 - **Mac:** [download the app](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-macos-universal.dmg), or `brew install --cask dutchman-cad/tap/dutchman-convert`.
 - **Windows:** [download the 64-bit installer](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-pc-windows-msvc.msi) and open **Dutchman Convert** from Start (no administrator rights needed). A [portable ZIP](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-pc-windows-msvc.zip) is also available; or `scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket` then `scoop install dutchman-cad/dutchman`.
 - **Linux:** download for [x86_64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-unknown-linux-gnu.tar.gz) or [ARM64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz), extract it, and open `dutchman-gui`; or `brew install dutchman-cad/tap/dutchman`.
-- **Arch Linux** (releases after 0.2.9): download `dutchman-bin-<version>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest) and run `sudo pacman -U dutchman-bin-<version>-x86_64.pkg.tar.zst`. Once the package is on the AUR: `yay -S dutchman-bin`.
-- **Linux AppImage** (releases after 0.2.9; until then, use the Linux archive above): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
+- **Arch Linux** (0.2.10 and later): download `dutchman-bin-<version>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest) and run `sudo pacman -U dutchman-bin-<version>-x86_64.pkg.tar.zst`. Once the package is on the AUR: `yay -S dutchman-bin`.
+- **Linux AppImage** (0.2.10 and later): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
 **More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).
@@ -56,14 +56,14 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.9
+## What's new in 0.2.10
 
-- **SolidCraft 0.41:** designs now target SolidCraft 0.41 and still open in 0.40, and back to 0.18.2 with simplified features.
-- **Tighter verification:** a history that rebuilds a body in the wrong place is no longer reported as verified; position and bounding box are checked as well as volume and area.
-- **More complete SolidWorks parts:** more offset surfaces and edgeless faces convert, and parts convert in their saved configuration without bodies from other configurations.
-- **More history to rebuild:** more Fusion threads, holes, fillets, shells, lofts, pipes, and patterns, and more Inventor fillets, revolves, and body trims are read for history.
-- **Sketches reach more parts:** a feature can use a sketch from another component when its placement is unambiguous.
-- **No endless runs:** a design that stops making progress for 20 minutes is stopped and named in the report, and the rest of a Fusion archive still converts.
+- **SolidCraft 0.43:** designs now target SolidCraft 0.43 and still open back to 0.18.2 with simplified features; Fusion bodies you hid stay hidden in 0.42 and newer.
+- **More Fusion history stays editable:** Combine, Sweep, path pattern, sphere, Emboss, unfold, and body mirror steps are read, and history continues past As-built joints and steps that change no geometry.
+- **More Fusion holes and faces:** a Hole placed on an earlier face and a radial Hole into a whole cylinder convert, and more extrudes, fillets, and chamfers find their faces and edges.
+- **Inventor sheet metal:** flanges with their default height keep their editable history, and a corner that leaves its part unchanged no longer stops it.
+- **FreeCAD output:** parts that end as several bodies get a Body for each new-body feature, and parameter-driven dimensions rebuild with the parameter's value.
+- **Linux AppImage and Arch package:** each release has an AppImage for x86_64 and ARM64 that updates itself, an Arch Linux package, and a Docker image that includes SolidCraft's checker.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
