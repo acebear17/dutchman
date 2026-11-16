@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use super::{
     coordinate,
     features::{parameter, quantity, queries},
-    id, number, optional_rows, push, rows, text, topology, Mapping,
+    id, number, optional_rows, push, query as compressed, rows, text, topology, Mapping,
 };
 use crate::{Report, Severity};
 
@@ -16,7 +16,28 @@ fn frame(feature: &Value) -> Mapping<Value> {
     let [query] = queries(feature, "sketchPlane")? else {
         return Err("multiple sketch planes are not supported yet".into());
     };
-    if query
+    let plane = if query
+        .get("queryString")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s.contains("qCompressed("))
+    {
+        let resolved = compressed::resolved(query)?;
+        let [operation] = rows(&resolved, "operationId")? else {
+            return Err("the sketch plane has multiple source operations".into());
+        };
+        if resolved.get("entityType").and_then(Value::as_str) != Some("FACE")
+            || resolved.get("historyType").and_then(Value::as_str) != Some("CREATION")
+            || resolved.get("queryType").and_then(Value::as_str) != Some("DUMMY")
+            || resolved.get("disambiguationData").is_some()
+        {
+            return Err("this sketch-plane query has no resolved in-plane frame".into());
+        }
+        operation
+            .as_str()
+            .and_then(|s| s.strip_suffix(".planeOp"))
+            .ok_or("this sketch plane has no resolved in-plane frame")?
+            .to_owned()
+    } else if query
         .get("deterministicIds")
         .and_then(Value::as_array)
         .is_some_and(|a| !a.is_empty())
@@ -24,8 +45,7 @@ fn frame(feature: &Value) -> Mapping<Value> {
         return Err(
             "a deterministic sketch-plane attachment has no resolved in-plane frame".into(),
         );
-    }
-    let plane = if let Some(feature_id) = query.get("featureId").and_then(Value::as_str) {
+    } else if let Some(feature_id) = query.get("featureId").and_then(Value::as_str) {
         feature_id.to_owned()
     } else {
         let source_query = text(query, "queryString")?;

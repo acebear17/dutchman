@@ -1421,10 +1421,12 @@ dependencies = [
 name = "dutchman-core"
 version = "0.2.10"
 dependencies = [
+ "base64 0.22.1",
  "cadmpeg-codec-f3d",
  "cadmpeg-core",
  "cadmpeg-ir",
  "cadmpeg-registry",
+ "flate2",
  "roxmltree 0.21.2",
  "serde",
  "serde_json",

@@ -22,6 +22,9 @@ Missing or unsupported feature selections produce named losses and preserve the
 bundle's STEP geometry. See [Onshape](onshape.md) for the supported subset.
 An explicitly inconsistent bundle is refused with a request to fetch it again or
 use a version link. Legacy v1 bundles without consistency metadata remain readable.
+Default-plane frames and explicit sketch-region boundaries can be resolved from
+compressed REST query records; deterministic IDs alone are insufficient. The same
+history counts and source-geometry checks apply.
 
 ## Read an existing result
 

@@ -1245,3 +1245,39 @@ fn a_current_access_key_with_its_on_prefix_is_accepted_and_signs() {
     let keys = Credentials::new("on_AbC123xyz".to_owned(), "s3cr3t/+=".to_owned());
     assert!(keys.is_ok(), "{:?}", keys.err().map(|e| e.to_string()));
 }
+
+#[test]
+fn default_plane_and_deterministic_region_convert_with_editable_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_path = dir.path().join("plate.sc");
+    let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-default-plane-regions.onshape-bundle");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .arg("convert")
+        .arg(input)
+        .arg("-o")
+        .arg(&output_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["history"]["mapped"], 2, "{report:#}");
+    assert_eq!(report["history"]["total"], 2, "{report:#}");
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(std::fs::read(output_path).unwrap())).unwrap();
+    let mut document = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut document)
+        .unwrap();
+    let document: Value = serde_json::from_str(&document).unwrap();
+    let written = document["features"].as_array().unwrap();
+    assert!(written.iter().any(|f| f["type"] == "sketch"));
+    assert!(written.iter().any(|f| f["type"] == "extrude"));
+}

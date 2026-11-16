@@ -12,7 +12,9 @@ Local Onshape bundles (`.onshape-bundle`) convert through the same command:
 one Part Studio. See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.
-Older v1 bundles without consistency metadata still convert.
+Older v1 bundles without consistency metadata still convert. Default-plane sketches
+and explicit sketch-region extrudes also accept the API's compressed query records;
+ambiguous boundaries retain a specific history loss and the final STEP geometry.
 
 ## Ask your assistant about a saved desktop result
 

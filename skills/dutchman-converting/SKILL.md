@@ -14,7 +14,10 @@ bodydetails at needed rollback indices, and its final STEP export. Do not reques
 credentials or upload a design. Explain `onshape/history.not-supported` as a named
 history gap with final STEP geometry preserved, and
 `onshape/sketch.constraint-not-supported` as a dropped relation with solved curves
-kept. The ordinary history/verification report still applies. See `docs/onshape.md`.
+kept. Compressed REST queries can resolve built-in plane frames and explicit sketch
+region boundaries. Do not treat a deterministic region ID as a whole-sketch pick;
+explain a refused boundary using its specific loss. The ordinary history/verification
+report still applies. See `docs/onshape.md`.
 If a bundle is marked `consistent: false`, explain that its snapshots differ and
 ask the owner to fetch again or use a version link. Older v1 bundles without this
 metadata are still supported; do not require a fetch solely because it is absent.
