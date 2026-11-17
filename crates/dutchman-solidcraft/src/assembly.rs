@@ -680,8 +680,8 @@ fn prepare_history(
         &mut part_report,
         writer.resolved_version(),
         writer.sketches,
-        &mut |prefix, stored, final_state| {
-            writer.profile_check(part, prefix, step, stored, final_state, progress)
+        &mut |prefix, stored, final_state, compare| {
+            writer.profile_check(part, prefix, step, stored, final_state, compare, progress)
         },
         progress,
     );

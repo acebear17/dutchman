@@ -1618,9 +1618,10 @@ fn disjoint(a: &[P2], b: &[P2], padding: f64) -> bool {
     })
 }
 
-/// An opaque native pick is unambiguous only when even-odd nesting leaves one
-/// material region: one outer loop and its immediate holes, with no islands.
-pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize> {
+/// The sketch's profile loops as polygons, when they alone bound its regions: every other curve
+/// is construction, a point or a reference line, and no two loops touch, cross or coincide, so
+/// the loops nest into a unique tree. `None` otherwise.
+fn clear_loops(sketch: &Value, entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
     if sketch.get("profiles")?.as_array()?.len() > MAX_LINES {
         return None;
     }
@@ -1669,6 +1670,13 @@ pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize
             }
         }
     }
+    Some(polygons)
+}
+
+/// An opaque native pick is unambiguous only when even-odd nesting leaves one
+/// material region: one outer loop and its immediate holes, with no islands.
+pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize> {
+    let polygons = clear_loops(sketch, entities)?;
     let mut outer = None;
     let mut regions = 0;
     for (i, ring) in polygons.iter().enumerate() {
@@ -1686,6 +1694,43 @@ pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize
         }
     }
     (regions == 1).then_some(outer).flatten()
+}
+
+/// Every region of the sketch a native pick can name, as profile-table indices: each loop with
+/// the loops directly inside it, which are its holes. A loop inside another is also a region of
+/// its own (the disc inside a ring). `None` when the loops do not alone bound the regions, or
+/// touch or cross, as for [`single_region`].
+pub(super) fn loop_regions(sketch: &Value, entities: &[&Value]) -> Option<Vec<Vec<usize>>> {
+    let polygons = clear_loops(sketch, entities)?;
+    let around: Vec<Vec<usize>> = polygons
+        .iter()
+        .enumerate()
+        .map(|(i, ring)| {
+            let p = ring.first().copied();
+            polygons
+                .iter()
+                .enumerate()
+                .filter(|(j, other)| *j != i && p.is_some_and(|p| inside(p, other)))
+                .map(|(j, _)| j)
+                .collect()
+        })
+        .collect();
+    let regions = around
+        .iter()
+        .enumerate()
+        .map(|(i, containing)| {
+            let mut region = vec![i];
+            region.extend(
+                around
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, other)| other.len() == containing.len() + 1 && other.contains(&i))
+                    .map(|(j, _)| j),
+            );
+            region
+        })
+        .collect();
+    Some(regions)
 }
 
 /// The area (mm squared) of the region the source loops `wanted` (indices into the sketch's

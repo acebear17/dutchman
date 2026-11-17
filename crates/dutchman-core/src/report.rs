@@ -314,6 +314,45 @@ pub struct FeatureOutcome {
     /// A base feature written with its body as the design ends, which later features re-apply
     /// to.
     pub final_body: bool,
+    /// It mapped with a selection the source does not record, which Dutchman inferred: never
+    /// an exact reading of the source.
+    pub inferred: Option<Inferred>,
+}
+
+/// How a selection the source does not record was inferred: candidates rebuilt in the target
+/// and measured against the source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Inferred {
+    /// What was inferred.
+    pub selection: InferredSelection,
+    /// The candidates measured.
+    pub candidates: usize,
+    /// Of those, the ones that matched the source: the one kept.
+    pub matches: usize,
+    /// What the kept candidate was measured against.
+    pub against: InferredAgainst,
+    /// The largest distance between the kept candidate's surface and the source's, in
+    /// nanometres, when the two solids were compared directly.
+    pub deviation_nm: Option<u64>,
+}
+
+/// The selection a feature's source leaves out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InferredSelection {
+    /// The sketch profile region an extrude, revolve or loft sweeps.
+    ProfileRegion,
+    /// The edges a fillet or chamfer rounds.
+    Edges,
+}
+
+/// What an inferred candidate was measured against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InferredAgainst {
+    /// The source's final solid: volume, area, box and, for one body, the distance between
+    /// the surfaces.
+    OriginalShape,
+    /// The bodies the source stores right after the feature: where each one is.
+    StoredBodies,
 }
 
 /// Whether a source feature mapped.

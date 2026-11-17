@@ -1077,6 +1077,75 @@ pub(crate) fn replay(
     }
 }
 
+/// The source's solid and a candidate's replay compared directly in one SolidCraft session:
+/// the largest distance between their surfaces and each one's face count.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Deviation {
+    /// The largest distance (mm) from either surface to the other.
+    pub max: f64,
+    /// The diagonal (mm) of the source solid's box.
+    pub size: f64,
+    /// Faces of the replayed body, then of the source's.
+    pub faces: Option<(usize, usize)>,
+}
+
+impl Deviation {
+    /// Whether the surfaces agree within the allowance the box comparison gives a body's
+    /// extremes, which are points on its surface: 0.01 mm, or two meshes' chords of its size.
+    pub(crate) fn within(&self) -> bool {
+        let (minimum, share) = POSITION_BOX_ALLOWANCE;
+        within(self.max, (share * self.size).max(minimum))
+    }
+}
+
+/// Samples per comparison, at most: SolidCraft coarsens its spacing for larger surfaces, so a
+/// large body costs no more than this.
+const DEVIATION_POINTS: u64 = 200_000;
+
+/// Loads the source's solid (the Import `original`, suppressed in `design`) beside the replayed
+/// history, which must hold the design's only other body, and compares the two. `None` when
+/// that cannot be done: more bodies than two, a host without the command, a timeout.
+pub(crate) fn deviation(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    design: &[u8],
+    original: u64,
+) -> Option<Deviation> {
+    let script = [
+        serde_json::json!({"command": "timeline.suppress", "params": {"feature": original, "suppressed": false}}),
+        serde_json::json!({"command": "inspect.compare", "params": {"tolerance": 0.001, "max_points": DEVIATION_POINTS}}),
+    ];
+    let results = cli.run(design, &script, timeout, "deviation").ok()?;
+    let compared = results.get(1)?;
+    let max = compared.pointer("/deviation/max_mm")?.as_f64()?;
+    let corner = |end: &str| -> Option<Vec<f64>> {
+        compared
+            .pointer(&format!("/b/bbox/{end}"))?
+            .as_array()?
+            .iter()
+            .map(Value::as_f64)
+            .collect()
+    };
+    let (low, high) = (corner("min")?, corner("max")?);
+    let size = low
+        .iter()
+        .zip(&high)
+        .map(|(a, b)| (b - a) * (b - a))
+        .sum::<f64>()
+        .sqrt();
+    let faces = |side: &str| {
+        compared
+            .pointer(&format!("/{side}/faces"))
+            .and_then(Value::as_u64)
+            .and_then(|count| usize::try_from(count).ok())
+    };
+    (max.is_finite() && size.is_finite() && low.len() == 3).then_some(Deviation {
+        max,
+        size,
+        faces: faces("a").zip(faces("b")),
+    })
+}
+
 /// Where a replayed body is: the centre and diagonal of its box, when SolidCraft gives them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Placed {

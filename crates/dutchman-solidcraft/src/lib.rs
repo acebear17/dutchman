@@ -502,7 +502,11 @@ impl SolidCraftWriter {
     fn plan_blends(&self, mapping: &mut history::Mapping) {
         if self.evaluator.is_none() || matches!(self.replay, Verification::Off) {
             if let Err(why) = verify::find_cli(&self.replay) {
-                history::prove_blends(mapping, |_, _, _| Err(why.clone()));
+                history::prove_blends(
+                    mapping,
+                    |_, _, _| Err(why.clone()),
+                    |_| history::infer::Fit::Unknown,
+                );
             }
         }
     }
@@ -519,48 +523,54 @@ impl SolidCraftWriter {
     ) -> Result<(), Error> {
         let mut remaining = self.timeout;
         let mut failure = None;
-        history::prove_blends(mapping, |history, after, faces| {
-            if let Some(why) = self.memory_refusal() {
-                return Err(why);
-            }
-            let cli = self
-                .selected_evaluator(&self.replay)
-                .map_err(|why| why.to_string())?;
-            // SolidCraft evaluates a whole design when it opens it, rolled back or not, so
-            // the replay gets the history only up to the last step it inspects: a slow later
-            // feature would otherwise cost every proof run its full time.
-            let prefix = through_last(history, after);
-            let history = prefix.as_ref().unwrap_or(history);
-            let design = match self.history_design(model, history, step, Live::History) {
-                Ok(design) => design,
-                Err(err) => {
-                    let why = err.to_string();
-                    failure = Some(err);
+        history::prove_blends(
+            mapping,
+            |history, after, faces| {
+                if let Some(why) = self.memory_refusal() {
                     return Err(why);
                 }
-            };
-            let _checking = progress.map(|p| {
-                p.step(
-                    dutchman_core::StepKind::CheckingBlends,
-                    Some(&model.name),
-                    Some(remaining),
-                    Some(dutchman_core::progress_words::blend_limit()),
-                )
-            });
-            let started = std::time::Instant::now();
-            let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
-            remaining = remaining.saturating_sub(started.elapsed());
-            replayed
-        });
+                let cli = self
+                    .selected_evaluator(&self.replay)
+                    .map_err(|why| why.to_string())?;
+                // SolidCraft evaluates a whole design when it opens it, rolled back or not, so
+                // the replay gets the history only up to the last step it inspects: a slow later
+                // feature would otherwise cost every proof run its full time.
+                let prefix = through_last(history, after);
+                let history = prefix.as_ref().unwrap_or(history);
+                let design = match self.history_design(model, history, step, Live::History) {
+                    Ok(design) => design,
+                    Err(err) => {
+                        let why = err.to_string();
+                        failure = Some(err);
+                        return Err(why);
+                    }
+                };
+                let _checking = progress.map(|p| {
+                    p.step(
+                        dutchman_core::StepKind::CheckingBlends,
+                        Some(&model.name),
+                        Some(remaining),
+                        Some(dutchman_core::progress_words::blend_limit()),
+                    )
+                });
+                let started = std::time::Instant::now();
+                let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
+                remaining = remaining.saturating_sub(started.elapsed());
+                replayed
+            },
+            |history| self.profile_check(model, history, step, None, true, true, progress),
+        );
         match failure {
             Some(err) => Err(err),
             None => Ok(()),
         }
     }
 
-    /// Admit an inferred profile with the same comparison used for unconfirmed whole-sketch
+    /// Measure an inferred profile with the same comparison used for unconfirmed whole-sketch
     /// profiles. Unknown measurements never confirm an inference. At the final body-building
-    /// feature, compare the complete replay with the source as well.
+    /// feature, compare the complete replay with the source as well; with `compare`, also load
+    /// the source's solid beside a one-body replay for the distance between their surfaces.
+    #[allow(clippy::too_many_arguments)]
     fn profile_check(
         &self,
         model: &Model,
@@ -568,35 +578,61 @@ impl SolidCraftWriter {
         step: &str,
         stored: Option<&[verify::StoredBody]>,
         final_state: bool,
+        compare: bool,
         progress: Option<&dutchman_core::Progress<'_>>,
-    ) -> bool {
+    ) -> history::infer::Fit {
+        use dutchman_core::InferredAgainst;
+        use history::infer::{Fit, Measure};
         if self.memory_refusal().is_some() {
-            return false;
+            return Fit::Unknown;
         }
         let Ok(cli) = self.selected_evaluator(&self.verification) else {
-            return false;
+            return Fit::Unknown;
         };
         let _measuring = progress.map(|p| p.measuring());
         let Ok(design) = self.history_design(model, prefix, step, Live::History) else {
-            return false;
+            return Fit::Unknown;
         };
         if final_state {
-            return matches!(
-                self.check(model, prefix, step, &design, progress),
-                Ok(verify::Outcome::Matches)
-            );
+            return match self.check(model, prefix, step, &design, progress) {
+                Ok(verify::Outcome::Matches) => {
+                    let one_body = solid_bodies(model) == 1 && sheet_bodies(model) == 0;
+                    let deviation = (compare && one_body)
+                        .then(|| {
+                            verify::deviation(cli.as_ref(), self.timeout, &design, prefix.next_id)
+                        })
+                        .flatten();
+                    Fit::Matches(Measure {
+                        against: InferredAgainst::OriginalShape,
+                        deviation,
+                    })
+                }
+                Ok(verify::Outcome::Differs(_)) => Fit::Differs,
+                Ok(verify::Outcome::Unverified(_)) | Err(_) => Fit::Unknown,
+            };
         }
         let Some(stored) = stored.filter(|stored| !stored.is_empty()) else {
-            return false;
+            return Fit::Unknown;
         };
         let (outcome, bodies) = verify::replay(cli.as_ref(), self.timeout, &design);
-        matches!(outcome, verify::Outcome::Matches)
-            && bodies.as_deref().is_some_and(|bodies| {
-                bodies
+        match (outcome, bodies) {
+            (verify::Outcome::Matches, Some(bodies))
+                if bodies
                     .iter()
-                    .all(|body| body.center.is_some() && body.size.is_some())
-                    && verify::bodies_differ(Some(stored), Some(bodies)).is_none()
-            })
+                    .all(|body| body.center.is_some() && body.size.is_some()) =>
+            {
+                if verify::bodies_differ(Some(stored), Some(&bodies)).is_none() {
+                    Fit::Matches(Measure {
+                        against: InferredAgainst::StoredBodies,
+                        deviation: None,
+                    })
+                } else {
+                    Fit::Differs
+                }
+            }
+            (verify::Outcome::Differs(_), _) => Fit::Differs,
+            _ => Fit::Unknown,
+        }
     }
 
     /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
@@ -1270,8 +1306,8 @@ impl Writer for SolidCraftWriter {
                 &mut history_report,
                 self.resolved_version(),
                 self.sketches,
-                &mut |prefix, stored, final_state| {
-                    self.profile_check(model, prefix, &step, stored, final_state, progress)
+                &mut |prefix, stored, final_state, compare| {
+                    self.profile_check(model, prefix, &step, stored, final_state, compare, progress)
                 },
                 progress,
             );
@@ -1489,9 +1525,11 @@ pub struct MappedHistory {
 pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
     let mut mapping = history::map(model, report, SolidCraftVersion::default());
     // Blends are proven only on SolidCraft's replay of the history before them.
-    history::prove_blends(&mut mapping, |_, _, _| {
-        Err("only a SolidCraft design is replayed to find them".to_owned())
-    });
+    history::prove_blends(
+        &mut mapping,
+        |_, _, _| Err("only a SolidCraft design is replayed to find them".to_owned()),
+        |_| history::infer::Fit::Unknown,
+    );
     MappedHistory {
         features: mapping.result.and_then(|history| match history.stop {
             Some(why) => Err(why),

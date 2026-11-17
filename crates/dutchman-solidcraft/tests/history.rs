@@ -13196,3 +13196,217 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
         "{report:?}"
     );
 }
+
+/// The cube's sketch with a second 10 mm square beside the first, 20 mm along X, and an opaque
+/// native pick of one of the two: the first two readings (the whole sketch) build two bodies.
+fn two_square_selection() -> Model {
+    let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
+        "selections": ["synthetic:native:selection#one"]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    m["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [10.0, 0.0]),
+        line(2, [10.0, 0.0], [10.0, 10.0]),
+        line(3, [10.0, 10.0], [0.0, 10.0]),
+        line(4, [0.0, 10.0], [0.0, 0.0]),
+        line(5, [20.0, 0.0], [30.0, 0.0]),
+        line(6, [30.0, 0.0], [30.0, 10.0]),
+        line(7, [30.0, 10.0], [20.0, 10.0]),
+        line(8, [20.0, 10.0], [20.0, 0.0]),
+    ]);
+    let ring = |first: u32| -> Vec<Value> {
+        (first..first + 4)
+            .map(|key| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false}))
+            .collect()
+    };
+    m["sketches"][0]["profiles"] = json!([ring(1), ring(5)]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+/// Measures a design by the profile its extrude sweeps, as SolidCraft would: the first square
+/// is the source's cube, the second the same cube 20 mm along X, the whole sketch both. With
+/// `tie`, either square measures as the cube. `faces` gives `inspect.compare` face counts:
+/// the first square's replay has the source's six faces, the second's seven.
+#[derive(Debug, Default)]
+struct MeasuringEvaluator {
+    calls: std::sync::Mutex<Vec<String>>,
+    tie: bool,
+    faces: bool,
+}
+
+impl MeasuringEvaluator {
+    /// Which square the live extrude sweeps: `Some(true)` the first, `Some(false)` the
+    /// second, `None` both or none (the original geometry alone).
+    fn swept(design: &[u8]) -> Option<Option<bool>> {
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let extrude = document["features"].as_array().unwrap().iter().find(|f| {
+            f["type"] == "extrude" && f.get("suppressed").and_then(Value::as_bool) != Some(true)
+        })?;
+        let text = extrude["profiles"].to_string();
+        Some(match (text.contains("\"l1\""), text.contains("\"l5\"")) {
+            (true, false) => Some(true),
+            (false, true) => Some(false),
+            _ => None,
+        })
+    }
+
+    fn body(min_x: f64) -> Value {
+        json!({"volume_mm3": 1000.0, "area_mm2": 600.0, "faces": 6,
+            "bbox": {"min": [min_x, 0, 0], "max": [min_x + 10.0, 10, 10]}})
+    }
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for MeasuringEvaluator {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        _: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        self.calls.lock().unwrap().push(label.to_owned());
+        let bodies = match Self::swept(design) {
+            None => vec![Self::body(0.0)],
+            Some(Some(true)) => vec![Self::body(0.0)],
+            Some(Some(false)) if self.tie => vec![Self::body(0.0)],
+            Some(Some(false)) => vec![Self::body(20.0)],
+            Some(None) => vec![Self::body(0.0), Self::body(20.0)],
+        };
+        Ok(json!({"bodies": bodies, "timeline": [], "total": {"faces": 6}}))
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        _: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        self.calls.lock().unwrap().push(label.to_owned());
+        if !self.faces {
+            return Err("the host has no such command".to_owned());
+        }
+        let first = Self::swept(design) == Some(Some(true));
+        commands
+            .iter()
+            .map(|command| {
+                Ok(match command["command"].as_str().unwrap() {
+                    "timeline.suppress" => json!({"suppressed": false}),
+                    "inspect.compare" => json!({
+                        "a": {"faces": if first { 6 } else { 7 }},
+                        "b": {"faces": 6, "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}},
+                        "deviation": {"max_mm": 0.0001},
+                    }),
+                    other => return Err(format!("Unexpected command: {other}")),
+                })
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn a_profile_region_is_inferred_when_only_one_candidate_measures_as_the_source() {
+    let host = std::sync::Arc::new(MeasuringEvaluator {
+        faces: true,
+        ..MeasuringEvaluator::default()
+    });
+    let (document, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().evaluator(host.clone()),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.check, Check::Verified, "{report:?}");
+    let extrude = &outcome.features[1];
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+    let inferred = extrude.inferred.unwrap();
+    assert_eq!(
+        inferred.selection,
+        dutchman_core::InferredSelection::ProfileRegion
+    );
+    assert_eq!(
+        inferred.against,
+        dutchman_core::InferredAgainst::OriginalShape
+    );
+    assert_eq!((inferred.candidates, inferred.matches), (2, 1));
+    assert_eq!(inferred.deviation_nm, Some(100));
+    let loops = document["features"][1]["profiles"].to_string();
+    assert!(
+        loops.contains("\"l1\"") && !loops.contains("\"l5\""),
+        "{loops}"
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.code.as_deref() == Some("history/profile-region-measured")));
+}
+
+#[test]
+fn candidates_that_measure_alike_are_a_tie_unless_one_alone_has_the_source_faces() {
+    for (faces, mapped) in [(false, false), (true, true)] {
+        let host = std::sync::Arc::new(MeasuringEvaluator {
+            tie: true,
+            faces,
+            ..MeasuringEvaluator::default()
+        });
+        let (document, report) = convert(
+            &two_square_selection(),
+            &SolidCraftWriter::new().evaluator(host),
+        );
+        let extrude = &report.outcome().unwrap().features[1];
+        if mapped {
+            assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+            assert_eq!(extrude.inferred.unwrap().matches, 2);
+            assert!(document["features"][1]["profiles"]
+                .to_string()
+                .contains("\"l1\""));
+        } else {
+            assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+            assert!(
+                extrude
+                    .reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("2 of 2 candidate regions match the source equally"),
+                "{extrude:?}"
+            );
+            assert!(extrude.inferred.is_none());
+            assert_reference_sketches(&document, 1);
+        }
+    }
+}
+
+#[test]
+fn measured_regions_are_not_tried_without_a_solidcraft_check() {
+    let (_, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(extrude
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("could not be confirmed"));
+}
+
+#[test]
+fn solidcraft_measures_the_one_region_that_rebuilds_the_source() {
+    let Some(cli) = solidcraft() else { return };
+    let (_, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.check, Check::Verified, "{report:?}");
+    let inferred = outcome.features[1].inferred.unwrap();
+    assert_eq!(inferred.matches, 1);
+    assert!(
+        inferred.deviation_nm.is_some_and(|nm| nm < 10_000),
+        "{inferred:?}"
+    );
+}
