@@ -67,6 +67,21 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
+## How Dutchman checks a history
+
+When `solidcraft-cli` is available, Dutchman replays the written history in it and compares the
+result with the original body, both measured by the same SolidCraft. The numbers are fixed:
+
+- **Bodies:** the same count.
+- **Volume:** within 0.01% (1e-4) of the larger volume, or the most SolidCraft's measuring mesh can miss, whichever is more.
+- **Area:** within 0.1% (1e-3) of the larger area.
+- **Position and bounding box:** the box centre and each box corner within the larger of 0.01 mm and 0.02% (2e-4) of the larger box diagonal.
+- **Face count and centre of mass:** not compared. SolidCraft merges faces that share a surface, and the centre used is the box centre.
+- **Edges, faces and extrude caps the source names:** an input edge must sit within 1e-6 mm of exactly one rebuilt edge; a profile face within 1e-5 mm, with area within 0.01% (2% when an edge is curved).
+
+Every conversion report states the numbers its check used in `verification_tolerances`. The full
+list is in [How a history is checked](docs/history.md#verification-tolerances).
+
 ## Command line
 
 ```sh

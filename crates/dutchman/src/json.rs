@@ -436,6 +436,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             }
         }
     }
+    if let Some(tolerances) = report.verification_tolerances() {
+        out.insert("verification_tolerances".to_owned(), tolerances.clone());
+    }
     if let Some((needed, available)) = report.history_check_skipped() {
         out.insert(
             "history_check_skipped".to_owned(),
@@ -1569,6 +1572,28 @@ mod tests {
         assert_eq!(out["history"]["needing"], 2);
         assert_eq!(out["history"]["features"][3]["status"], "left_out");
         assert_eq!(out["losses"], json!([]));
+    }
+
+    #[test]
+    fn verification_tolerances_are_reported_only_when_the_writer_states_them() {
+        let mut report = Report::default();
+        let plain = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(plain.get("verification_tolerances").is_none());
+        report.set_verification_tolerances(dutchman_solidcraft::verification_tolerances());
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(out["verification_tolerances"]["version"], 1);
+        assert_eq!(
+            out["verification_tolerances"]["replay"]["volume_relative"],
+            dutchman_solidcraft::VOLUME_TOLERANCE
+        );
+        assert_eq!(
+            out["verification_tolerances"]["stored_bodies"]["exact_box_min_mm"],
+            0.5
+        );
+        // A merged part report keeps them.
+        let mut whole = Report::default();
+        whole.append(report);
+        assert!(whole.verification_tolerances().is_some());
     }
 
     #[test]

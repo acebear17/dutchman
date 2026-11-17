@@ -180,6 +180,8 @@ rechecks before geometry replay. It does not multiply the memory already held by
 decoded design.
 Geometry-only conversion also checks the converted shape by default, using a separately
 calibrated check allowance; `verify: false` keeps either kind of checking off.
+A report whose history check ran also carries `verification_tolerances`: the numbers that
+check used, the same as the CLI's `--json` ([json.md](json.md)).
 If it cannot fit, the successful report includes `history_check_skipped` with
 `needed_bytes`, `available_bytes`, and `reason`:
 `History check skipped: needs about N GB, M GB free`. The original shape stays usable

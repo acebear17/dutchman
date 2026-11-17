@@ -28,9 +28,9 @@ use crate::verify::{Replay, ReplayedEdge, ReplayedFace};
 const FACES: usize = 64;
 const EDGES: usize = 4096;
 /// How far apart, in millimetres, two positions may be and still be the same.
-const NEAR: f64 = 1e-5;
+const NEAR: f64 = crate::tolerances::FACE_POSITION_MM;
 /// How far from square or parallel two unit directions may be.
-const ANGLE: f64 = 1e-5;
+const ANGLE: f64 = crate::tolerances::FACE_DIRECTION;
 const TAU: f64 = std::f64::consts::TAU;
 
 /// One boundary edge of a face, as its samples describe it.
@@ -959,7 +959,11 @@ pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
             .edges
             .iter()
             .any(|edge| !matches!(edge, Edge::Line { .. }));
-        let slack = if curved { 0.02 } else { 1e-4 };
+        let slack = if curved {
+            crate::tolerances::FACE_AREA_CURVED
+        } else {
+            crate::tolerances::FACE_AREA_STRAIGHT
+        };
         let mut found = Vec::new();
         // The nearest in area of the faces on its plane, for the reason a face is not found.
         let mut nearest: Option<(f64, &ReplayedFace, &[ReplayedEdge])> = None;
@@ -969,7 +973,8 @@ pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
                     continue;
                 };
                 if (dot(outward, normal).abs() - 1.0).abs() > ANGLE
-                    || dot(sub(candidate.point, proof.origin), normal).abs() > 1e-4
+                    || dot(sub(candidate.point, proof.origin), normal).abs()
+                        > crate::tolerances::FACE_PLANE_MM
                 {
                     continue;
                 }
@@ -1095,14 +1100,17 @@ fn bounds(face: &Boundary, named: &[&ReplayedEdge]) -> bool {
         .iter()
         .zip(&covered)
         .all(|(edge, total)| match edge {
-            Edge::Line { .. } => (total - edge.length()).abs() <= 1e-4 * edge.length().max(1.0),
+            Edge::Line { .. } => {
+                (total - edge.length()).abs()
+                    <= crate::tolerances::FACE_LINE_COVER * edge.length().max(1.0)
+            }
             Edge::Arc { .. } => (total - edge_sweep(edge).abs()).abs() <= TURN_SLACK,
             Edge::Circle { .. } => (total - TAU).abs() <= TURN_SLACK,
         })
 }
 
 /// How far apart, in radians, the turn a curved edge's rebuilt pieces span may be from its own.
-const TURN_SLACK: f64 = 2e-3;
+const TURN_SLACK: f64 = crate::tolerances::FACE_TURN_RAD;
 
 /// The centre, radius and axis of a curved edge.
 fn carrier(edge: &Edge) -> Option<(V3, f64, V3)> {
@@ -1155,7 +1163,7 @@ fn lies_on(edge: &Edge, rebuilt: &ReplayedEdge) -> bool {
             let Some(turn) = piece_turn(edge, rebuilt) else {
                 return false;
             };
-            let tolerance = 1e-3 * radius.max(1.0);
+            let tolerance = crate::tolerances::FACE_ARC_RADIUS * radius.max(1.0);
             let on = |p: V3| (norm(sub(p, center)) - radius).abs() <= tolerance;
             let half = (turn / 2.0).min(std::f64::consts::FRAC_PI_2);
             let inner = radius * half.cos() - tolerance;

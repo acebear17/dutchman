@@ -341,7 +341,9 @@ Never remove or change the quarantine attribute.
   original in body position, box, area, and volume (area and volume alone when a box is
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
   the larger box diagonal for the centre distance and each minimum/maximum coordinate;
-  area and volume retain their measuring mesh tolerances. `unverified`: written
+  area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
+  report states every number the check used; face count and centre of mass are not compared.
+  `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
   sketches are hidden beside the visible imported shape; the reason says whether retained

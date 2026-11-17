@@ -307,9 +307,9 @@ pub(crate) fn write(
     if let (false, Some(fields)) = (visibility.is_empty(), doc.as_object_mut()) {
         fields.insert("visibility".to_owned(), Value::Object(visibility));
     }
-    builder
-        .report
-        .set_outcome(outcome(&builder.histories, builder.outcomes));
+    let result = outcome(&builder.histories, builder.outcomes);
+    crate::state_tolerances(builder.report, &result);
+    builder.report.set_outcome(result);
     builder.container.finish(&doc)
 }
 

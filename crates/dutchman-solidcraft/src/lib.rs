@@ -25,6 +25,8 @@ mod placements;
 mod repeats;
 mod replay;
 mod step;
+mod tolerances;
+pub use tolerances::report as verification_tolerances;
 #[cfg(test)]
 mod testing;
 mod verify;
@@ -1448,9 +1450,23 @@ impl Writer for SolidCraftWriter {
         if outcome.mode == Mode::Import {
             self.check_import(model, &bytes, report, progress);
         }
+        state_tolerances(report, &outcome);
         report.set_outcome(outcome);
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
+    }
+}
+
+/// Records the tolerances of a history check that ran: the history verified, partly kept, or
+/// rebuilt and found to differ. Nothing is recorded when no replay was compared.
+pub(crate) fn state_tolerances(report: &mut Report, outcome: &Outcome) {
+    let compared = match &outcome.check {
+        Check::Verified | Check::Partial(_) => true,
+        Check::Flattened(reason) => reason.starts_with("replay differs ("),
+        _ => false,
+    };
+    if outcome.mode != Mode::Import && compared {
+        report.set_verification_tolerances(verification_tolerances());
     }
 }
 

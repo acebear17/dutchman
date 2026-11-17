@@ -21,14 +21,14 @@ pub(crate) const VERSION_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The relative difference in volume at which a replay no longer matches the original, when
 /// SolidCraft gives no area and box to bound its meshes' error by (see [`mesh_slack`]).
-pub const VOLUME_TOLERANCE: f64 = 1e-4;
+pub const VOLUME_TOLERANCE: f64 = crate::tolerances::VOLUME_RELATIVE;
 
 /// SolidCraft measures a body from a mesh whose chords keep within this fraction of the body's
 /// size of its faces, and never closer than [`MESH_CHORD_FLOOR`].
-const MESH_CHORD: f64 = 5e-5;
+const MESH_CHORD: f64 = crate::tolerances::MESH_CHORD_RELATIVE;
 
 /// The closest, in millimetres, SolidCraft's measuring mesh keeps to a body's faces.
-const MESH_CHORD_FLOOR: f64 = 1e-4;
+const MESH_CHORD_FLOOR: f64 = crate::tolerances::MESH_CHORD_FLOOR_MM;
 
 /// Position and box allowance: (minimum millimetres, share of the larger diagonal).
 /// Separate evaluations of exact versus imported surfaces differed by at most 0.0022 mm
@@ -36,12 +36,15 @@ const MESH_CHORD_FLOOR: f64 = 1e-4;
 /// Four mesh chord sags and a 0.01 mm floor leave margin above that measured noise,
 /// while the smallest measured real placement error was 4 mm. The size term is a
 /// conservative allowance for other scales, not a measured scaling law.
-const POSITION_BOX_ALLOWANCE: (f64, f64) = (0.01, 4.0 * MESH_CHORD);
+const POSITION_BOX_ALLOWANCE: (f64, f64) = (
+    crate::tolerances::POSITION_MIN_MM,
+    crate::tolerances::POSITION_DIAGONAL_RELATIVE,
+);
 
 /// The relative difference in area at which a replay no longer matches the original. A mesh
 /// misses a curved face's area by about a third of its chord over the face's radius, and
 /// SolidCraft keeps that chord within 3e-4 of the smallest radius: well inside this.
-const AREA_TOLERANCE: f64 = 1e-3;
+const AREA_TOLERANCE: f64 = crate::tolerances::AREA_RELATIVE;
 
 /// How long one SolidCraft evaluation may run before the check gives up.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -1075,7 +1078,7 @@ pub(crate) struct StoredBody {
 // edge vertices, interior samples and proven arc extremes can only miss an extreme inside
 // a face or between samples. For the parts this checks, that moves the centre by a small
 // fraction of the size, never by a large share of it.
-const APPROXIMATE_BODY_CENTER_TOLERANCE: (f64, f64) = (1.0, 0.02);
+const APPROXIMATE_BODY_CENTER_TOLERANCE: (f64, f64) = crate::tolerances::STORED_SAMPLED;
 
 /// What to say when a replayed partial history doesn't hold the bodies the source stores at
 /// the same point (`stored`): fewer bodies, or a stored body with no replayed body whose box
@@ -1110,7 +1113,7 @@ pub(crate) fn bodies_differ(
     };
     for body in stored {
         let (minimum, share) = if body.exact {
-            (0.5, 0.01)
+            crate::tolerances::STORED_EXACT
         } else {
             APPROXIMATE_BODY_CENTER_TOLERANCE
         };
@@ -1190,7 +1193,7 @@ pub(crate) struct Expected {
 }
 
 /// A body volume, in cubic millimetres, below which SolidCraft gives the body none.
-const NO_VOLUME: f64 = 1e-6;
+const NO_VOLUME: f64 = crate::tolerances::NO_VOLUME_MM3;
 
 pub(crate) fn check_import(
     cli: &(impl SolidCraftEvaluator + ?Sized),
