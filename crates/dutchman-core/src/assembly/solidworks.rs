@@ -146,7 +146,7 @@ pub(super) fn resolve(
     // without geometry.
     if !external.is_empty()
         && external.values().all(Result::is_err)
-        && model.ir.model.bodies.is_empty()
+        && model.ir.geometry.bodies.is_empty()
     {
         return Err(Error::Assembly(
             "none of the assembly's parts could be found or read; if they are elsewhere, give \
