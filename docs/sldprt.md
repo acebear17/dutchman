@@ -93,6 +93,9 @@ Assemblies convert as placed parts and nested components. cadmpeg supplies produ
 occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` references
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
 case-insensitively, beside the assembly first, then through the project and `--search` folders.
+When none of the assembly's part files can be found or read, and the assembly holds no bodies
+of its own, conversion stops with "none of the assembly's parts could be found or read", and the
+report lists each part file it looked for.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
 Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,

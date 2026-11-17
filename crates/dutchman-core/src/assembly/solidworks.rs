@@ -141,6 +141,19 @@ pub(super) fn resolve(
             unresolved.push(left);
         }
     }
+    // Every referenced part file was left out and the assembly holds no bodies of its own:
+    // say that the parts were not found, rather than letting the writer report parts
+    // without geometry.
+    if !external.is_empty()
+        && external.values().all(Result::is_err)
+        && model.ir.model.bodies.is_empty()
+    {
+        return Err(Error::Assembly(
+            "none of the assembly's parts could be found or read; if they are elsewhere, give \
+             the project folder that holds them"
+                .to_owned(),
+        ));
+    }
     let mut assembly = local_components_with_threads(
         model,
         &external,
@@ -205,6 +218,47 @@ mod tests {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..cube.clone()
         }
+    }
+
+    #[test]
+    fn an_assembly_whose_parts_are_all_missing_says_they_were_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let cube = cube();
+        let source = assembly(
+            &cube,
+            vec![
+                occurrence(1, "renamed-a.sldprt", json!({"kind":"root"})),
+                occurrence(2, r"C:\old\renamed-b.SLDPRT", json!({"kind":"root"})),
+            ],
+        );
+        let decode = |_: Format, _: &Path, _: &mut Report| Ok(cube.clone());
+        let mut report = Report::default();
+        let settings = PartSearch::project(dir.path());
+        let error = resolve(
+            &source,
+            &dir.path().join("Top.SLDASM"),
+            &mut report,
+            &decode,
+            &Finder::new(&settings),
+            &mut Vec::new(),
+            &mut SolidWorksReads::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("none of the assembly's parts could be found or read"),
+            "{error}"
+        );
+        // Each missing part is still reported, so the user sees which files to look for.
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(|loss| loss.subject.starts_with("occurrence"))
+                .count(),
+            2
+        );
     }
 
     #[test]
