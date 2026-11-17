@@ -21,6 +21,7 @@ pub enum Action {
 pub struct Card {
     pub row: usize,
     pub log: Option<PathBuf>,
+    pub file: Option<PathBuf>,
     pub log_ready: bool,
     pub prepared: Prepared,
     pub folder: PathBuf,
@@ -37,6 +38,7 @@ impl Card {
         Self {
             row,
             log: None,
+            file: None,
             log_ready: true,
             summary: prepared.bundle_sha256.is_none(),
             prepared,
@@ -94,6 +96,9 @@ impl Consent {
                 ui.label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
                 if let Err(message) = crate::platform::log_controls(ui, log, card.log_ready) { card.status = message; }
             }
+            if card.file.is_some() {
+                ui.label("Onshape bundles contain the document. To share a document with us, send the .onshape-bundle; never send your keys.");
+            }
             if card.prepared.bundle_sha256.is_some() {
                 ui.label("Bundles contain geometry and are used privately to reproduce the problem.");
                 ui.radio_value(&mut card.summary, false, "Send the bundle");
@@ -119,7 +124,7 @@ impl Consent {
                 }
             }
             ui.checkbox(&mut card.public_test, "You may use this report in a public test case");
-            if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, None)); }
+            if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, card.file.clone())); }
             ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, problem signature, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
             let choice = if card.summary { "summary" } else { "bundle" };
             egui::CollapsingHeader::new("Exact metadata to send")
@@ -156,7 +161,7 @@ impl Consent {
             }
             ui.label(&card.status);
             if ui.button("Use the private-send card").clicked() {
-                private = Some(Action::Private(card.row, card.prepared.bundle_sha256.as_ref().map(|_| card.folder.join("bundle.json.gz"))));
+                private = Some(Action::Private(card.row, card.file.clone().or_else(|| card.prepared.bundle_sha256.as_ref().map(|_| card.folder.join("bundle.json.gz")))));
             }
             if ui.button("Get updates on Discord").clicked() {
                 ctx.copy_text(card.prepared.claim());

@@ -286,7 +286,7 @@ pub(crate) enum Source {
 pub(crate) enum Message {
     Probed(Link, Result<Option<u64>, String>),
     Progress(u64, Option<u64>),
-    Finished(Result<(PathBuf, tempfile::TempDir), String>),
+    Finished(Result<(PathBuf, Option<tempfile::TempDir>), String>),
 }
 
 pub(crate) struct Inbox {
@@ -336,7 +336,13 @@ impl Inbox {
         });
     }
 
-    pub(crate) fn start(&mut self, source: Source, row: usize, ctx: &eframe::egui::Context) {
+    pub(crate) fn start(
+        &mut self,
+        source: Source,
+        output: PathBuf,
+        row: usize,
+        ctx: &eframe::egui::Context,
+    ) {
         self.active = true;
         self.row = Some(row);
         let sender = self.sender.clone();
@@ -345,6 +351,10 @@ impl Inbox {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
+                let link = match source {
+                    Source::Onshape(link) => return fetch(link, &output).map(|path| (path, None)),
+                    Source::Download(link) => link,
+                };
                 let folder = tempfile::Builder::new()
                     .prefix("dutchman-download-")
                     .tempdir()
@@ -352,16 +362,11 @@ impl Inbox {
                         "Could not make a download folder. Check free disk space and retry."
                             .to_owned()
                     })?;
-                let path = match source {
-                    Source::Onshape(link) => fetch(link, folder.path())?,
-                    Source::Download(link) => {
-                        download(transport.as_ref(), &link, folder.path(), |bytes, size| {
-                            let _ = sender.send(Message::Progress(bytes, size));
-                            ctx.request_repaint();
-                        })?
-                    }
-                };
-                Ok((path, folder))
+                let path = download(transport.as_ref(), &link, folder.path(), |bytes, size| {
+                    let _ = sender.send(Message::Progress(bytes, size));
+                    ctx.request_repaint();
+                })?;
+                Ok((path, Some(folder)))
             })();
             let _ = sender.send(Message::Finished(result));
             ctx.request_repaint();

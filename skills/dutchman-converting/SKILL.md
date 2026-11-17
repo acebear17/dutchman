@@ -903,3 +903,8 @@ In the desktop app, paste copied files or paths with no text field focused to qu
 them like dropped files. Onshape links continue through Connect Onshape when needed;
 Save closes setup and keeps the link. Direct HTTPS CAD file links (including GitHub blob
 links) ask before downloading, with a 2 GB cap. See `docs/desktop.md` and `docs/onshape.md`.
+
+Desktop Onshape jobs retain the `.onshape-bundle` beside the `.sc` with the same base
+name. **Show bundle** reveals it; **Send to Dutchman** opens the existing private report
+review with the archive attached and still requires a Send click.
+To share a document with us, send the .onshape-bundle; never send your keys.

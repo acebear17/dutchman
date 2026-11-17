@@ -114,6 +114,12 @@ Paste the access key and the secret key (the secret is masked), and choose
 Dutchman fills it in for you; otherwise the field is empty with a faint URL hint.
 An output folder already selected for local files is reused; otherwise Dutchman asks
 you to choose a folder before fetching. Fetching and conversion appear in the main job list.
+The fetched `.onshape-bundle` stays beside the converted `.sc`, in the same folder
+with the same base name, including after the app closes. The result card offers
+**Show bundle** to reveal it and **Send to Dutchman** to review it through the existing
+private report flow. Nothing is uploaded until you choose **Send**.
+
+To share a document with us, send the .onshape-bundle; never send your keys.
 
 The main button now reads **Onshape connected ✓**. Its initial state comes from the
 local credential store, without a network connection test. Open it to see

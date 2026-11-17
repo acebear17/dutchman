@@ -3703,6 +3703,17 @@ mod paste_inputs {
             });
     }
 
+    fn assert_bundle_survives_exit(h: Harness<'static, App>, output: &Path) {
+        let row = &h.state().rows()[0];
+        let bundle = row.input.clone();
+        assert_eq!(bundle.parent(), Some(output));
+        assert_eq!(row.output.as_ref().unwrap(), &bundle.with_extension("sc"));
+        let expected = std::fs::read(fixture("onshape-revolve.onshape-bundle")).unwrap();
+        assert_eq!(std::fs::read(&bundle).unwrap(), expected);
+        drop(h);
+        assert_eq!(std::fs::read(&bundle).unwrap(), expected);
+    }
+
     #[test]
     fn pasted_onshape_link_adds_a_main_job_and_asks_for_an_output_folder() {
         let output = tempfile::tempdir().unwrap();
@@ -3725,6 +3736,7 @@ mod paste_inputs {
             .unwrap()
             .starts_with(output.path()));
         assert!(h.state().rows()[0].report.is_some());
+        assert_bundle_survives_exit(h, output.path());
     }
 
     #[test]
@@ -3747,6 +3759,7 @@ mod paste_inputs {
         assert!(h.query_by_label("Your Onshape API keys").is_none());
         assert!(h.query_by_label("Onshape connected ✓").is_some());
         wait_for_conversion(&mut h);
+        assert_bundle_survives_exit(h, output.path());
     }
 
     #[test]
@@ -3773,6 +3786,7 @@ mod paste_inputs {
             .is_none());
         assert_eq!(h.state().rows().len(), 1);
         wait_for_conversion(&mut h);
+        assert_bundle_survives_exit(h, output.path());
     }
 
     #[test]
@@ -3871,5 +3885,6 @@ mod paste_inputs {
         h.step();
         assert_eq!(h.state().rows().len(), 1);
         wait_for_conversion(&mut h);
+        assert_bundle_survives_exit(h, output.path());
     }
 }

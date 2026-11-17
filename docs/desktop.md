@@ -280,6 +280,14 @@ summary, or follow the same private-send steps as a failed card to send the orig
 not visual problems in a converted result. **Add matching STEP** can check a converted
 file locally against an export.
 
+Onshape result cards also offer **Show bundle** and **Send to Dutchman**. The fetched
+`.onshape-bundle` stays beside the `.sc` with the same base name after the app closes,
+including when you opened the document by pasting or dropping its link. **Show bundle**
+reveals the source archive in Finder or Explorer. **Send to Dutchman** opens the existing
+report review with that archive attached; **Send** uploads it privately. The private-send
+card uses the original archive when the report upload is too large.
+To share a document with us, send the .onshape-bundle; never send your keys.
+
 Descriptions are not supported in the anonymous report envelope yet. Describe what is
 wrong in the private DM or GitHub form, leaving out private names and paths. Converted
 summaries use the signature `converted-with-problem` and contain no design geometry;

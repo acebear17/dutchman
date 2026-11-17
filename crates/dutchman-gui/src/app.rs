@@ -655,7 +655,9 @@ impl App {
         // Show transfer progress inside the ordinary result card.
         self.set_transfer_caption(caption);
         self.reveal = Some(Reveal::Results);
-        self.intake.start(source, 0, ctx);
+        if let Some(output) = self.out_dir.clone() {
+            self.intake.start(source, output, 0, ctx);
+        }
     }
 
     fn set_transfer_caption(&mut self, caption: String) {
@@ -707,7 +709,9 @@ impl App {
                     let row = self.intake.row.take();
                     match result {
                         Ok((path, folder)) => {
-                            self.intake.folders.push(folder);
+                            if let Some(folder) = folder {
+                                self.intake.folders.push(folder);
+                            }
                             self.add_inputs([path]);
                             self.start(ctx);
                         }
@@ -958,12 +962,36 @@ impl App {
                 folder = saved;
             }
         }
+        let bundle_path = self
+            .rows
+            .get(index)
+            .map(|row| &row.input)
+            .filter(|path| crate::onshape::is_bundle(path) && path.is_file());
+        let bundle = bundle_path
+            .map(|path| crate::onshape::ReportBundle::read(path))
+            .transpose()?
+            .flatten();
+        if let Some(bundle) = &bundle {
+            // Keep each fetched revision separate from earlier report attachments.
+            folder = folder
+                .join("onshape")
+                .join(dutchman::report_send::hash(&bundle.0));
+        }
         let prepared = if folder.join("prepared.json").exists() {
             dutchman::report_send::Prepared::load(&folder)?
         } else {
-            dutchman::report_send::Prepared::new(&id, &format, &signature, None, &folder)?
+            dutchman::report_send::Prepared::new(
+                &id,
+                &format,
+                &signature,
+                bundle
+                    .as_ref()
+                    .map(|bundle| bundle as &dyn dutchman::report_send::BundleSource),
+                &folder,
+            )?
         };
         let mut card = crate::report_consent::Card::new(index, prepared, folder);
+        card.file = bundle_path.cloned();
         card.log = self.row_logs.get(&index).cloned();
         card.log_ready = !self.running();
         self.consent.card = Some(card);
@@ -2712,7 +2740,9 @@ fn row_ui(
             .on_hover_text(display(&row.input));
     });
     let step_button = !running && row.report.is_some();
-    if output.is_some() || step_button {
+    let bundle =
+        crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
+    if output.is_some() || step_button || bundle {
         // One row of buttons under it.
         ui.horizontal_wrapped(|ui| {
             if let Some(output) = output {
@@ -2738,6 +2768,14 @@ fn row_ui(
                     if ui.button("Show in folder").clicked() {
                         action = Some(Action::Reveal(output.clone()));
                     }
+                }
+            }
+            if bundle {
+                if ui.button("Show bundle").clicked() {
+                    action = Some(Action::Reveal(row.input.clone()));
+                }
+                if ui.add_enabled(!running, egui::Button::new("Send to Dutchman")).clicked() {
+                    action = Some(Action::Consent(index));
                 }
             }
             if step_button && ui.button("Add matching STEP").clicked() {
@@ -3579,6 +3617,55 @@ mod tests {
             assert!(!text.contains("claim_secret"));
             assert!(metadata.get("description").is_none());
             assert!(!card.folder.join("submission.json").exists());
+        }
+    }
+
+    #[test]
+    fn onshape_result_reviews_the_source_bundle_and_keeps_private_send_attached() {
+        use dutchman::report_send::BundleSource;
+        use egui_kittest::kittest::Queryable;
+        for converted in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let input = dir.path().join("synthetic.onshape-bundle");
+            let bytes = b"synthetic offline archive";
+            std::fs::write(&input, bytes).unwrap();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(1180.0, 1500.0))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.out_dir = Some(dir.path().to_path_buf());
+                    app.rows.push(Row {
+                        input: input.clone(), output: Some(input.with_extension("sc")),
+                        status: if converted { Status::Converted } else { Status::Failed },
+                        progress: None, job: None, size: Some(bytes.len() as u64),
+                        report: Some(json!({"ok": converted, "input": {"path": input, "format": "onshape_bundle"}})),
+                    });
+                    app
+                });
+            harness.run_steps(8);
+            harness.get_by_label("Show bundle");
+            harness.get_by_label("Send to Dutchman").click_accesskit();
+            harness.run_steps(8);
+            harness.get_by_label("Send the bundle");
+            let card = harness.state().consent.card.as_ref().unwrap();
+            assert_eq!(card.file.as_ref(), Some(&input));
+            assert_eq!(card.prepared.source_format, "onshape-bundle");
+            assert_eq!(card.prepared.parts[0].role, "Onshape bundle");
+            assert_eq!(card.prepared.parts[0].bytes, bytes.len());
+            assert!(card.prepared.bundle_sha256.is_some());
+            assert!(card.folder.join("bundle.json.gz").is_file());
+            assert!(!card.folder.join("submission.json").exists());
+            let source = crate::onshape::ReportBundle::read(&input).unwrap().unwrap();
+            assert_eq!(source.parts().unwrap()[0].bytes, bytes);
+            harness
+                .get_by_label("Use the private-send card")
+                .click_accesskit();
+            harness.run_steps(8);
+            assert_eq!(
+                harness.state().private_send.as_ref().unwrap().1.as_ref(),
+                Some(&input)
+            );
+            harness.get_by_label(&format!("Saved bundle: {}", input.display()));
         }
     }
 
