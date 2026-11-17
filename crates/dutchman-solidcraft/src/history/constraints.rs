@@ -957,7 +957,7 @@ impl Mapper<'_, '_> {
             }
             ("distance_loci", Some(p), None) | ("distance_loci", None, Some(p)) => {
                 let line = if q.is_none() { second } else { first };
-                let l = self.curve(line.get("entity")?, &["line"])?;
+                let l = self.curve(line.get("value")?, &["line"])?;
                 let value = point_line(
                     self.position(p)?,
                     self.position(l.start?)?,
@@ -1581,6 +1581,8 @@ mod tests {
             json!({"kind": "distance_loci", "first": locus("center", "c"),
                    "second": locus("entity", "b"), "parameter": "f3d:model:parameter#9"}),
             json!({"kind": "diameter", "entity": "c", "parameter": "f3d:model:parameter#9"}),
+            json!({"kind": "distance_loci", "first": locus("entity", "b"),
+                   "second": locus("center", "c"), "parameter": "f3d:model:parameter#9"}),
         ]);
         assert_eq!(
             out[0],
@@ -1598,6 +1600,8 @@ mod tests {
             out[3],
             json!({"id": "k4", "type": "diameter", "c": 4, "value": 10.0})
         );
+        assert_eq!(out[4]["type"], "point_line_distance");
+        assert_eq!(out[4]["value"], 15.0);
     }
 
     fn run_with_params(constraints: Vec<Value>, parameters: Value) -> Vec<Value> {

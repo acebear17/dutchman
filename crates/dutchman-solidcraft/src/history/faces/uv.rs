@@ -15,7 +15,7 @@ const MAX_EDGES: usize = 128;
 pub(super) fn point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pick(ctx, face, geometry, 0.0).or_else(|| {
-            if geometry.get("kind").and_then(Value::as_str) == Some("torus") {
+            if geometry.pointer("/value/kind").and_then(Value::as_str) == Some("torus") {
                 // Move the minor-angle seam away from an inner torus band.
                 pick(ctx, face, geometry, std::f64::consts::PI)
             } else {
@@ -274,7 +274,7 @@ fn spherical_triangle(ctx: &Context, face: &Value, geometry: &Value) -> Option<V
 fn pick(ctx: &Context, face: &Value, geometry: &Value, phase: f64) -> Option<V3> {
     let surface: SurfaceGeometry = serde_json::from_value(geometry.clone()).ok()?;
     if matches!(surface.solved(), Some(SolvedSurfaceGeometry::Sphere(_))) {
-        if let Some(p) = spherical_triangle(ctx, face, geometry) {
+        if let Some(p) = spherical_triangle(ctx, face, geometry.get("value")?) {
             return Some(p);
         }
     }
@@ -514,6 +514,7 @@ mod tests {
     fn patch(pcurves: bool, hole: bool) -> (Value, Value) {
         let surface = json!({"kind":"nurbs", "u_degree":1, "v_degree":1,
             "u_knots":[0,0,1,1], "v_knots":[0,0,1,1], "u_periodic":false, "v_periodic":false,
+            "normal_reversed":false,
             "poles":{"kind": "polynomial", "rows": [
                 [{"x":0,"y":0,"z":0},{"x":0,"y":1,"z":0}],
                 [{"x":1,"y":0,"z":0},{"x":1,"y":1,"z":1}]]}});
@@ -563,7 +564,7 @@ mod tests {
         for hole in [false, true] {
             let (model, face) = patch(true, hole);
             let ctx = Context::testing(&model);
-            let p = point(&ctx, &face, &model["surfaces"][0]["geometry"]).unwrap();
+            let p = super::super::appearance_point(&ctx, &face).unwrap();
             assert!((p[2] - p[0] * p[1]).abs() < 1e-9);
             assert!(p[0] > 0.0 && p[0] < 1.0 && p[1] > 0.0 && p[1] < 1.0);
             if hole {
@@ -608,7 +609,7 @@ mod tests {
     fn disconnected_trim_charts_do_not_assign_an_appearance() {
         let (mut model, face) = patch(true, false);
         model["pcurves"][1]["geometry"]["origin"]["u"] = json!(3.0);
-        model["curves"][1]["geometry"]["origin"]["x"] = json!(3.0);
+        model["curves"][1]["geometry"]["value"]["origin"]["x"] = json!(3.0);
         let ctx = Context::testing(&model);
         assert!(point(&ctx, &face, &model["surfaces"][0]["geometry"]).is_none());
     }
@@ -660,12 +661,12 @@ mod tests {
     #[test]
     fn approximate_trim_edges_still_pick_the_exact_support_away_from_the_boundary() {
         let (mut model, face) = patch(false, false);
-        model["curves"][0]["geometry"]["origin"]["z"] = json!(0.00005);
+        model["curves"][0]["geometry"]["value"]["origin"]["z"] = json!(0.00005);
         let ctx = Context::testing(&model);
         let p = point(&ctx, &face, &model["surfaces"][0]["geometry"]).unwrap();
         assert!((p[2] - p[0] * p[1]).abs() < 1e-8);
         assert!(p[0] > 0.25 && p[0] < 0.75 && p[1] > 0.25 && p[1] < 0.75);
-        model["curves"][0]["geometry"]["origin"]["z"] = json!(0.01);
+        model["curves"][0]["geometry"]["value"]["origin"]["z"] = json!(0.01);
         let ctx = Context::testing(&model);
         assert!(point(&ctx, &face, &model["surfaces"][0]["geometry"]).is_none());
     }
@@ -700,6 +701,7 @@ mod tests {
                     json!({"kind":"cone","origin":{"x":0,"y":0,"z":0},"axis":{"x":0,"y":0,"z":1},
                         "ref_direction":{"x":1,"y":0,"z":0},"radius":1,"ratio":1,"half_angle":0.5_f64.atan()})
                 };
+                let surface = json!({"kind":"solved", "value": surface});
                 let geometry: SurfaceGeometry = serde_json::from_value(surface.clone()).unwrap();
                 let bounds = if seam {
                     [std::f64::consts::PI, -std::f64::consts::FRAC_PI_2]
@@ -720,7 +722,7 @@ mod tests {
                         .unwrap()
                         .push(json!({"id":format!("v{n}"),"point":format!("p{n}")}));
                     model["edges"].as_array_mut().unwrap().push(
-                        json!({"id":format!("e{n}"),"start":format!("v{n}"),"end":format!("v{n}")}),
+                        json!({"id":format!("e{n}"),"ends":{"start":format!("v{n}"),"end":format!("v{n}")}}),
                     );
                     model["coedges"].as_array_mut().unwrap().push(
                         json!({"id":format!("c{n}"),"edge":format!("e{n}"),"sense":"forward",
@@ -761,6 +763,7 @@ mod tests {
         let vertices = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
         let surface = json!({"kind":"sphere","center":{"x":0,"y":0,"z":0},"axis":{"x":0,"y":0,"z":1},
             "ref_direction":{"x":1,"y":0,"z":0},"radius":1});
+        let surface = json!({"kind":"solved", "value": surface});
         let mut model = json!({"points":[],"vertices":[],"curves":[],"edges":[],"coedges":[],
             "loops":[{"id":"l","boundary":{"coedges":["c0","c1","c2"]}}]});
         for (n, p) in vertices.into_iter().enumerate() {
@@ -788,10 +791,10 @@ mod tests {
         let p = point(&ctx, &face, &surface).unwrap();
         assert!(p.iter().all(|p| (*p - 1.0 / 3.0_f64.sqrt()).abs() < 1e-9));
         face["sense"] = json!("reversed");
-        assert!(spherical_triangle(&ctx, &face, &surface).is_none());
-        model["curves"][0]["geometry"]["radius"] = json!(2);
+        assert!(spherical_triangle(&ctx, &face, &surface["value"]).is_none());
+        model["curves"][0]["geometry"]["value"]["radius"] = json!(2);
         let ctx = Context::testing(&model);
         face["sense"] = json!("forward");
-        assert!(spherical_triangle(&ctx, &face, &surface).is_none());
+        assert!(spherical_triangle(&ctx, &face, &surface["value"]).is_none());
     }
 }

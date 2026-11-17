@@ -1784,7 +1784,7 @@ mod tests {
             }
         }
         let mut rational = uniform.clone();
-        rational["poles"]["form"] = json!("rational");
+        rational["poles"]["kind"] = json!("rational");
         assert!(spline(Some(&rational)).is_err());
         let wrong_count = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], &five);
         assert!(spline(Some(&wrong_count)).is_err());

@@ -968,6 +968,7 @@ mod map_tests {
             .collect();
         wire["model"]["spreadsheets"] = json!([{
             "id": "f3d:model:spreadsheet#1", "feature": "f3d:model:feature#1", "cells": cells,
+            "column_widths": [], "row_heights": [], "merged_ranges": [],
         }]);
         dutchman_core::Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
