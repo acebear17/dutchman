@@ -164,9 +164,11 @@ fn seam_model(count: usize) -> Model {
         let mut curve = prototype.clone();
         curve.id = serde_json::from_value(json!(format!("secret:part1:curve#seam{i:06}"))).unwrap();
         curve.geometry = serde_json::from_value(json!({
-            "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 0.25, 0.75, 0.8, 1.0, 1.0],
-            "poles": {"kind": "polynomial", "points": [{"x": 100.0, "y": 100.0, "z": 100.0}, {"x": 100.0, "y": 100.0, "z": 100.0}, start, end, {"x": 100.0, "y": 100.0, "z": 100.0}]},
-            "periodic": true
+            "kind": "solved", "value": {
+                "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 0.25, 0.75, 0.8, 1.0, 1.0],
+                "poles": {"kind": "polynomial", "points": [{"x": 100.0, "y": 100.0, "z": 100.0}, {"x": 100.0, "y": 100.0, "z": 100.0}, start, end, {"x": 100.0, "y": 100.0, "z": 100.0}]},
+                "periodic": true
+            }
         })).unwrap();
         coedge.use_curve = Some(
             serde_json::from_value(json!({"curve": curve.id, "parameter_range": [0.75, 1.80]}))
@@ -208,10 +210,10 @@ fn repro_seam_check_narrows_to_second_body_and_never_leaks_private_data() {
     let text = serde_json::to_string(&anon).unwrap();
     let steps = next_steps(&anon);
     let source = serde_json::to_value(&model.ir).unwrap();
-    for id in source["model"]
-        .as_object()
-        .unwrap()
-        .values()
+    let arenas = ["geometry", "model"].map(|home| source[home].as_object().unwrap());
+    for id in arenas
+        .iter()
+        .flat_map(|arenas| arenas.values())
         .filter_map(Value::as_array)
         .flatten()
         .filter_map(|row| row["id"].as_str())
@@ -219,10 +221,9 @@ fn repro_seam_check_narrows_to_second_body_and_never_leaks_private_data() {
         assert!(!text.contains(id));
         assert!(!steps.contains(id));
     }
-    for name in source["model"]
-        .as_object()
-        .unwrap()
-        .values()
+    for name in arenas
+        .iter()
+        .flat_map(|arenas| arenas.values())
         .filter_map(Value::as_array)
         .flatten()
         .flat_map(|row| [row.get("name"), row.get("label")])
@@ -268,6 +269,28 @@ fn repro_synthetic_88_findings_worked_example() {
     assert!(narrowed.isolated);
     println!("{}", serde_json::to_string_pretty(&example).unwrap());
     println!("{}", next_steps(&example));
+}
+
+#[test]
+fn repro_surface_kinds_keep_solved_and_procedural_categories() {
+    let mut model = seam_model(0);
+    let surface_count = model.ir.geometry.surfaces.len();
+    assert_eq!(
+        kinds(&model)["surface_kinds"],
+        json!({"plane": surface_count})
+    );
+    model.ir.geometry.surfaces[0].geometry = serde_json::from_value(json!({
+        "kind": "procedural", "value": {
+            "construction": "secret:part1:procedural_surface#000000"
+        }
+    }))
+    .unwrap();
+    let report = kinds(&model);
+    assert_eq!(
+        report["surface_kinds"],
+        json!({"plane": surface_count - 1, "procedural": 1})
+    );
+    assert!(!report.to_string().contains("secret:"));
 }
 
 #[test]

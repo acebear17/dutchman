@@ -153,9 +153,9 @@ mod tests {
             .iter_mut()
             .find(|s| s.id == surface_id)
             .unwrap()
-            .geometry = serde_json::from_value(json!({"kind": "torus",
+            .geometry = serde_json::from_value(json!({"kind": "solved", "value": {"kind": "torus",
                 "center": {"x": 0, "y": 0, "z": 0}, "axis": {"x": 0, "y": 0, "z": 1},
-                "ref_direction": {"x": 1, "y": 0, "z": 0}, "major_radius": 5, "minor_radius": 1}))
+                "ref_direction": {"x": 1, "y": 0, "z": 0}, "major_radius": 5, "minor_radius": 1}}))
         .unwrap();
         let mut container = part.clone();
         container.assembly = Some(dutchman_core::Assembly {
