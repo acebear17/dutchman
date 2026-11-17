@@ -897,7 +897,7 @@ pub(crate) fn map_with_sketches(
         report,
         target_version,
         keep_sketches,
-        &mut |_, _, _, _| infer::Fit::Unknown,
+        &mut infer::Unmeasured,
         None,
     )
 }
