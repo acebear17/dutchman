@@ -10714,8 +10714,8 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
             {"id": "synthetic:test:appearance#blue", "base_color": {"r":0.0,"g":0.0,"b":1.0,"a":1.0}, "properties": {}, "textures": []}
         ]);
         wire["model"]["appearance_bindings"] = json!([
-            {"id": "synthetic:test:binding#body", "target": {"kind":"body","value":body}, "appearance": "synthetic:test:appearance#red", "channels": {}},
-            {"id": "synthetic:test:binding#face", "target": {"kind":"face","value":"synthetic:cube:face#top"}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
+            {"id": "synthetic:test:binding#body", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#face", "target": {"entity": {"kind":"face","value":"synthetic:cube:face#top"}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
         ]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (doc, report) = convert(

@@ -477,7 +477,7 @@ JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 Appearance bindings that cannot reach written component geometry, resolve an appearance, or
 select a mixed-colour face are recorded in `losses` with subject `appearance` (possibly
 prefixed with a part name) and level `Dropped`. Their messages identify the binding.
-Unplaced body and face bindings also identify
+Unplaced definition-level body and face bindings also identify
 the target and distinguish “its target is absent from the decoded model” from “its target
 exists in the decoded model but has no placed component geometry”. These use the existing
 loss fields and schema. Targets deliberately filtered as consumed or removed Fusion
@@ -1294,3 +1294,9 @@ These fixed categories reach both `dutchman.report-anon/1` loss counts and
 contain no binding or target ids or names. See [the anonymous report](report-anon.md#appearance-loss-causes).
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
+
+Appearance bindings scoped to one placed instance or an evaluation state use
+`dutchman/appearance.other`; their message names the unsupported scope. Scoped
+source attributes are dropped with subject `attributes` and a message naming
+that scope. Neither assignment is applied to the shared component definition.
+No report fields or schema versions change.
