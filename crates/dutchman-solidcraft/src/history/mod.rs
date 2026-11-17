@@ -1037,6 +1037,7 @@ fn hidden_bodies(ctx: &Context) -> Vec<String> {
     names
 }
 
+#[allow(clippy::too_many_arguments)]
 fn map_into(
     model: &Model,
     report: &mut Report,
