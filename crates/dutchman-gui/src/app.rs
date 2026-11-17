@@ -2445,6 +2445,12 @@ fn row_ui(
                 );
             });
             ui.label(event.running_line());
+            if let Some(feature) = event.feature_line() {
+                ui.label(feature);
+            }
+            if let Some(note) = event.measured_note() {
+                ui.label(RichText::new(note).small().color(p.tide));
+            }
             if let Some(total) = event.designs_total.filter(|total| *total > 0) {
                 ui.add(
                     egui::ProgressBar::new(
@@ -3966,6 +3972,7 @@ mod tests {
                     usual_ms: 60_000,
                     limit_ms: None,
                     consequence: None,
+                    feature: None,
                 }),
             }),
         };

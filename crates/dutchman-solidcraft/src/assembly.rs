@@ -683,6 +683,7 @@ fn prepare_history(
         &mut |prefix, stored, final_state| {
             writer.profile_check(part, prefix, step, stored, final_state, progress)
         },
+        progress,
     );
     if let Ok(history) = &mut mapping.result {
         if let Err(why) = history::base::restate(history, part) {

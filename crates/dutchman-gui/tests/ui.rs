@@ -3481,6 +3481,7 @@ fn running_step_screenshots() {
                             consequence: Some(
                                 dutchman_core::progress_words::history_limit(false, false).into(),
                             ),
+                            feature: None,
                         }),
                     }),
                 });
@@ -3556,6 +3557,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
                             consequence: Some(
                                 dutchman_core::progress_words::history_limit(false, false).into(),
                             ),
+                            feature: None,
                         }),
                     }),
                 }
@@ -3582,6 +3584,75 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
                 .unwrap()
                 .save(dir.join(format!("folder-1261-of-1293-{width:.0}-{label}.png")))
                 .unwrap();
+        }
+    }
+}
+
+/// The card names the feature the history is on and says when SolidCraft measures it.
+/// With `DUTCHMAN_GUI_SCREENSHOTS`, it also saves both themes, plain and measured.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_running_card_shows_the_feature_and_the_measured_note() {
+    for (theme, label) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        for measured in [false, true] {
+            let mut harness = screenshot_harness(theme);
+            harness.state_mut().preview_solidcraft(Some("0.44.1"));
+            harness.state_mut().set_checker_for_test(true);
+            harness
+                .state_mut()
+                .preview_running_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("Bracket.f3d"),
+                    output: None,
+                    status: Status::Converting,
+                    report: None,
+                    job: None,
+                    size: None,
+                    progress: Some(dutchman_core::ProgressEvent {
+                        stage: dutchman_core::Stage::Map,
+                        elapsed_ms: 42_000,
+                        designs_read: 1,
+                        designs_total: Some(1),
+                        heartbeat: true,
+                        running: Some(dutchman_core::RunningStep {
+                            kind: dutchman_core::StepKind::Preparing,
+                            name: Some("Bracket".into()),
+                            elapsed_ms: 12_000,
+                            usual_ms: dutchman_core::StepKind::Preparing.usual_ms(),
+                            limit_ms: None,
+                            consequence: None,
+                            feature: Some(dutchman_core::FeatureStep {
+                                index: 29,
+                                total: 37,
+                                name: Some("Extrude 1".into()),
+                                measured,
+                            }),
+                        }),
+                    }),
+                });
+            harness.run_steps(8);
+            assert!(harness
+                .query_by_label("Building history for Bracket: 12 s")
+                .is_some());
+            let feature = harness.get_by_label("Feature 29 of 37 · Extrude 1").rect();
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0))
+                    .contains_rect(feature)
+            );
+            let note = dutchman_core::progress_words::measured();
+            assert_eq!(harness.query_by_label(note).is_some(), measured);
+            if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {
+                let dir = PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                let state = if measured { "measured" } else { "mapping" };
+                harness
+                    .render()
+                    .unwrap()
+                    .save(dir.join(format!("feature-progress-{state}-{label}.png")))
+                    .unwrap();
+            }
         }
     }
 }

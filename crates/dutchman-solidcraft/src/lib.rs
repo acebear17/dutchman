@@ -574,6 +574,7 @@ impl SolidCraftWriter {
         let Ok(cli) = self.selected_evaluator(&self.verification) else {
             return false;
         };
+        let _measuring = progress.map(|p| p.measuring());
         let Ok(design) = self.history_design(model, prefix, step, Live::History) else {
             return false;
         };
@@ -1270,6 +1271,7 @@ impl Writer for SolidCraftWriter {
                 &mut |prefix, stored, final_state| {
                     self.profile_check(model, prefix, &step, stored, final_state, progress)
                 },
+                progress,
             );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {

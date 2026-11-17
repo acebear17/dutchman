@@ -225,6 +225,13 @@ not an estimate of time left. With parallel workers the oldest current step is s
 a check takes the place of preparation on its worker until it ends. Completed-read counts
 can stay unchanged while parts are prepared or checked.
 
+While a design's history is built, the line also names the feature it is on:
+**Building history for Bracket: 3 s; Feature 29 of 37 · Extrude 1**. The count is the
+feature's place in the source timeline, suppressed features included. When SolidCraft checks
+a feature by measuring it against the original, the line adds **(checking by measurement,
+which takes longer)**, and the desktop card says so under the feature. The whole-design check
+after the history is built runs once for the design, so it shows its check, not a feature.
+
 Available split reading, conversion and checking estimates supply usual times for whole
 stages, including a named whole-design read or preparation. A whole-file estimate is not
 assigned to each assembly part or selected-part conversion. Without a matching estimate,

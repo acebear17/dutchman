@@ -112,6 +112,20 @@ A nested check replaces preparation on that worker until it finishes. Its fields
 | `usual_ms` | Existing estimate for a whole stage when available, otherwise the documented threshold for this unit of work; a longer duration displays “Still …”. |
 | `limit_ms` | Unsigned milliseconds for this step's enforced limit, or `null` when none applies. A whole-file timeout is separate. |
 | `consequence` | Plain local explanation of what happens past the limit, or `null` when none applies. |
+| `feature` | The timeline feature that step's worker is on while a design's history is built, or `null` outside one. Older workers omit it. |
+
+`feature` is an object with these fields:
+
+| Field | Meaning |
+|---|---|
+| `index` | The feature's place in the source timeline, counting from 1. |
+| `total` | Features in the source timeline, suppressed ones included. |
+| `name` | The feature's name in the source, or `null` when it has none. Bounded and cleaned like `running.name`; treat it as private text. |
+| `measured` | `true` while SolidCraft checks this feature by measurement against the original, which takes longer than building it. |
+
+Feature changes alone emit at most four events a second; a change not emitted at once
+follows within a quarter second while a conversion runs, so a fast timeline does not print
+a line per feature. For example, `"feature":{"index":29,"total":37,"name":"Extrude 1","measured":false}`.
 
 For example, `"running":{"kind":"checking","name":"Bracket","elapsed_ms":12000,
 "usual_ms":60000,"limit_ms":120000,"consequence":"the check stopped, and the history is kept unverified"}`.

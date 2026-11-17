@@ -883,17 +883,20 @@ pub(crate) fn map_with_sketches(
         target_version,
         keep_sketches,
         &mut |_, _, _| false,
+        None,
     )
 }
 
 /// Mapping with a host check for otherwise unresolved sketch-selection candidates.
-/// Planning has no check and retains the original profile refusal.
+/// Planning has no check and retains the original profile refusal. `progress` hears of
+/// each timeline feature as mapping reaches it.
 pub(crate) fn map_with_profile_check(
     model: &Model,
     report: &mut Report,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
@@ -905,6 +908,7 @@ pub(crate) fn map_with_profile_check(
         target_version,
         keep_sketches,
         check,
+        progress,
     );
     let mut mapping = Mapping {
         result,
@@ -1041,6 +1045,7 @@ fn map_into(
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<History, String> {
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
@@ -1101,7 +1106,11 @@ fn map_into(
                 .map(str::to_owned)
         })
         .collect();
+    let timeline = progress.map(|p| p.features(features.len() as u64));
     for (position, feature) in features.into_iter().enumerate() {
+        if let Some(timeline) = &timeline {
+            timeline.at(position as u64 + 1, name(feature));
+        }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             name: name(feature).map(str::to_owned),
             kind: kind(feature),

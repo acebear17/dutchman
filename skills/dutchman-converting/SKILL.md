@@ -853,7 +853,10 @@ that moves, and is reported. Smart also keeps the first placement of a displayed
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
-CLI and desktop progress includes the running part or stage and its elapsed time. “Still …”
+CLI and desktop progress includes the running part or stage and its elapsed time, and while
+a history is built, the feature it is on ("Feature 29 of 37 · Extrude 1"; `running.feature`
+in `dutchman.progress/1`), noting when SolidCraft checks a feature by measurement, which takes
+longer. “Still …”
 means the usual duration has passed, not a deadline. A check-limit notice states the actual
 retention or stop policy in a full sentence. Durations use a single format such as `1 min 1 s`
 or `2 min`. Desktop folder runs keep the longest-running file, stage and step visible below

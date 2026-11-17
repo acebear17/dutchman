@@ -763,7 +763,8 @@ pub fn progress(input: &Path, event: dutchman_core::ProgressEvent) -> Value {
         "stage": event.stage.id(), "elapsed_ms": event.elapsed_ms,
         "designs_read": event.designs_read, "designs_total": event.designs_total,
         "heartbeat": event.heartbeat,
-        "running": event.running.as_ref().map(|s| json!({"kind": s.kind.id(), "name": s.name, "elapsed_ms": s.elapsed_ms, "usual_ms": s.usual_ms, "limit_ms": s.limit_ms, "consequence": s.consequence})),
+        "running": event.running.as_ref().map(|s| json!({"kind": s.kind.id(), "name": s.name, "elapsed_ms": s.elapsed_ms, "usual_ms": s.usual_ms, "limit_ms": s.limit_ms, "consequence": s.consequence,
+            "feature": s.feature.as_ref().map(|f| json!({"index": f.index, "total": f.total, "name": f.name, "measured": f.measured}))})),
     })
 }
 
@@ -795,6 +796,14 @@ pub(crate) fn parse_progress(value: &Value) -> Option<dutchman_core::ProgressEve
                         .get("consequence")
                         .and_then(Value::as_str)
                         .map(str::to_owned),
+                    feature: v.get("feature").filter(|f| f.is_object()).and_then(|f| {
+                        Some(dutchman_core::FeatureStep {
+                            index: f.get("index")?.as_u64()?,
+                            total: f.get("total")?.as_u64()?,
+                            name: f.get("name").and_then(Value::as_str).map(str::to_owned),
+                            measured: f.get("measured").and_then(Value::as_bool).unwrap_or(false),
+                        })
+                    }),
                 })
             }),
     })
@@ -1665,5 +1674,35 @@ mod running_progress_tests {
         assert_eq!(parse_progress(&record), Some(event));
         record.as_object_mut().unwrap().remove("running");
         assert!(parse_progress(&record).unwrap().running.is_none());
+    }
+
+    #[test]
+    fn feature_progress_roundtrips_and_older_workers_have_none() {
+        let saved = std::sync::Mutex::new(None);
+        let callback = |event| *saved.lock().unwrap() = Some(event);
+        let reporter = dutchman_core::Progress::new(&callback);
+        let _step = reporter.step(
+            dutchman_core::StepKind::Preparing,
+            Some("Bracket"),
+            None,
+            None,
+        );
+        let timeline = reporter.features(37);
+        timeline.at(29, Some("Extrude 1"));
+        let _measuring = reporter.measuring();
+        let event = saved.lock().unwrap().clone().unwrap();
+        let mut record = progress(Path::new("bracket.f3d"), event.clone());
+        assert_eq!(
+            record["running"]["feature"],
+            json!({"index": 29, "total": 37, "name": "Extrude 1", "measured": true})
+        );
+        assert_eq!(parse_progress(&record), Some(event));
+        record["running"].as_object_mut().unwrap().remove("feature");
+        assert!(parse_progress(&record)
+            .unwrap()
+            .running
+            .unwrap()
+            .feature
+            .is_none());
     }
 }
