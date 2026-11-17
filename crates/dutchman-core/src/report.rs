@@ -161,6 +161,35 @@ impl Loss {
     /// from its code's area (`f3d/sketch.…` is about sketches) or else its subject's first word,
     /// and what happened to it, from its severity.
     pub fn title(&self) -> String {
+        let noun = self.noun();
+        // Records kept unread are kept as they were, whatever their severity says about it.
+        let title = match self.severity {
+            Severity::Dropped => format!("{noun} left out"),
+            _ if self.kept() => format!("{noun} kept as-is"),
+            Severity::Degraded => format!("{noun} carried over with changes"),
+            Severity::Info => format!("Notes about {noun}"),
+        };
+        let mut chars = title.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect()
+        })
+    }
+
+    /// Whether the converted design lost or changed something the user can see: anything
+    /// left out, and any change except to records kept as they were and to the file's own
+    /// structure. Notes (`Info`) never are. A front end that shows only what was lost lists
+    /// these and keeps the rest for whoever reports a problem.
+    pub fn lost_from_design(&self) -> bool {
+        match self.severity {
+            Severity::Dropped => true,
+            Severity::Info => false,
+            Severity::Degraded => !self.kept() && self.noun() != FILE_STRUCTURE,
+        }
+    }
+
+    /// The part of the design the loss is about, from its code's area (`f3d/sketch.…` is about
+    /// sketches) or else its subject's first word.
+    fn noun(&self) -> &'static str {
         let area = match self.code.as_deref() {
             Some(code) => code
                 .split_once('/')
@@ -174,25 +203,21 @@ impl Loss {
                 .next()
                 .unwrap_or_default(),
         };
-        let noun = area_noun(&area.to_ascii_lowercase(), self.stage);
-        let kept = self.code.as_deref().is_some_and(|code| {
+        area_noun(&area.to_ascii_lowercase(), self.stage)
+    }
+
+    /// A record the reader kept as it was, unread, rather than losing it.
+    fn kept(&self) -> bool {
+        self.code.as_deref().is_some_and(|code| {
             ["retained", "kept", "native", "preserved", "opaque"]
                 .iter()
                 .any(|word| code.contains(word))
-        });
-        // Records kept unread are kept as they were, whatever their severity says about it.
-        let title = match self.severity {
-            Severity::Dropped => format!("{noun} left out"),
-            _ if kept => format!("{noun} kept as-is"),
-            Severity::Degraded => format!("{noun} carried over with changes"),
-            Severity::Info => format!("Notes about {noun}"),
-        };
-        let mut chars = title.chars();
-        chars.next().map_or_else(String::new, |first| {
-            first.to_uppercase().chain(chars).collect()
         })
     }
 }
+
+/// The noun for losses about how the source file itself is laid out.
+const FILE_STRUCTURE: &str = "parts of the file";
 
 /// The part of a design a loss code's area (or a loss subject's first word) is about, as a plain
 /// noun phrase.
@@ -221,11 +246,11 @@ fn area_noun(area: &str, stage: Stage) -> &'static str {
         "tessellation" | "mesh" => "display meshes",
         "work-plane" | "plane" | "datum" => "construction planes and axes",
         "source" | "container" | "structure" | "parse" | "decode" | "directory" | "framing"
-        | "native" | "legacy" | "card" | "validation" => "parts of the file",
+        | "native" | "legacy" | "card" | "validation" => FILE_STRUCTURE,
         "design" => "design details",
         "writer" | "export" | "target" => "details of the converted design",
         _ => match stage {
-            Stage::Input | Stage::Decode => "parts of the file",
+            Stage::Input | Stage::Decode => FILE_STRUCTURE,
             Stage::Project | Stage::Map => "design details",
             Stage::Write | Stage::SolidCraft => "details of the converted design",
         },
@@ -726,6 +751,56 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_what_the_design_lost_counts_as_lost() {
+        let loss = |severity, code: Option<&str>, subject: &str, stage| Loss {
+            severity,
+            subject: subject.to_owned(),
+            code: code.map(str::to_owned),
+            detail: "detail".to_owned(),
+            stage,
+        };
+        // Lost: appearances not carried over, history flattened, anything left out.
+        assert!(loss(
+            Severity::Degraded,
+            Some("f3d/material.not-transferred"),
+            "",
+            Stage::Decode
+        )
+        .lost_from_design());
+        assert!(loss(Severity::Degraded, None, "feature history", Stage::Map).lost_from_design());
+        assert!(loss(
+            Severity::Dropped,
+            Some("f3d/source.archive-entry-unreadable"),
+            "",
+            Stage::Decode
+        )
+        .lost_from_design());
+        // Not lost: notes, records kept as they were, and the file's own structure.
+        assert!(!loss(Severity::Info, None, "part positions", Stage::Map).lost_from_design());
+        assert!(!loss(
+            Severity::Degraded,
+            Some("sldprt/config.inferred-without-native"),
+            "",
+            Stage::Decode
+        )
+        .lost_from_design());
+        assert!(!loss(
+            Severity::Degraded,
+            Some("sldprt/source.dialect-unverified"),
+            "",
+            Stage::Decode
+        )
+        .lost_from_design());
+        assert!(!loss(
+            Severity::Degraded,
+            Some("inventor/rse.segment-pair-untyped"),
+            "",
+            Stage::Decode
+        )
+        .lost_from_design());
+    }
 
     #[test]
     fn cadmpeg_losses_are_staged_by_their_code() {

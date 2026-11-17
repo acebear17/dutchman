@@ -1,10 +1,17 @@
 # Dutchman in SolidCraft
 
-The Dutchman plugin lets SolidCraft open Fusion (`.f3d`, `.f3z`), Inventor (`.ipt`, `.iam`),
-SolidWorks (`.sldprt`, `.sldasm`), and FreeCAD (`.FCStd`) files directly. File > Open converts
-the file with the same code as the `dutchman` command and opens the result as a new, unsaved
-design with its editable history. SolidCraft shows what could not be carried over in its
-Import report window, one line per kind of loss.
+The Dutchman plugin lets SolidCraft open Fusion (`.f3d`, `.f3z`), Inventor (`.ipt`, `.iam`), and
+SolidWorks (`.sldprt`, `.sldasm`) files directly. File > Open converts the file with the same code
+as the `dutchman` command and opens the result as a new, unsaved design with its editable history.
+SolidCraft's Import report window lists only what the design lost, one line per kind of loss;
+notes about how the file was read stay under **Details**.
+
+FreeCAD files (`.FCStd`) are not among the plugin's formats: SolidCraft opens them itself with
+**File > Open**, and its own reader keeps more of their editable history than the plugin does
+today. On the public `design_history.FCStd` test file, SolidCraft's reader keeps all five
+features editable; through Dutchman the replayed Pocket cuts away from the body instead of into
+it, so SolidCraft's check refuses the history and only the shape would come across. The
+`dutchman` command still converts FreeCAD files.
 
 It needs SolidCraft 0.44 or newer, on the desktop. SolidCraft's browser version does not run
 plugins yet. Older SolidCraft releases refuse to install it: they cannot run importers or grant
@@ -12,12 +19,12 @@ the input folder it reads assembly parts from.
 
 ## Install
 
-1. Download `dutchman-plugin-X.Y.Z.zip` from the
-   [latest release](https://github.com/dutchman-cad/dutchman/releases/latest). The release also
-   lists `dutchman-plugin-X.Y.Z.zip.sha256`; `dutchman-plugin.zip` is the same file under a name
-   that does not change.
+1. Download [`dutchman-plugin.zip`](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-plugin.zip)
+   from the latest release ([checksum](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-plugin.zip.sha256)).
+   The [release page](https://github.com/dutchman-cad/dutchman/releases/latest) also lists the
+   same file as `dutchman-plugin-X.Y.Z.zip`, with `dutchman-plugin-X.Y.Z.zip.sha256`.
 2. In SolidCraft, open **Preferences > Plugins** and choose **Install plugin...**, then pick the
-   zip.
+   zip as it is. Don't unzip it: SolidCraft installs the zip, not the files inside.
 3. Read the confirmation screen: it shows the plugin's name, version, and what it asks for (see
    below):
    - **2048 MiB of memory**, above SolidCraft's usual 128 MiB plugin limit;
@@ -48,8 +55,8 @@ cannot change the design you have open: it only produces a new one.
 ## The memory ceiling
 
 SolidCraft limits a plugin to 128 MiB unless its manifest asks for more and you approve that at
-install. Dutchman asks for 2048 MiB, because converting a Fusion, Inventor, SolidWorks,
-or FreeCAD file keeps the whole decoded model in memory, not only the file's bytes. The install
+install. Dutchman asks for 2048 MiB, because converting a Fusion, Inventor, or SolidWorks
+file keeps the whole decoded model in memory, not only the file's bytes. The install
 screen says how much it asks for and what your ceiling is; **Cancel** installs nothing. The figure
 is a limit for one conversion, not memory the plugin holds on to between files.
 
@@ -73,9 +80,23 @@ The dialog shows three options:
 ## Limits
 
 - SolidCraft 0.44 or newer, desktop only for now.
-- One file per conversion, at most 1 GiB read and 256 MiB written, as SolidCraft sets.
-- A file that SolidCraft's own reader handles (for example FreeCAD) still opens with SolidCraft's
-  reader on File > Open when both are installed; pick Dutchman's entry from the Plugins menu to
-  use the plugin.
+- One file per conversion, at most 1 GiB read (the file and its assembly parts together) and
+  256 MiB written. A bigger file stops with a message saying so; the `dutchman` command line,
+  which has no such limit, converts it instead.
+- Fusion, Inventor, and SolidWorks only. FreeCAD files open with SolidCraft's own reader (see
+  above); for any other format the plugin's message names the formats it converts.
+
+## When a conversion stops
+
+The message says what to do first, then the detail:
+
+- **A file it can't read** (incomplete, or not really the format its extension says): download
+  or copy it again and open it once more. If the original opens in the program that made it,
+  report it on the [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+  form; `dutchman convert FILE --report-anon report.json` makes an anonymous report to attach,
+  with no design data in it.
+- **Over 1 GiB, or over the memory limit**: convert it with the `dutchman` command line.
+- **Missing assembly parts**: keep the part files in the assembly's folder, under their saved
+  names, and open the assembly again.
 
 For how the plugin is built and tested, see [the plugin notes](plugin.md).

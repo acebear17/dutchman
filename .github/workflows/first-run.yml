@@ -179,3 +179,47 @@ jobs:
         run: |
           echo "## First run: Windows x86_64, ${{ needs.resolve.outputs.label }}" >> "$GITHUB_STEP_SUMMARY"
           scripts/first-run-check.sh "$DUTCHMAN" crates/dutchman-core/tests/fixtures "$RUNNER_TEMP/out"
+
+  # The SolidCraft plugin zip, as docs/solidcraft-plugin.md links it: dutchman-plugin.zip for
+  # `latest`, dutchman-plugin-<version>.zip for a tag, each with its .sha256. The nightly has no
+  # plugin, and a release made before the plugin existed has none either: its tag has no
+  # crates/dutchman-plugin/plugin.json.
+  plugin:
+    name: SolidCraft plugin (${{ needs.resolve.outputs.label }})
+    needs: resolve
+    if: needs.resolve.outputs.label != 'nightly'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download and check the plugin zip
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          label="${{ needs.resolve.outputs.label }}"
+          if [[ $label == latest ]]; then
+            tag=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+            zip=dutchman-plugin.zip
+          else
+            tag=$label
+            zip="dutchman-plugin-${tag#v}.zip"
+          fi
+          if ! gh api "repos/${{ github.repository }}/contents/crates/dutchman-plugin/plugin.json?ref=$tag" --silent 2>/dev/null; then
+            echo "$tag was released before the SolidCraft plugin; nothing to check." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir -p plugin && cd plugin
+          base="${{ needs.resolve.outputs.base }}"
+          curl -fLO "$base/$zip"
+          curl -fLO "$base/$zip.sha256"
+          sha256sum -c "$zip.sha256"
+          # Installed as it is: exactly the manifest and the component, for this version.
+          python3 - "$zip" "${tag#v}" <<'PY'
+          import json, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          assert sorted(z.namelist()) == ["dutchman.wasm", "plugin.json"], z.namelist()
+          manifest = json.loads(z.read("plugin.json"))
+          assert manifest["version"] == sys.argv[2], (manifest["version"], sys.argv[2])
+          assert manifest["runtime"]["module"] == "dutchman.wasm"
+          PY
+          echo "## SolidCraft plugin: $zip for $tag downloads and checks out" >> "$GITHUB_STEP_SUMMARY"

@@ -134,7 +134,11 @@ The `plugin` job builds the SolidCraft plugin once, on Linux: `dutchman-plugin` 
 `scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip` (the manifest stamped with the
 version, and the component) with its `.sha256`. It then converts the public fixtures with the
 packaged component in Wasmtime and uploads the zip as the `dutchman-X.Y.Z-plugin` artifact.
-`release.yml` requires it and adds the version-less `dutchman-plugin.zip`. A change to
+`release.yml` requires it and adds the version-less `dutchman-plugin.zip`, the file the
+[plugin guide](solidcraft-plugin.md) links as `releases/latest/download/dutchman-plugin.zip`;
+after creating the draft it checks that every file reached it, both plugin zips and their
+`.sha256` files included, and stops otherwise. The `plugin` job of `first-run.yml` downloads the
+published zip as the guide says, checks its checksum, its two files and its version. A change to
 `crates/dutchman-plugin/plugin.json` or `.cargo/config.toml` starts the full build on a pull
 request. See [the plugin notes](plugin.md).
 
