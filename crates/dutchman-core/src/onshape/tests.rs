@@ -520,6 +520,114 @@ fn zlib_cap_queries_keep_face_sketches_in_the_source_frame() {
     );
 }
 
+// A sketch on a side face: the zlib query names the face by its deterministic id
+// in the rollback state before the sketch, which supplies the face's plane.
+fn face_sketch_bundle(normal: [f64; 3], orientation: bool) -> Vec<u8> {
+    use base64::Engine;
+    let bytes = changed(|response| {
+        let mut face_sketch = response["features"][0].clone();
+        face_sketch["featureId"] = json!("side-sketch");
+        let creator = response["features"][1]["featureId"].as_str().unwrap();
+        let side = json!({"entityType":"FACE", "historyType":"CREATION", "queryType":"SWEPT_FACE",
+            "operationId":[format!("{creator}.opExtrude")]});
+        let literal = format!("%{}", compact(&side));
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(literal.as_bytes()).unwrap();
+        let encoded = format!(
+            "&{:x}${}",
+            literal.len(),
+            base64::engine::general_purpose::STANDARD.encode(encoder.finish().unwrap())
+        );
+        face_sketch["parameters"][0]["queries"][0] = json!({"deterministicIds":["side"],
+            "queryString":format!("query=qCompressed(1.0,{},id);", serde_json::to_string(&encoded).unwrap())});
+        response["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(face_sketch);
+    });
+    let rollback = json!({"btType":"BTExportModelBodiesResponse-734",
+        "microversionId":{"theId":"synthetic-microversion"},
+        "bodies":[{"id":"body","faces":[{"id":"side","orientation":orientation,"loops":[],
+            "surface":{"type":"PLANE","origin":topology::point([0.01, -0.02, 0.005]),
+            "normal":topology::point(normal)}}]}]});
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        if name.ends_with("bodydetails/index.json") {
+            bytes = b"[0, 1, 2]".to_vec();
+        }
+        output
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    output
+        .start_file(
+            "partstudios/studio/bodydetails/2.json",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    output
+        .write_all(&serde_json::to_vec(&rollback).unwrap())
+        .unwrap();
+    output.finish().unwrap().into_inner()
+}
+
+#[test]
+fn zlib_face_queries_take_the_outward_face_plane_before_the_sketch() {
+    // The surface normal points into the body; the face's orientation flips it.
+    let (wire, report) = read(&face_sketch_bundle([0.0, 1.0, 0.0], false));
+    assert_eq!(
+        kinds(&wire),
+        ["sketch", "extrude", "sketch"],
+        "{:?}",
+        report.losses()
+    );
+    let sketch = wire["sketches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id("sketch", "side-sketch"))
+        .unwrap();
+    assert_eq!(
+        sketch["placement"]["frame"],
+        json!({"origin": topology::point([0.0, -20.0, 0.0]),
+            "normal": topology::point([0.0, -1.0, 0.0]),
+            "u_axis": topology::point([1.0, 0.0, 0.0])})
+    );
+    let (wire, _) = read(&face_sketch_bundle([0.0, 0.0, 1.0], true));
+    let sketch = wire["sketches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id("sketch", "side-sketch"))
+        .unwrap();
+    assert_eq!(
+        sketch["placement"]["frame"],
+        json!({"origin": topology::point([0.0, 0.0, 5.0]),
+            "normal": topology::point([0.0, 0.0, 1.0]),
+            "u_axis": topology::point([1.0, 0.0, 0.0])})
+    );
+}
+
+#[test]
+fn face_sketches_on_unmeasured_orientations_are_refused_by_name() {
+    let (wire, report) = read(&face_sketch_bundle([0.6, 0.0, 0.8], true));
+    assert_eq!(kinds(&wire)[2], "native");
+    assert!(
+        report.losses().iter().any(|loss| loss
+            .detail
+            .contains("not parallel to a default plane are not supported yet")),
+        "{:?}",
+        report.losses()
+    );
+}
+
 #[test]
 fn tangent_propagation_follows_vertices_and_refuses_incomplete_chains() {
     let edge = |name: &str, vertices: Value, tangent: Value| {

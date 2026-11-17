@@ -327,7 +327,7 @@ pub(super) fn map(
         None
     };
     match text(feature, "featureType")? {
-        "newSketch" => sketch::map(feature, model, report),
+        "newSketch" => sketch::map(feature, ordinal, inputs, model, report),
         "assignVariable" => {
             if value(feature, "mode").is_some_and(|m| m != "ASSIGNED") {
                 return Err("measured variables are not supported yet".into());

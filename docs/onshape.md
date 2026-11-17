@@ -26,7 +26,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 
 | Source construction | Reader mapping | Limits and named losses |
 |---|---|---|
-| Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, and forward end caps of resolved blind extrusions whose source sketch supplies the frame; other attachments need the source's full in-plane frame. |
+| Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, forward end caps of resolved blind extrusions whose source sketch supplies the frame, and planar model faces parallel to a built-in plane. Faces at other orientations and non-planar faces are not supported yet. |
 | Lines, circular arcs, circles, points | Exact sketch entities | Text, images, projected references without solved curves, and other curves are not supported yet. |
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points; the writer retains its own knot and degree limits. |
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
@@ -48,12 +48,18 @@ one CADIR feature. Final STEP faces never stand in for historical input faces.
 Queries containing only arbitrary FeatureScript query strings cannot be evaluated
 offline. The built-in plane query forms are recognized explicitly, including literal
 `qCompressed` creation records naming `Top.planeOp`, `Front.planeOp`, or
-`Right.planeOp`. These planes supply their fixed origin, normal, and in-plane axis;
-a deterministic face ID alone cannot supply that frame. Zlib literals and their
-boolean query fields are decoded within the same bounds. A cap query names the
-creating extrusion; the reader derives a forward end cap's location from that
-extrusion and its source sketch rather than from final STEP topology. Reversed and
-start caps still need an explicit source frame.
+`Right.planeOp`. These planes supply their fixed origin, normal, and in-plane axis.
+Zlib literals and their boolean query fields are decoded within the same bounds.
+A cap query names the creating extrusion; the reader derives a forward end cap's
+location from that extrusion and its source sketch rather than from final STEP
+topology. Any other sketch on a model face (a side face, or a reversed or start cap)
+takes its plane from the face's deterministic ID in bodydetails at the sketch's
+rollback index: the normal is the face's outward normal (the surface normal,
+flipped when the face's `orientation` is false), the origin is the world origin
+projected onto the face, and the in-plane x axis follows the built-in planes
+(world X on a horizontal face, otherwise the horizontal direction that keeps world Z
+up). Only faces parallel to a built-in plane are admitted, because that is where this
+convention was measured.
 
 A compressed sketch-region query carries topology disambiguation naming its source
 sketch curves through `derivedFrom`, `sketchEntityId`, and the sketch's `wireOp` and

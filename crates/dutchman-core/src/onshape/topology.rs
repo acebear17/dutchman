@@ -430,6 +430,62 @@ impl State {
         Ok(())
     }
 
+    /// The sketch frame Onshape gives a planar model face: the face's outward
+    /// normal, the world origin projected onto the face's plane, and the in-plane
+    /// x axis its default planes use (world X for a horizontal plane, otherwise the
+    /// in-plane direction for which world Z is up). Only faces parallel to a
+    /// default plane are admitted; other orientations are refused.
+    pub fn face_frame(&self, face_id: &str) -> Mapping<Value> {
+        let face = self
+            .faces
+            .get(face_id)
+            .ok_or("the sketch face is absent at this feature's rollback index")?;
+        let surface = face
+            .get("surface")
+            .ok_or("the sketch face has no surface")?;
+        if surface.get("type").and_then(Value::as_str) != Some("PLANE") {
+            return Err("sketches on non-planar faces are not supported yet".into());
+        }
+        // The surface normal follows the face only when the face's orientation is set.
+        let sense = match face.get("orientation").and_then(Value::as_bool) {
+            Some(true) => 1.0,
+            Some(false) => -1.0,
+            None => return Err("the sketch face has no orientation".into()),
+        };
+        let normal = unit(vector(
+            surface
+                .get("normal")
+                .ok_or("the sketch face normal is missing")?,
+            sense,
+        )?)?;
+        let origin = vector(
+            surface
+                .get("origin")
+                .ok_or("the sketch face origin is missing")?,
+            1000.0,
+        )?;
+        // Exact axis alignment only: Onshape's in-plane axis for other
+        // orientations has not been measured.
+        let ones = normal.iter().filter(|n| n.abs() > 1.0 - 1e-12).count();
+        let zeros = normal.iter().filter(|n| n.abs() < 1e-12).count();
+        if ones != 1 || zeros != 2 {
+            return Err(
+                "sketches on faces that are not parallel to a default plane are not supported yet"
+                    .into(),
+            );
+        }
+        let normal = normal.map(f64::round);
+        let [_, _, nz] = normal;
+        let u_axis = if nz != 0.0 {
+            [1.0, 0.0, 0.0]
+        } else {
+            cross([0.0, 0.0, 1.0], normal)
+        };
+        let offset = origin.iter().zip(normal).map(|(o, n)| o * n).sum::<f64>();
+        Ok(json!({"origin": point(normal.map(|n| n * offset + 0.0)),
+            "normal": point(normal.map(|n| n + 0.0)), "u_axis": point(u_axis.map(|n| n + 0.0))}))
+    }
+
     pub fn axis(&self, feature: &Value, key: &str) -> Mapping<Value> {
         let selection = self.selection(feature, key, "edges")?;
         let ids = selection

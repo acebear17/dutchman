@@ -10,11 +10,21 @@ use super::{
 };
 use crate::{Report, Severity};
 
-/// Built-in planes have a fixed source frame. Other face attachments cannot supply
-/// the sketch's in-plane rotation from bodydetails alone and are refused explicitly.
-fn frame(feature: &Value, model: &Model) -> Mapping<Value> {
+/// Built-in planes have a fixed source frame. A sketch on a model face takes the
+/// frame Onshape gives that face in the rollback state before the sketch.
+fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) -> Mapping<Value> {
     let [query] = queries(feature, "sketchPlane")? else {
         return Err("multiple sketch planes are not supported yet".into());
+    };
+    let deterministic = query
+        .get("deterministicIds")
+        .and_then(Value::as_array)
+        .filter(|ids| !ids.is_empty());
+    let face_frame = || -> Mapping<Value> {
+        let [native] = deterministic.map(Vec::as_slice).unwrap_or_default() else {
+            return Err("a sketch on more than one face is not supported yet".into());
+        };
+        face(native.as_str().ok_or("a sketch face id is not a string")?)
     };
     let plane = if query
         .get("queryString")
@@ -23,7 +33,19 @@ fn frame(feature: &Value, model: &Model) -> Mapping<Value> {
     {
         let resolved = compressed::resolved(query)?;
         if resolved.get("queryType").and_then(Value::as_str) == Some("CAP_FACE") {
-            return cap_frame(&resolved, model);
+            return cap_frame(&resolved, model).or_else(|reason| {
+                if deterministic.is_some() {
+                    face_frame()
+                } else {
+                    Err(reason)
+                }
+            });
+        }
+        if resolved.get("queryType").and_then(Value::as_str) != Some("DUMMY") {
+            if resolved.get("entityType").and_then(Value::as_str) != Some("FACE") {
+                return Err("the sketch plane query does not select a face".into());
+            }
+            return face_frame();
         }
         let [operation] = rows(&resolved, "operationId")? else {
             return Err("the sketch plane has multiple source operations".into());
@@ -40,14 +62,8 @@ fn frame(feature: &Value, model: &Model) -> Mapping<Value> {
             .and_then(|s| s.strip_suffix(".planeOp"))
             .ok_or("this sketch plane has no resolved in-plane frame")?
             .to_owned()
-    } else if query
-        .get("deterministicIds")
-        .and_then(Value::as_array)
-        .is_some_and(|a| !a.is_empty())
-    {
-        return Err(
-            "a deterministic sketch-plane attachment has no resolved in-plane frame".into(),
-        );
+    } else if deterministic.is_some() {
+        return face_frame();
     } else if let Some(feature_id) = query.get("featureId").and_then(Value::as_str) {
         feature_id.to_owned()
     } else {
@@ -243,13 +259,21 @@ fn geometry(entity: &Value) -> Mapping<Value> {
     }
 }
 
-pub(super) fn map(feature: &Value, model: &mut Model, report: &mut Report) -> Mapping<Value> {
+pub(super) fn map(
+    feature: &Value,
+    ordinal: usize,
+    inputs: &topology::Inputs<'_>,
+    model: &mut Model,
+    report: &mut Report,
+) -> Mapping<Value> {
     if feature.get("btType").and_then(Value::as_str) != Some("BTMSketch-151") {
         return Err("only planar sketches are supported yet".into());
     }
     let native = text(feature, "featureId")?;
     let sketch_id = id("sketch", native);
-    let plane = frame(feature, model)?;
+    let plane = frame(feature, model, &|face| {
+        inputs.load(ordinal, feature)?.face_frame(face)
+    })?;
     let mut loci = BTreeMap::new();
     for entity in rows(feature, "entities")? {
         let native_entity = text(entity, "entityId")?;
