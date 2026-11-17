@@ -264,6 +264,53 @@ pub(super) fn read(
     let single_body = (creators == 1 && model.ir.geometry.bodies.len() == 1)
         .then(|| model.ir.geometry.bodies.first().map(|body| body.id.clone()))
         .flatten();
+    // With several final bodies, a creator is paired with a STEP body only through
+    // the one part it adds at its own rollback, still present at the last rollback,
+    // whose name exactly one final body carries. Anything less pairs nothing.
+    let mut created = std::collections::BTreeMap::new();
+    if single_body.is_none() && model.ir.geometry.bodies.len() > 1 {
+        let last = inputs.last().and_then(|n| inputs.bodies(n).ok());
+        let mut taken = std::collections::BTreeSet::new();
+        for (ordinal, feature) in features.iter().enumerate() {
+            if !matches!(
+                feature.get("featureType").and_then(Value::as_str),
+                Some("extrude" | "revolve")
+            ) || features::value(feature, "operationType") != Some("NEW")
+            {
+                continue;
+            }
+            let (Ok(before), Some(Ok(after)), Some(last)) = (
+                inputs.bodies(ordinal),
+                ordinal.checked_add(1).map(|next| inputs.bodies(next)),
+                last.as_ref(),
+            ) else {
+                continue;
+            };
+            let added: Vec<_> = after
+                .iter()
+                .filter(|(id, _)| !before.contains_key(*id))
+                .collect();
+            let [(body, Some(name))] = added.as_slice() else {
+                continue;
+            };
+            if last.get(*body) != Some(&Some(name.clone()))
+                || last.values().filter(|n| n.as_ref() == Some(name)).count() != 1
+            {
+                continue;
+            }
+            let mut matching = model
+                .ir
+                .geometry
+                .bodies
+                .iter()
+                .filter(|b| b.name.as_deref() == Some(name.as_str()));
+            if let (Some(final_body), None) = (matching.next(), matching.next()) {
+                if taken.insert(final_body.id.clone()) {
+                    created.insert(ordinal, final_body.id.clone());
+                }
+            }
+        }
+    }
     let mut seen = std::collections::BTreeSet::new();
     let mut previous = None;
     for (ordinal, feature) in features.iter().enumerate() {
@@ -332,6 +379,7 @@ pub(super) fn read(
         let dependencies: Vec<_> = previous.iter().cloned().collect();
         let outputs: Vec<_> = single_body
             .iter()
+            .chain(created.get(&ordinal))
             .filter(|_| {
                 definition
                     .pointer("/value/value/op")

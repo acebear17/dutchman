@@ -206,6 +206,38 @@ impl<'a> Inputs<'a> {
         })
     }
 
+    /// The highest rollback index the bundle carries.
+    pub fn last(&self) -> Option<usize> {
+        self.indices.last().copied()
+    }
+
+    /// Body ids and part names at a rollback index, without loading topology.
+    pub fn bodies(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
+        if !self.indices.contains(&ordinal) {
+            return Err(format!(
+                "bodydetails for rollback index {ordinal} is missing"
+            ));
+        }
+        let response = self
+            .bundle
+            .json(&format!("{}/bodydetails/{ordinal}.json", self.prefix))
+            .map_err(|_| {
+                format!("bodydetails for rollback index {ordinal} is missing or unreadable")
+            })?;
+        super::microversion(&response, "microversionId", self.mid)?;
+        let mut bodies = BTreeMap::new();
+        for body in rows(&response, "bodies")? {
+            let name = body
+                .pointer("/properties/name")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if bodies.insert(text(body, "id")?.to_owned(), name).is_some() {
+                return Err("bodydetails repeats a body id".into());
+            }
+        }
+        Ok(bodies)
+    }
+
     pub fn load(&self, ordinal: usize, feature: &Value) -> Mapping<State> {
         if !self.indices.contains(&ordinal) {
             return Err(format!(
