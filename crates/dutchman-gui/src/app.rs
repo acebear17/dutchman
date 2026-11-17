@@ -3488,7 +3488,8 @@ mod tests {
         std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
         h.get_by_label("SolidCraft not found").click_accesskit();
         h.run_steps(8);
-        h.get_by_label("SolidCraft 0.43 is installed.");
+        // The exact wording depends on what Dutchman knows of newer releases; the version is what matters.
+        assert!(h.query_by_label_contains("SolidCraft 0.43").is_some());
         assert_eq!(h.state().found_version.as_deref(), Some("0.43.0"));
 
         h.state_mut().preview_solidcraft(None);
