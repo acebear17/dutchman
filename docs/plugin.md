@@ -2,8 +2,19 @@
 
 `crates/dutchman-plugin` is a streaming WebAssembly component front end to Dutchman's
 normal CADIR → SolidCraft conversion pipeline. It reads Fusion `.f3d` and `.f3z`,
-Inventor `.ipt` and `.iam`, SolidWorks `.sldprt` and `.sldasm`, and FreeCAD `.FCStd`.
+Inventor `.ipt` and `.iam`, and SolidWorks `.sldprt` and `.sldasm` (`FORMATS` in `src/lib.rs`,
+the manifest's `extensions`; a unit test keeps them equal).
 The result contains ordinary SolidCraft features and geometry and works without the plugin.
+
+FreeCAD is left out on purpose, and the component is built without core's `freecad` feature.
+SolidCraft reads `.FCStd` itself, keeping its editable history; on the public
+`design_history.FCStd` fixture its reader keeps all five features. Through the plugin the same
+file came out as imported geometry: cadmpeg reports the Pocket as cutting along its sketch
+normal (`profile_normal`, +Z, from a sketch on the top face), so the replayed cut misses the body
+by the pocket's volume (3837.85 against 3668.21 mm³), SolidCraft's check refuses the
+history, and the writer flattens it. A worse path than the host's own reader is not claimed. A
+`.FCStd` given to the component anyway is refused before any byte is read, with a message that
+points at File > Open.
 
 It implements SolidCraft's importer interface: the `craft:plugin@0.1.0` package, world
 `importer-plugin` (capabilities `formats@0.1` and `evaluate@0.1`). It needs SolidCraft 0.44 or
@@ -19,8 +30,8 @@ hidden bodies (false). The up axis lists its options as `oneOf` entries of `cons
 `title`, so the host's dropdown shows the titles and sends the value. The schemas use the
 #2829 command contract field shapes and reject unknown fields.
 Defaults retain the CLI's history, visibility and source-coordinate behavior. Include
-hidden bodies bypasses Dutchman's source visibility filter, which can expose intermediate
-FreeCAD shapes and consumed Fusion bodies. Stand up adds a +90° X rotation (+Y to +Z)
+hidden bodies bypasses Dutchman's source visibility filter, which can expose consumed Fusion
+bodies. Stand up adds a +90° X rotation (+Y to +Z)
 to a wrapper occurrence only after mapping and checks, preserving editable local features.
 These two opt-in controls are plugin options; they do not add CLI flags.
 
@@ -28,7 +39,7 @@ There is no plugin UI code. The host draws the form, loss report, Open and Cance
 and asks for read access to the selected input's folder (`input_folder`) for assembly
 parts. There is no network or clock permission and no write grant. The plugin resolves relative part paths and relocates stored absolute paths by their
 longest safe suffix, trying folders nearest the referring assembly first, within the
-granted input folder. SolidWorks and FreeCAD prefer a copy beside the referring assembly.
+granted input folder. SolidWorks prefers a copy beside the referring assembly.
 It never searches outside the granted folder, Inventor project libraries or the saving
 machine's absolute paths. The host must enforce the folder capability and symlink rules;
 unresolved parts are reported by the normal assembly reader. A missing-part message
@@ -109,10 +120,16 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
 - `design.write(bytes)` appends the converted SolidCraft design, at most 1 MiB per call.
 - `control.progress` reports reading and writing; `control.cancelled` is checked before
   each member read and before the design is written.
-- The result is the loss report below. Errors: an unsupported, corrupt or truncated file
+- The result is the loss report below. Errors: an unsupported, unreadable or truncated file
   is `invalid-input` with field `file` (`options` and `entry` for bad options or entry
   names); size budgets are `limit-exceeded`; an error returned by a host import is passed
-  back unchanged.
+  back unchanged. The plugin's own reasons (`message` in `src/lib.rs`) say what to do first and
+  give the cause after `Detail:`. A file in no plugin format names only the plugin's formats,
+  not the command line's whole list; `.FCStd` points at File > Open; an input over 1 GiB (the
+  file and its parts together, `MAX_INPUT_BYTES`, the core reader's cap) or over the memory
+  budget points at the `dutchman` command line; an unreadable file asks for a fresh copy and
+  names the issue form and `--report-anon`. A file in no plugin format is refused before it is
+  read.
 
 The browser needs the same WIT through jco or another component host; browser execution
 has not been validated here.
@@ -178,9 +195,9 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 
 | Field | Shape and meaning |
 |---|---|
-| `summary` | One line, at most 240 bytes, such as `Editable history: 12 of 14 features mapped; 3 losses` |
-| `items` | At most 4096 rows, one per Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Parts of the file kept as-is" or "Sketches carried over with changes"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
-| `details` | The full `dutchman.plugin.loss/1` report below. When the whole result would reach 1 MiB, its `losses` array is left out (the items carry them). |
+| `summary` | One line, at most 240 bytes, such as `Editable history: 12 of 14 features mapped; 3 losses`. It counts only the items. A file with no feature history to rebuild says `Shape converted; the file has no feature history to rebuild`, not that history was lost; with Keep editable history off it says `Geometry only, as Keep editable history is off`. |
+| `items` | At most 4096 rows, one per thing the design lost (`Loss::lost_from_design` in `dutchman-core`): everything `dropped`, and every `degraded` loss except records kept as they were and notes on the file's own structure (a dialect check, a kernel record chain). Notes (`info`: STEP restatement counts, part-position statistics, renamed parameters) are never items. Each row: `severity` (`degraded` or `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Appearances carried over with changes" or "Features left out"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. A conversion that lost nothing has no items. |
+| `details` | The full `dutchman.plugin.loss/1` report below, every loss and note included. When the whole result would reach 1 MiB, its `losses` array is left out (the items carry what was lost). |
 
 ### `details`: `dutchman.plugin.loss/1`
 
@@ -263,7 +280,9 @@ the plugin, core and writer (with the optional host harness) and for the plugin 
 `wasm32-unknown-unknown`, and the Wasmtime component test. All 18 successfully converted
 public fixtures matched the CLI pipeline's unpacked document and exact STEP payloads,
 including all three SolidWorks assemblies and the FreeCAD assembly with sibling parts.
-Six remaining public fixtures were refused by both pipelines. Verification status and
+Six remaining public fixtures were refused by both pipelines. (That run still claimed
+FreeCAD; the harness now leaves FreeCAD fixtures out and checks that the component refuses
+them.) Verification status and
 reason matched the CLI, every loss report fit SolidCraft's shape, and the harness also
 checked malformed options, an unknown entry, truncated and oversized inputs, and a
 multi-chunk stream. The public fixtures include no `.f3z`. Browser execution remains

@@ -38,12 +38,17 @@ pub(crate) fn json(report: &Report) -> Value {
         "joints":report.joints()})
 }
 
-/// The loss report SolidCraft shows: a one-line summary, one item per loss, and the full
-/// `dutchman.plugin.loss/1` report under `details`.
-pub(crate) fn host(report: &Report) -> Value {
+/// The loss report SolidCraft shows: a one-line summary, one item per thing the design lost,
+/// and the full `dutchman.plugin.loss/1` report, notes included, under `details`.
+/// `history_off` is the reason the writer records when Keep editable history is off.
+pub(crate) fn host(report: &Report, history_off: &str) -> Value {
     const MAX_ITEMS: usize = 4096;
-    let items: Vec<_> = report
+    let lost: Vec<_> = report
         .losses()
+        .iter()
+        .filter(|loss| loss.lost_from_design())
+        .collect();
+    let items: Vec<_> = lost
         .iter()
         .take(MAX_ITEMS)
         .map(|loss| {
@@ -66,12 +71,16 @@ pub(crate) fn host(report: &Report) -> Value {
             })
         })
         .collect();
-    json!({"summary": clip(&summary(report), 240), "items": items, "details": json(report)})
+    json!({
+        "summary": clip(&summary(report, lost.len(), history_off), 240),
+        "items": items,
+        "details": json(report),
+    })
 }
 
-fn summary(report: &Report) -> String {
-    let losses = report.losses().len();
-    let losses = match losses {
+/// One line on what the user got, counting only what the design lost.
+fn summary(report: &Report, lost: usize, history_off: &str) -> String {
+    let losses = match lost {
         0 => String::new(),
         1 => "; 1 loss".to_owned(),
         n => format!("; {n} losses"),
@@ -96,7 +105,17 @@ fn summary(report: &Report) -> String {
         Mode::PartialHistory => format!(
             "Partial editable history: {mapped} of {needing} features mapped, original shape visible{losses}"
         ),
-        Mode::Import => format!("Geometry without editable history{losses}"),
+        Mode::Import if matches!(&outcome.check, Check::NotApplicable(why) if why == history_off) => {
+            format!("Geometry only, as Keep editable history is off{losses}")
+        }
+        // Nothing to rebuild is not a loss: the file kept no feature history Dutchman reads.
+        Mode::Import if needing == 0 => {
+            format!("Shape converted; the file has no feature history to rebuild{losses}")
+        }
+        Mode::Import => format!(
+            "Shape converted without editable history: {needing} {} could not be rebuilt{losses}",
+            if needing == 1 { "feature" } else { "features" }
+        ),
     }
 }
 

@@ -110,6 +110,8 @@ mod guest {
                 ));
             }
             crate::validate_name(&file.name).map_err(|e| invalid("file", e))?;
+            // A file the plugin does not convert is refused before any of it is read.
+            crate::format(&file.name).map_err(error)?;
             if options.len() > 16 * 1024 {
                 return Err(PluginError::LimitExceeded(
                     "Conversion options exceed 16 KiB; use the declared conversion options".into(),
@@ -195,26 +197,30 @@ mod guest {
         }
     }
 
-    /// An unsupported or unreadable file is invalid input; a size budget is a limit.
+    /// An unsupported or unreadable file is invalid input; a size budget is a limit. Either
+    /// way the reason says what to do first (`crate::message`).
     fn error(e: dutchman_core::Error) -> PluginError {
         use dutchman_core::Error;
-        match e {
-            Error::TooLarge { .. } | Error::MemoryBudget(_) => {
-                PluginError::LimitExceeded(e.to_string())
-            }
-            Error::Encode(ref reason) if reason.contains("exceeds") => {
-                PluginError::LimitExceeded(e.to_string())
-            }
-            _ => invalid("file", e.to_string()),
+        let limit = match &e {
+            Error::TooLarge { .. } | Error::MemoryBudget(_) => true,
+            Error::Encode(reason) => reason.contains("exceeds"),
+            _ => false,
+        };
+        let reason = crate::message(&e);
+        if limit {
+            PluginError::LimitExceeded(reason)
+        } else {
+            invalid("file", reason)
         }
     }
 
     fn read(path: &str, size: u64, budget: &Cell<u64>) -> Result<Vec<u8>, PluginError> {
-        if size > dutchman_core::MAX_INPUT_BYTES || size > (1u64 << 30).saturating_sub(budget.get())
-        {
-            return Err(PluginError::LimitExceeded(
-                "Input exceeds the 1 GiB conversion limit; choose a smaller CAD file".into(),
-            ));
+        let limit = crate::MAX_INPUT_BYTES.min(dutchman_core::MAX_INPUT_BYTES);
+        if size > limit.saturating_sub(budget.get()) {
+            // The file and the parts read before it share one limit.
+            return Err(PluginError::LimitExceeded(crate::input_limit_message(
+                limit,
+            )));
         }
         budget.set(budget.get() + size);
         let mut bytes = Vec::new();

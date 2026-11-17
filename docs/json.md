@@ -1303,8 +1303,9 @@ No report fields or schema versions change.
 
 ## `dutchman.plugin.loss/1`
 
-The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
-structured projection of the core report under `details`: stage counts, coded losses,
+The plugin returns SolidCraft's loss report (a summary line and one item per thing the design
+lost; notes are left out of the items) with a
+structured projection of the core report under `details`: stage counts, every loss and note,
 per-feature mapping results, assembly completeness, and verification.
 See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
 CLI and MCP `dutchman.convert/1` reports are unchanged.

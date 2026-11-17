@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use crate::{convert, resolve, Options};
 use serde_json::Value;
 use std::path::Path;
@@ -94,7 +94,7 @@ fn history_off_is_worded_as_the_plugin_option() {
     assert!(report["summary"]
         .as_str()
         .unwrap()
-        .starts_with("Geometry without editable history"));
+        .starts_with("Geometry only, as Keep editable history is off"));
 }
 #[test]
 fn history_off_keeps_the_command_line_wording_elsewhere() {
@@ -120,4 +120,126 @@ fn history_off_keeps_the_command_line_wording_elsewhere() {
         report.outcome().unwrap().check,
         Check::NotApplicable("--import-only".to_owned())
     );
+}
+
+#[test]
+fn the_report_lists_only_what_the_design_lost() {
+    let (_, report) = convert(
+        "cube.f3d",
+        Options::default(),
+        &|_, _| Ok(CUBE.into()),
+        &|_, _| None,
+        None,
+    )
+    .unwrap();
+    let report: Value = serde_json::from_str(&report).unwrap();
+    let items = report["items"].as_array().unwrap();
+    let losses = report["details"]["losses"].as_array().unwrap();
+    // Notes (part positions, STEP restatement records) stay in the details only.
+    assert!(losses.len() > items.len(), "{report}");
+    assert!(losses.iter().any(|loss| loss["severity"] == "info"));
+    for item in items {
+        assert_ne!(item["severity"], "info", "{item}");
+        let title = item["title"].as_str().unwrap();
+        assert!(!title.starts_with("Notes about"), "{title}");
+        assert!(!title.starts_with("Parts of the file"), "{title}");
+    }
+    let summary = report["summary"].as_str().unwrap();
+    // The cube has no feature history: that is not a loss.
+    assert!(
+        summary.starts_with("Shape converted; the file has no feature history to rebuild"),
+        "{summary}"
+    );
+    match items.len() {
+        0 => assert!(!summary.contains("loss"), "{summary}"),
+        1 => assert!(summary.ends_with("; 1 loss"), "{summary}"),
+        n => assert!(summary.ends_with(&format!("; {n} losses")), "{summary}"),
+    }
+}
+
+#[test]
+fn the_manifest_claims_exactly_the_plugin_formats() {
+    let manifest: Value = serde_json::from_str(include_str!("../plugin.json")).unwrap();
+    let mut claimed: Vec<String> = manifest["runtime"]["entries"][0]["extensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e.as_str().unwrap().to_owned())
+        .collect();
+    claimed.sort();
+    let mut formats: Vec<String> = crate::FORMATS
+        .iter()
+        .flat_map(|f| f.extensions().iter().map(|e| e.to_ascii_lowercase()))
+        .collect();
+    formats.sort();
+    assert_eq!(claimed, formats);
+    assert!(!claimed.iter().any(|e| e == "fcstd"));
+    assert_eq!(crate::MAX_INPUT_BYTES, dutchman_core::MAX_INPUT_BYTES);
+}
+
+#[test]
+fn freecad_is_left_to_solidcrafts_own_reader() {
+    let error = convert(
+        "design.FCStd",
+        Options::default(),
+        &|_, _| panic!("a FreeCAD file must not be read"),
+        &|_, _| None,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(crate::message(&error), crate::FREECAD);
+    assert!(crate::FREECAD.starts_with("Open FreeCAD files with File > Open"));
+}
+
+#[test]
+fn messages_put_what_to_do_first_and_name_only_plugin_formats() {
+    use dutchman_core::{Error, Format};
+    let unknown = crate::message(&Error::UnknownFormat {
+        path: "part.xyz".into(),
+    });
+    let rhino = crate::message(&Error::NotSupportedYet {
+        format: Format::Rhino,
+    });
+    for text in [&unknown, &rhino] {
+        assert!(
+            text.starts_with(
+                "Choose a Fusion (.f3d, .f3z), Inventor (.ipt, .iam) or SolidWorks \
+                 (.sldprt, .sldasm) file"
+            ),
+            "{text}"
+        );
+        for other in ["FreeCAD", "Rhino", "CATIA", "Creo", "NX"] {
+            assert!(!text.contains(other), "{text}");
+        }
+    }
+    let large = crate::message(&Error::TooLarge {
+        path: "big.f3d".into(),
+        bytes: 3 << 29,
+        limit: crate::MAX_INPUT_BYTES,
+    });
+    assert!(
+        large.starts_with(
+            "Choose a file under 1 GiB, or convert this one with the dutchman command line"
+        ),
+        "{large}"
+    );
+    assert!(large.ends_with("This file is 1.5 GiB."), "{large}");
+    assert!(crate::input_limit_message(crate::MAX_INPUT_BYTES).contains(dutchman_core::RELEASES));
+    // The reader's advice comes first in the plugin's words, then only the reader's cause.
+    let truncated = convert(
+        "cube.f3d",
+        Options::default(),
+        &|_, _| Ok(CUBE.get(..CUBE.len() / 2).unwrap().into()),
+        &|_, _| None,
+        None,
+    )
+    .unwrap_err();
+    let text = crate::message(&truncated);
+    assert!(
+        text.starts_with("Download or copy the file again and open it once more."),
+        "{text}"
+    );
+    assert!(text.contains(dutchman_core::FILE_DID_NOT_CONVERT), "{text}");
+    assert_eq!(text.matches("download or copy").count(), 0, "{text}");
+    assert!(text.contains("Detail: cannot read this design: "), "{text}");
 }
