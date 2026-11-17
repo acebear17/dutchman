@@ -150,3 +150,28 @@ project root selection and recursive resolution; no third-party design supplied 
 `local_cubes.sldasm` uses that generator with an authored local sub-assembly holder
 and an embedded cube reference. It covers matching a local holder's neutral source name
 to a saved sub-assembly file when choosing project roots.
+
+## Onshape bundles
+
+`onshape-plate-fillet.onshape-bundle`, `onshape-revolve.onshape-bundle`,
+`onshape-hole.onshape-bundle`, and `onshape-unsupported.onshape-bundle` are synthetic.
+`onshape.py` constructs their REST response objects from Onshape's public OpenAPI
+schemas (`BTFeatureListResponse-2457`, `BTMSketch-151`, `BTMFeature-134`, and
+`BTExportModelBodiesResponse-734`) and the Dutchman bundle v1 specification. It
+creates elementary shapes from scratch with SolidCraft CLI 0.40.1 and exports
+their exact STEP reference bodies. No Onshape account, real document data, vendor
+sample, or third-party design was used. Run `python3 onshape.py` to regenerate.
+The plate is 20 × 10 × 2 mm with one 1 mm vertical-edge fillet; the ring is a full
+turn of a 5–10 mm radial rectangle; the hole has a 2 mm bore through a plate below
+XY. The unsupported custom feature is a synthetic no-op after the plate.
+
+`onshape-default-plane-regions.onshape-bundle` is generated from scratch by
+`onshape-regions.py` with SolidCraft CLI 0.43.0: an invented 20 × 10 mm rectangle
+on Top, a construction point, and a 5 mm extrude. Its JSON uses the REST generic
+`BTMIndividualQuery-138`, `deterministicIds`, `queryStatement`, and `queryString`
+fields, with literal and zlib `qCompressed` records. The query encoder authors
+its own dictionary references and topology disambiguation to named sketch curves;
+all identifiers and geometry are invented. It includes default features and empty
+rollback bodydetails, rather than fabricated sketch faces in bodydetails. No
+private query, identifier or geometry is copied. Regenerate with
+`python3 onshape-regions.py --cli /path/to/solidcraft-cli`.

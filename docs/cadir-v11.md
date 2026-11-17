@@ -63,3 +63,13 @@ child membership, and NURBS surfaces state their normal orientation. Stored-body
 fixtures copy topology from `geometry` and bind that home to the history context.
 Whole-sketch profile fixtures use the operation and planar-profile wrappers;
 rational spline checks change the poles' `kind` discriminator.
+
+The Onshape REST bundle reader emits the same v11 wire. Its feature definitions
+wrap an `operation` and that operation's `value`; extrusions additionally wrap
+planar profiles. Revolve and hole construction payloads, sketch loci, NURBS poles,
+and trimmed-region discriminators follow the pinned types. Equal-offset chamfers
+state the former default `flip_direction: false` explicitly. Required empty feature
+metadata, parameter dependencies and properties, sketch endpoint references, and
+historical vertex membership are explicit. Final bodies and their solved carriers
+come from the STEP decoder in `geometry`; the reader never rebuilds them from
+rollback selections. Parameter ordinals remain local to each owning feature.

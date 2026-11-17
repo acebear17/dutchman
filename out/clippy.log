@@ -1,0 +1,8 @@
+    Checking dutchman-core v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman-core)
+    Checking dutchman-solidcraft v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman-solidcraft)
+    Checking dutchman-dxf v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman-dxf)
+    Checking dutchman-freecad v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman-freecad)
+    Checking dutchman v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman)
+    Checking dutchman-gui v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman-gui)
+    Checking dutchman-web v0.2.10 (/var/mnt/inland/builds/buildq-workers/dutchman/onshape-reader-4-64136896/crates/dutchman-web)
+    Finished `dev` profile [unoptimized] target(s) in 58.23s

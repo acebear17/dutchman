@@ -1,11 +1,28 @@
 # Getting started
 
+The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
+downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
+flags, MCP tools, or report fields.
+
+Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
+reveals it and **Send to Dutchman** opens private report review with it attached.
+To share a document with us, send the .onshape-bundle; never send your keys.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
 If a reader supplies only CADIR v11 design history, the final geometry is kept and
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
+
+Local Onshape bundles (`.onshape-bundle`) convert through the same command:
+`dutchman convert bracket.onshape-bundle bracket.sc`. The reader works offline on
+one Part Studio. See [Onshape](onshape.md) for editable features, required rollback
+responses, and the STEP fallback when a feature is not supported yet.
+Bundles marked `consistent: false` are refused; fetch again or use a version link.
+Older v1 bundles without consistency metadata still convert. Default-plane sketches
+and explicit sketch-region extrudes also accept the API's compressed query records;
+ambiguous boundaries retain a specific history loss and the final STEP geometry.
 
 ## Ask your assistant about a saved desktop result
 
@@ -646,3 +663,18 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## Fetch your own Onshape document
+
+`dutchman onshape fetch <document-url> --out snapshot.onshape-bundle --max-calls 50`
+uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
+attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
+`dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
+Part Studios include features, needed input topology, variables/configuration, and
+final STEP; assemblies include their same-document Part Studios. Version links use
+version paths throughout. Workspace links pin supported reads to a microversion,
+use workspace paths for STEP/variables, and recheck the head before writing. A
+change triggers one refetch; a second change stops with “the document changed while
+fetching; try again, or use a version link”. Successful manifests record per-file
+path kinds/microversions and `consistent: true`. See [Onshape](onshape.md#fetching-a-document) for keys,
+limits, caching, and privacy.
