@@ -369,12 +369,38 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut linker = Linker::new(&engine);
     add_to_linker(&mut linker)?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
-    // Guest-side checks remain strict even when a caller bypasses a host form.
-    for (entry, params, size, expected) in [
-        ("convert", r#"{"extra":true}"#, 0, "invalid options"),
-        ("other", "{}", 0, "invalid entry"),
-        ("convert", "{}", 5, "invalid file"),
-        ("convert", "{}", (1u64 << 30) + 1, "limit"),
+    // Guest-side checks remain strict even when a caller bypasses a host form. Each refusal
+    // says what to do first, in the plugin's terms (`message` in src/lib.rs).
+    for (entry, name, params, size, expected, says) in [
+        ("convert", "cube.f3d", r#"{"extra":true}"#, 0, "invalid options", ""),
+        ("other", "cube.f3d", "{}", 0, "invalid entry", ""),
+        ("convert", "cube.f3d", "{}", 5, "invalid file", ""),
+        (
+            "convert",
+            "cube.f3d",
+            "{}",
+            (1u64 << 30) + 1,
+            "limit",
+            "Choose a file under 1 GiB, or convert this one with the dutchman command line",
+        ),
+        // Not a plugin format: FreeCAD is left to SolidCraft's own reader, and anything else
+        // hears the plugin's formats only, not the command line's whole list.
+        (
+            "convert",
+            "design.FCStd",
+            "{}",
+            5,
+            "invalid file",
+            "Open FreeCAD files with File > Open",
+        ),
+        (
+            "convert",
+            "part.3dm",
+            "{}",
+            5,
+            "invalid file",
+            "Choose a Fusion (.f3d, .f3z), Inventor (.ipt, .iam) or SolidWorks (.sldprt, .sldasm) file",
+        ),
     ] {
         let mut store = Store::new(&engine, host(&root, Vec::new()));
         store.limiter(|host| &mut host.limits);
@@ -385,19 +411,21 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             &mut store,
             entry,
             &source::FileInfo {
-                name: "cube.f3d".into(),
+                name: name.into(),
                 size,
             },
             params,
         )?;
-        let actual = match result {
-            Err(PluginError::InvalidInput(FieldFailure { field, .. })) => {
-                format!("invalid {field}")
+        let (actual, reason) = match result {
+            Err(PluginError::InvalidInput(FieldFailure { field, reason })) => {
+                (format!("invalid {field}"), reason)
             }
-            Err(PluginError::LimitExceeded(_)) => "limit".into(),
+            Err(PluginError::LimitExceeded(reason)) => ("limit".into(), reason),
             other => return Err(format!("Expected {expected}, got {other:?}").into()),
         };
-        assert_eq!(actual, expected);
+        assert_eq!(actual, expected, "{name}: {reason}");
+        assert!(reason.starts_with(says), "{name}: {reason}");
+        assert!(!reason.contains("Rhino"), "{name}: {reason}");
         assert!(store.data().output.is_empty());
     }
 
@@ -417,10 +445,16 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         },
         "{}",
     )?;
-    assert!(matches!(
-        result,
-        Err(PluginError::InvalidInput(FieldFailure { ref field, .. })) if field == "file"
-    ));
+    // An unreadable file: what to do comes first, the reader's cause after it.
+    assert!(
+        matches!(
+            result,
+            Err(PluginError::InvalidInput(FieldFailure { ref field, ref reason }))
+                if field == "file" && reason.starts_with("Download or copy the file again")
+                    && reason.contains("Detail: ")
+        ),
+        "{result:?}"
+    );
     assert_eq!(store.data().calls, 3);
     assert_eq!(store.data().read, stream_len);
     assert!(store.data().output.is_empty());
@@ -489,13 +523,32 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         assert!(!summary.is_empty() && summary.len() <= 240);
         let items = report["items"].as_array().ok_or("items")?;
         assert!(items.len() <= 4096);
+        // Items are only what the design lost; notes stay in the details.
+        let lost = cli_report
+            .losses()
+            .iter()
+            .filter(|loss| loss.lost_from_design())
+            .count();
+        assert_eq!(items.len(), lost.min(4096), "{fixture}");
+        match lost {
+            0 => assert!(!summary.contains(" loss"), "{fixture}: {summary}"),
+            1 => assert!(summary.ends_with("; 1 loss"), "{fixture}: {summary}"),
+            n => assert!(
+                summary.ends_with(&format!("; {n} losses")),
+                "{fixture}: {summary}"
+            ),
+        }
         for item in items {
             assert!(matches!(
                 item["severity"].as_str(),
-                Some("info" | "degraded" | "dropped")
+                Some("degraded" | "dropped")
             ));
-            assert!(item["subject"].as_str().ok_or("subject")?.len() <= 256);
             let title = item["title"].as_str().ok_or("title")?;
+            assert!(
+                !title.starts_with("Notes about") && !title.ends_with("kept as-is"),
+                "{fixture}: {title}"
+            );
+            assert!(item["subject"].as_str().ok_or("subject")?.len() <= 256);
             assert!(!title.trim().is_empty() && title.chars().count() <= 120);
             assert!(item["code"].as_str().ok_or("code")?.chars().count() <= 128);
             let message = item["message"].as_str().ok_or("message")?;
@@ -562,9 +615,9 @@ fn collect_fixtures(folder: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<
                     | Format::InventorAssembly
                     | Format::SolidWorksPart
                     | Format::SolidWorksAssembly
-                    | Format::FreeCadDocument
             )
         ) {
+            // The plugin's formats (plugin.json): FreeCAD is left to SolidCraft's own reader.
             files.push(entry.path());
         }
     }

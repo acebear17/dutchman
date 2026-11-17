@@ -655,8 +655,10 @@ losses for meshes it could not decode.
 
 The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
 with host-drawn conversion options and a structured loss report. It implements SolidCraft's
-`craft:plugin` importer interface; see that page for the build. To install it, see
-[Dutchman in SolidCraft](solidcraft-plugin.md).
+`craft:plugin` importer interface; see that page for the build. It converts Fusion, Inventor,
+and SolidWorks files; FreeCAD files open with SolidCraft's own reader, which keeps more of their
+history. Its report lists only what the design lost, and its messages say what to do first. To
+install it, see [Dutchman in SolidCraft](solidcraft-plugin.md).
 
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and

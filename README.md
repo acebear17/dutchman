@@ -17,6 +17,7 @@ See it first: [converted designs in your browser](https://dutchman-cad.github.io
 - **Linux:** download for [x86_64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-unknown-linux-gnu.tar.gz) or [ARM64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz), extract it, and open `dutchman-gui`; or `brew install dutchman-cad/tap/dutchman`.
 - **Arch Linux** (0.2.10 and later): download `dutchman-bin-<version>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest) and run `sudo pacman -U dutchman-bin-<version>-x86_64.pkg.tar.zst`. Once the package is on the AUR: `yay -S dutchman-bin`.
 - **Linux AppImage** (0.2.10 and later): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
+- **Install in SolidCraft:** the [Dutchman plugin](docs/solidcraft-plugin.md) opens Fusion, Inventor, and SolidWorks files straight from SolidCraft 0.44 or newer (desktop): download `dutchman-plugin.zip` from the release and install it from **Preferences > Plugins** as it is, without unzipping it ([how](docs/solidcraft-plugin.md#install), [how it is built](docs/plugin.md)).
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
 **More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).
@@ -206,6 +207,7 @@ For other clients:
 - [Docker](docs/docker.md): convert or run the MCP server in a container.
 - [Dutchman Web](docs/web.md): convert in a browser, on a server you host.
 - [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman.
+- [Dutchman in SolidCraft](docs/solidcraft-plugin.md): the plugin that opens Fusion, Inventor, and SolidWorks files in SolidCraft; [how it is built](docs/plugin.md).
 - [Pilot](docs/pilot.md): drive SolidCraft from plain-language requests.
 - [Dutchman Print](https://github.com/dutchman-cad/print): send designs to a 3D printer.
 
@@ -218,5 +220,3 @@ For other clients:
 ## Licence
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
-
-[Dutchman in SolidCraft](docs/solidcraft-plugin.md): a plugin that opens Fusion, Inventor, SolidWorks, and FreeCAD files in SolidCraft with editable history (SolidCraft 0.44 or newer, desktop only for now); [how it is built](docs/plugin.md).
