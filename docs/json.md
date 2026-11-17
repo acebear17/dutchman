@@ -1355,4 +1355,7 @@ Onshape assigned-variable features count as `not_needed`: their named parameters
 remain editable without adding a solid feature. Sketch-only bundles have no STEP
 reference to compare. Unresolved tangent chains and unsupported variable expressions
 use `onshape/history.not-supported`; unresolved external origin references use
-`onshape/sketch.constraint-not-supported`. Report fields and schema versions are unchanged.
+`onshape/sketch.constraint-not-supported`. A feature value written with variables that
+no SolidCraft parameter can keep driven (for example a fillet radius or hole size) is
+written as its evaluated value with a Degraded `onshape/history.variable-evaluated`
+loss at stage `map` naming the value. Report fields and schema versions are unchanged.

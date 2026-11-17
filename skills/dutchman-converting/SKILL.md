@@ -26,8 +26,10 @@ Sketch-only Part Studios can omit STEP and convert to sketches alone. The reader
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,
 assigned variables and symmetric blind extrudes. Variable expressions use earlier
-variables and bounded arithmetic with compatible units; FeatureScript evaluation and
-opaque external origin references still produce named losses.
+variables and bounded arithmetic with compatible units, and become SolidCraft parameters
+that keep sketch dimensions, extrude depths and revolve angles driven; other values using
+variables are written evaluated (`onshape/history.variable-evaluated`). FeatureScript
+evaluation and opaque external origin references still produce named losses.
 If a bundle is marked `consistent: false`, explain that its snapshots differ and
 ask the owner to fetch again or use a version link. Older v1 bundles without this
 metadata are still supported; do not require a fetch solely because it is absent.
