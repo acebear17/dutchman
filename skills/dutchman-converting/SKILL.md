@@ -748,14 +748,14 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 --source-format f3d --signature converted-with-problem` and send after review with
 `dutchman report --folder FOLDER --send-summary --yes`. No free-text description is
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
-form without private names or paths. The desktop offers these actions under the closed
-**Something wrong? Report this file** section. Failure narrowing is for failed files.
+form without private names or paths. The desktop offers these actions in its always-open
+**Is there a problem? Is something missing?** panel, review under **More**. Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call
 `report_submit` with `explicit_yes: true` only after the user's explicit yes to that
 report, its bundle/summary choice and separate public-test permission. The public-test
-box defaults false. Whole-file sending uses the private-send card. On delivery failure
+box defaults false. Whole-file sending uses the private Discord steps. On delivery failure
 keep the local report; retry later only when the user asks. GitHub gets the anonymous
 summary only, never a geometry bundle. The desktop app selects summary when no bundle is available;
 Send becomes Retry only after delivery fails. Optional Discord claims are copied locally and pasted by the user.
@@ -764,7 +764,7 @@ Report summaries identify the authoring app from the native format, such as Fusi
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
-When no proven bundle exists choose summary or the private-send card.
+When no proven bundle exists choose summary or the private Discord steps.
 
 For a check failure, `dutchman diagnose INPUT --bundle --out OUT` or MCP `extract_repro`
 cuts and proves a private local fragment without narrowing. MCP `verify_repro` rechecks
@@ -772,10 +772,10 @@ the saved report folder. Review `report_preview`: it shows only the manifest, ro
 sizes. Bundles contain numeric geometry and default to the bundle choice when available.
 Obtain explicit consent for sending. The complete multipart request must fit 25 MiB, including metadata and overhead;
 bundles reserve 64 KiB below that cap. Check `bundle_sendable` in the preview and
-use the private-send card or summary when it is false. Decode refusals have no bundle yet; never substitute the original as a bundle.
+use the private Discord steps or summary when it is false. Decode refusals have no bundle yet; never substitute the original as a bundle.
 
 Treat refused cuts as a normal no-bundle outcome, including large assembly closures
-that exceed the fragment byte limit. Offer summary or the private-send card.
+that exceed the fragment byte limit. Offer summary or the private Discord steps.
 
 ### Finding a run's diagnostic log
 

@@ -447,6 +447,9 @@ pub(crate) fn search_args(search: &PartSearch) -> Vec<OsString> {
     args
 }
 
+/// How a file's failure begins when a shutdown, or the desktop app's Stop, ended it.
+pub const SHUTDOWN_STOPPED: &str = "stopped after the 30 s shutdown grace period";
+
 /// Converts `job` in a child process started from `program`, within `limits`, and returns
 /// its convert report, or a failure report saying why the child stopped.
 pub fn convert_isolated(
@@ -852,10 +855,7 @@ fn convert_once(
                 limits.timeout.as_secs(),
                 at.id()
             )),
-            Stopped::Shutdown => fail(format!(
-                "stopped after the 30 s shutdown grace period while at the {} stage",
-                at.id()
-            )),
+            Stopped::Shutdown => fail(format!("{SHUTDOWN_STOPPED} while at the {} stage", at.id())),
             Stopped::OverMemory(bytes) => fail(format!(
             "stopped when it held {} MB, over Dutchman's limit of {} MB for one file, while at \
              the {} stage",

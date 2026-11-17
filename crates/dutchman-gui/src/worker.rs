@@ -214,7 +214,7 @@ impl Run {
         Run { stop }
     }
 
-    /// Starts no further file; those converting finish.
+    /// Starts no further file; those converting end within 30 seconds.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }

@@ -260,13 +260,10 @@ fn a_file_that_cannot_convert_says_why() {
     assert!(harness.query_by_label("0 converted, 1 failed").is_some());
     assert!(!dir.path().join("out/broken.sc").exists());
 
-    // The failed row says to report it, and its button opens the form filled in, without
-    // the file's name. The other ways to send it are folded until asked for.
-    harness.get_by_label("Review and send report");
-    assert!(harness
-        .query_by_label("Report anonymously on GitHub")
-        .is_none());
-    open_help(&mut harness);
+    // The panel asks about it at once, Discord first; its GitHub link, the backup, opens the
+    // form filled in, without the file's name.
+    harness.get_by_label(dutchman_gui::report_panel::QUESTION);
+    harness.get_by_label("Copy and open DM");
     harness
         .get_by_label("Report anonymously on GitHub")
         .click_accesskit();
@@ -311,14 +308,13 @@ fn failed_card(name: &str, bytes: usize, width: f32) -> (Harness<'static, App>, 
         .set_diagnostic_log(dir.path().join("log.jsonl"));
     convert(&mut harness);
     assert_eq!(harness.state().rows()[0].status, Status::Failed);
-    open_help(&mut harness);
     (harness, dir)
 }
 
-/// Opens a failed card's folded "Help us fix it" section.
-fn open_help(harness: &mut Harness<'static, App>) {
+/// Opens the report panel's folded "More": the anonymous review, the AI prompt and Diagnose.
+fn open_more(harness: &mut Harness<'static, App>) {
     harness
-        .get_by_label(dutchman::present::SEND_FOLD)
+        .get_by_label(dutchman_gui::report_panel::MORE)
         .click_accesskit();
     harness.run_steps(8);
 }
@@ -361,10 +357,15 @@ fn a_small_failed_file_is_dragged_into_the_dm_with_its_folder_open() {
     assert!(harness.query_by_label("Please add a STEP export").is_some());
     let (message, opened) = press_dm(&mut harness);
     assert!(opened.starts_with("https://discord.com/users/"), "{opened}");
-    assert!(message.contains("Size: 0.1 MB."), "{message}");
-    assert!(message.contains("STEP: unknown."), "{message}");
+    // One line of details for Dutchy, then a line for the person's own words.
+    let lines: Vec<&str> = message.lines().collect();
+    assert_eq!(lines.len(), 2, "{message}");
+    assert!(lines[0].contains("Size: 0.1 MB."), "{message}");
+    assert!(lines[0].contains("STEP: unknown."), "{message}");
     assert!(!message.contains("broken"), "{message}");
-    assert!(!message.contains('\n'), "{message}");
+    // The step it came from says what to do next.
+    harness.run_steps(4);
+    harness.get_by_label(dutchman_gui::report_panel::DM_DONE_DRAG);
     assert!(SHOWN
         .lock()
         .unwrap()
@@ -1614,6 +1615,9 @@ mod consent_e2e {
         harness.get_by_label("RESULTS").scroll_to_me();
         harness.run_steps(8);
         assert!(harness.query_by_label("0 converted, 1 failed").is_some());
+        open_more(&mut harness);
+        harness.get_by_label("Diagnose this file").scroll_to_me();
+        harness.run_steps(8);
         let diagnose = harness.get_by_label("Diagnose this file").rect();
         assert!(
             diagnose.top() > 70.0 && diagnose.bottom() < 730.0,
@@ -1635,13 +1639,15 @@ mod consent_e2e {
             .get_by_label("Send the whole file privately")
             .click_accesskit();
         harness.run_steps(8);
-        assert!(harness.query_by_label("Send privately").is_some());
+        // Back to the panel's steps: no other window opens.
+        assert!(harness
+            .query_by_label(dutchman_gui::report_consent::REVIEW_TITLE)
+            .is_none());
+        harness.get_by_label("Copy and open DM");
         if capture_walkthrough {
             walkthrough(&mut harness, "02-private-send-card");
         }
-        // The private card and the row both offer review; select the window's button.
         harness
-            .get_by_label("Send privately")
             .get_by_label("Review and send report")
             .click_accesskit();
         harness.run_steps(8);
@@ -1746,10 +1752,7 @@ mod consent_e2e {
                 size: Some(100),
             });
         harness.run_steps(8);
-        harness
-            .get_by_label(dutchman::present::REPORT_CONVERTED)
-            .click_accesskit();
-        harness.run_steps(8);
+        open_more(&mut harness);
         harness
             .get_by_label("Review and send report")
             .click_accesskit();
@@ -2123,18 +2126,22 @@ fn run_log_buttons_share_the_batch_log_and_review_names_it() {
         2
     );
     assert!(log.is_file()); // Explicit paths remain exactly as supplied, even result-like names.
+    open_more(&mut harness);
     harness
-        .query_all_by_label("Review and send report")
-        .next()
-        .unwrap()
+        .get_by_label("Review and send report")
         .click_accesskit();
     harness.run_steps(8);
-    harness
-        .get_by_label("Send a problem report")
-        .get_by_label(&format!(
-            "Run log: {}",
-            dutchman_gui::platform::display_path(&log)
-        ));
+    // The review, in the panel, names the same log as the two cards.
+    harness.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
+    assert_eq!(
+        harness
+            .query_all_by_label(&format!(
+                "Run log: {}",
+                dutchman_gui::platform::display_path(&log)
+            ))
+            .count(),
+        3
+    );
     harness.get_by_label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
 }
 
@@ -2224,6 +2231,7 @@ fn ai_result_card_at(
     // No diagnostic log is chosen: the run still keeps one in the diagnostics folder.
     convert(&mut harness);
     assert_eq!(harness.state().rows()[0].status, Status::Converted);
+    open_more(&mut harness);
     harness
         .get_by_label("Ask your AI about this file")
         .scroll_to_me();
@@ -2384,30 +2392,33 @@ fn ask_ai_copies_every_time_and_after_a_new_conversion() {
 
 #[cfg(feature = "test-support")]
 #[test]
-fn a_report_button_opens_the_section_for_a_result_with_losses_only() {
+fn every_result_has_the_report_panel_and_a_button_for_it() {
+    use dutchman_gui::app::REPORT_THIS_FILE;
+    use dutchman_gui::report_panel::QUESTION;
     for width in [1100.0, 520.0] {
-        // With losses: the cube. Without: a synthetic clean result.
+        // With losses: the cube.
         let (mut harness, work) = ai_result_card_at(ThemePreference::Light, width);
-        assert!(harness
-            .query_by_label(dutchman::present::REPORT_CONVERTED)
-            .is_some());
-        assert!(harness.query_by_label("Review and send report").is_none());
-        let button = harness.get_by_label("Report this file…").rect();
+        harness.get_by_label(QUESTION);
+        let button = harness.get_by_label(REPORT_THIS_FILE).rect();
         assert!(
             button.left() >= 0.0 && button.right() <= width,
             "{button:?}"
         );
         let ask = harness.get_by_label("Ask your AI about this file").rect();
         assert!(ask.left() >= 0.0 && ask.right() <= width, "{ask:?}");
-        harness.get_by_label("Report this file…").click_accesskit();
+        harness.get_by_label(REPORT_THIS_FILE).click_accesskit();
         harness.run_steps(8);
-        let review = harness.get_by_label("Review and send report").rect();
-        assert!(
-            review.left() >= 0.0 && review.right() <= width,
-            "{review:?}"
-        );
+        for label in ["Copy and open DM", "Review and send report"] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.left() >= 0.0 && rect.right() <= width,
+                "{label}: {rect:?}"
+            );
+        }
         let _ = work;
     }
+    // A clean result is never taken for one without problems: it has the same button, and the
+    // panel asks about it.
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 800.0))
         .build_eframe(|cc| test_app(cc));
@@ -2426,13 +2437,15 @@ fn a_report_button_opens_the_section_for_a_result_with_losses_only() {
             size: Some(100),
         });
     harness.run_steps(8);
-    assert!(harness
-        .query_by_label(dutchman::present::REPORT_CONVERTED)
-        .is_some());
-    assert!(harness.query_by_label("Report this file…").is_none());
+    harness.get_by_label(QUESTION);
+    harness.get_by_label("About Clean.f3d");
+    harness.get_by_label(REPORT_THIS_FILE);
+    harness.get_by_label("Copy and open DM");
     assert!(harness
         .query_by_label("Ask your AI about this file")
         .is_none());
+    open_more(&mut harness);
+    harness.get_by_label("Ask your AI about this file");
 }
 
 #[test]
@@ -2851,8 +2864,8 @@ fn failed_fit_harness(
     h
 }
 
-/// A failed card fits the window at once: its title, log, Diagnose and the report button
-/// sit between the RESULTS heading and the Convert row, with nothing scrolling.
+/// A failed card fits the window at once: its title, log and the report button sit between
+/// the RESULTS heading and the Convert row, with nothing scrolling.
 fn assert_failed_card_in_view(h: &Harness<'_, App>, name: impl std::fmt::Debug) {
     assert!(!h.state().page_scrolls(), "{name:?}: the page scrolls");
     let heading = h.get_by_label("RESULTS").rect();
@@ -2860,9 +2873,7 @@ fn assert_failed_card_in_view(h: &Harness<'_, App>, name: impl std::fmt::Debug) 
     for label in [
         "Failed",
         "Show this run's log",
-        "Diagnose this file",
-        "Review and send report",
-        dutchman::present::SEND_FOLD,
+        dutchman_gui::app::REPORT_THIS_FILE,
     ] {
         let rect = h.get_by_label(label).rect();
         assert!(
@@ -2960,9 +2971,19 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             results.left() > designs.right(),
             "{monitor:?}: not side by side"
         );
-        // With the Ask-your-AI prompt open, the whole card still shows without scrolling:
-        // the box keeps to a few lines and scrolls inside.
+        // The report panel's question is in the window under the choices, beside the results.
+        let question = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
+        let convert_row = h.get_by_label("Convert").rect().top();
+        assert!(
+            question.top() >= h.get_by_label("Open diagnostics folder").rect().bottom()
+                && question.bottom() <= convert_row
+                && question.right() < results.left(),
+            "{monitor:?}: the question {question:?} is not under the choices"
+        );
+        // With the Ask-your-AI prompt open under More, nothing else moves: the prompt keeps to
+        // a few lines, scrolls inside the panel, and is brought into view.
         let mut h = h;
+        open_more(&mut h);
         h.get_by_label("Ask your AI about this file")
             .click_accesskit();
         h.run_steps(8);
@@ -2977,7 +2998,6 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             top.top() >= heading.bottom(),
             "{monitor:?}: the card's top {top:?} scrolled under RESULTS {heading:?}"
         );
-        let convert_row = h.get_by_label("Convert").rect().top();
         for label in ["Copy", "Close"] {
             let rect = h.get_by_label(label).rect();
             assert!(
@@ -2986,8 +3006,8 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             );
         }
         // The box's own rect is its whole text; what shows is the space between the button
-        // and the Copy row under it: the Report row, "Copied" and about five lines (uncapped,
-        // the whole prompt took about 400 px).
+        // and the Copy row under it: "Copied" and about five lines (uncapped, the whole
+        // prompt took about 400 px).
         let ask = h.get_by_label("Ask your AI about this file").rect();
         let copy = h.get_by_label("Copy").rect();
         assert!(
@@ -2995,11 +3015,11 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             "{monitor:?}: the prompt takes {} px",
             copy.top() - ask.bottom()
         );
-        // A failed file's card fits too, with its other ways to report folded.
+        // A failed file's card fits too, and the panel offers the Discord steps beside it.
         let work = tempfile::tempdir().unwrap();
         let h = failed_fit_harness(size, ThemePreference::Light, work.path());
         assert_failed_card_in_view(&h, monitor);
-        assert!(h.query_by_label("Open invite").is_none());
+        h.get_by_label("Open invite");
     }
 }
 
@@ -3237,10 +3257,10 @@ fn fit_screenshots() {
                     .unwrap()
                     .save(dir.join(format!("{name}-failed-{label}.png")))
                     .unwrap();
-                open_help(&mut h);
+                open_more(&mut h);
                 h.render()
                     .unwrap()
-                    .save(dir.join(format!("{name}-failed-help-{label}.png")))
+                    .save(dir.join(format!("{name}-failed-more-{label}.png")))
                     .unwrap();
             }
         }
@@ -3584,4 +3604,258 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
                 .unwrap();
         }
     }
+}
+
+/// One case of the report-flow walk: the file, its saved report, and how it ended.
+#[cfg(feature = "test-support")]
+struct FlowCase {
+    shot: &'static str,
+    input: &'static str,
+    report: &'static str,
+}
+
+/// Clicks the first of `labels` the window shows; whether one was there.
+#[cfg(feature = "test-support")]
+fn click_first(harness: &mut Harness<'static, App>, labels: &[&str]) -> bool {
+    for label in labels {
+        if let Some(node) = harness.query_all_by_label(label).next() {
+            node.click_accesskit();
+            harness.run_steps(12);
+            return true;
+        }
+    }
+    false
+}
+
+/// What the last frame copied, if anything.
+#[cfg(feature = "test-support")]
+fn last_copy(harness: &Harness<'static, App>) -> Option<String> {
+    harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+}
+
+/// The report-flow walk's five cases, drawn from the reports a real run saved: each result,
+/// its way to report, and the DM step, plus the top bar's link and a slow file's Stop. Run
+/// on main and on a branch to compare. `DUTCHMAN_REPORT_FLOW_CASES` is the walk's `cases`
+/// folder (the five files and the `1-full-FHCS (SolidCraft)` folder of reports).
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the report-flow walk; set DUTCHMAN_REPORT_FLOW_CASES"]
+fn report_flow_case_screenshots() {
+    let cases = PathBuf::from(std::env::var_os("DUTCHMAN_REPORT_FLOW_CASES").unwrap());
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let reports = cases.join("1-full-FHCS (SolidCraft)");
+    let work = tempfile::tempdir().unwrap();
+    let size = egui::vec2(1600.0, 1000.0);
+    let mut index = String::from("# Report flow, five cases\n\n");
+    let harness = || {
+        let mut h = Harness::builder()
+            .with_size(size)
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(ThemePreference::Light);
+        h.state_mut().preview_solidcraft(Some("0.44.1"));
+        h.state_mut().set_checker_for_test(true);
+        h.state_mut().set_out_dir(work.path().join("converted"));
+        h
+    };
+    let mut h = harness();
+    h.run_steps(8);
+    shot(
+        &mut h,
+        &dir,
+        &mut index,
+        "T00-launch",
+        "day",
+        "Empty window.",
+    );
+    if click_first(&mut h, &["Report a problem"]) {
+        shot(
+            &mut h,
+            &dir,
+            &mut index,
+            "T01-topbar-report",
+            "day",
+            "After the top bar's Report a problem.",
+        );
+    }
+    let flow = [
+        FlowCase {
+            shot: "C1-full",
+            input: "1-full-FHCS.f3d",
+            report: "1-full-FHCS.report.json",
+        },
+        FlowCase {
+            shot: "C2-partial",
+            input: "2-partial-Shim.f3d",
+            report: "2-partial-Shim.report.json",
+        },
+        FlowCase {
+            shot: "C3-geometry",
+            input: "3-geometry-Keystone.f3d",
+            report: "3-geometry-Keystone.report.json",
+        },
+        FlowCase {
+            shot: "C4-failed",
+            input: "4-broken-FHCS.f3d",
+            report: "4-broken-FHCS.failed.json",
+        },
+        FlowCase {
+            shot: "C5-slow",
+            input: "5-slow-Voron.f3z",
+            report: "5-slow-Voron.report.json",
+        },
+    ];
+    for case in flow {
+        let input = cases.join(case.input);
+        let mut report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join(case.report)).unwrap()).unwrap();
+        let ok = report["ok"] == serde_json::json!(true);
+        let output = work
+            .path()
+            .join("converted")
+            .join(Path::new(case.input).with_extension("sc"));
+        report["input"]["path"] = serde_json::json!(input);
+        if ok {
+            report["output"]["path"] = serde_json::json!(output);
+        }
+        let mut h = harness();
+        if case.shot == "C5-slow" {
+            h.state_mut().add_inputs([input.clone()]);
+            wait_for_estimate(&mut h);
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                "C5-01-queued",
+                "day",
+                "Queued with its estimate.",
+            );
+            h.state_mut()
+                .preview_running_for_test(dutchman_gui::app::Row {
+                    input: input.clone(),
+                    output: Some(output.clone()),
+                    status: Status::Converting,
+                    progress: Some(dutchman_core::ProgressEvent {
+                        stage: dutchman_core::Stage::Decode,
+                        elapsed_ms: 179_000,
+                        designs_read: 0,
+                        designs_total: None,
+                        heartbeat: true,
+                        running: None,
+                    }),
+                    report: None,
+                    job: None,
+                    size: None,
+                });
+            h.run_steps(8);
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                "C5-02-converting",
+                "day",
+                "Three minutes into reading.",
+            );
+            click_first(&mut h, &["Stop"]);
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                "C5-03-stop-clicked",
+                "day",
+                "Right after Stop.",
+            );
+            if click_first(&mut h, &["Copy and open DM"]) {
+                if let Some(text) = last_copy(&h) {
+                    std::fs::write(dir.join("C5-04-dm-while-running.txt"), text).unwrap();
+                }
+                shot(
+                    &mut h,
+                    &dir,
+                    &mut index,
+                    "C5-04-dm-while-running",
+                    "day",
+                    "The DM step while it runs.",
+                );
+            }
+            h = harness();
+        }
+        let size_bytes = std::fs::metadata(&input).map(|m| m.len()).ok();
+        h.state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: input.clone(),
+                output: ok.then(|| output.clone()),
+                status: if ok {
+                    Status::Converted
+                } else {
+                    Status::Failed
+                },
+                progress: None,
+                report: Some(report),
+                job: None,
+                size: size_bytes,
+            });
+        h.run_steps(12);
+        shot(
+            &mut h,
+            &dir,
+            &mut index,
+            &format!("{}-result", case.shot),
+            "day",
+            "The result as it first shows.",
+        );
+        click_first(
+            &mut h,
+            &[
+                "Report this file…",
+                dutchman::present::SEND_FOLD,
+                dutchman::present::REPORT_CONVERTED,
+            ],
+        );
+        if let Some(node) = h.query_all_by_label("Copy and open DM").next() {
+            node.scroll_to_me();
+            h.run_steps(12);
+        }
+        shot(
+            &mut h,
+            &dir,
+            &mut index,
+            &format!("{}-report", case.shot),
+            "day",
+            "Its way to report a problem.",
+        );
+        if click_first(&mut h, &["Copy and open DM"]) {
+            if let Some(text) = last_copy(&h) {
+                std::fs::write(dir.join(format!("{}-dm.txt", case.shot)), text).unwrap();
+            }
+            h.run_steps(8);
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                &format!("{}-dm-copied", case.shot),
+                "day",
+                "After Copy and open DM.",
+            );
+        }
+        if click_first(&mut h, &["More"]) {
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                &format!("{}-more", case.shot),
+                "day",
+                "More opened.",
+            );
+        }
+    }
+    std::fs::write(dir.join("INDEX.md"), index).unwrap();
 }

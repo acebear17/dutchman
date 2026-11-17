@@ -1268,7 +1268,7 @@ array of `{arena, rows, serialized_bytes, description}`, plus `bundle_sendable` 
 otherwise `summary`. `request_size` includes multipart framing and metadata (default
 public-test permission false), `request_limit` is 25 MiB, and `bundle_limit` reserves
 64 KiB below it. `bundle_sendable` requires both limits to fit. Oversize bundles stay
-local for the private-send card; summaries remain available.
+local for the private Discord steps; summaries remain available.
 
 Verification returns `reproduces`, `signature` (hash only), `manifest`,
 `compressed_bytes`, and `uncompressed_bytes`. Bundle contents and local paths are never

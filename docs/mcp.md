@@ -840,7 +840,7 @@ preview a proven bundle; a new report without a bundle offers summary. Nothing i
 `report_submit` takes `folder`, `choice` (`bundle` or `summary`), `public_test`
 (default false) and `explicit_yes`. Ask the user for explicit consent to this exact
 preview and choice before passing true. A failure does not authorize a later resend.
-No tool accepts whole files for anonymous upload. Use the private-send card instead.
+No tool accepts whole files for anonymous upload. Use the private Discord steps instead.
 
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
@@ -858,7 +858,7 @@ never paths, checker messages, entity identities, or geometry. Neither sends any
 `report_preview` can use that same folder to review the saved bundle. Bundles are the
 default when available. The entire multipart request must fit 25 MiB; a 64 KiB
 reserve keeps bundles below the cap. Preview checks metadata and framing overhead
-before marking a bundle sendable. Use the private-send card or summary when it will not fit.
+before marking a bundle sendable. Use the private Discord steps or summary when it will not fit.
 Decode refusals have no bundle yet.
 
 A cut refused by the fragment limits returns a normal unavailable-bundle result,

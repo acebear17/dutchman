@@ -516,7 +516,7 @@ Face counts alone never flag a difference. Missing measurements are explicit. Ch
 No automatic report is sent. The observed false-positive rate for the two
 placement-golden assemblies is 0/329 evaluated body rows (0%);
 [calibration results and limits](doctor-calibration.md) give the coverage and denominators.
-The STEP itself stays local; use the private-send card if you choose to share it.
+The STEP itself stays local; use the private Discord steps if you choose to share it.
 
 The structural checks also flag `geometry_untrimmed_torus`: a toroidal face without
 trim loops sharing a shell with other faces. Review its boundary before reporting a
@@ -545,15 +545,14 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 <a id="report-consent"></a>
-Report consent is per report. On a converted desktop card, expand
-**Something wrong? Report this file**; on a failed card, the actions are already visible.
-**Review and send report**
-opens a review with bundle or summary. A bundle is selected when available; otherwise
+Report consent is per report. In the desktop app, **Review and send report** is under
+**More** in the **Is there a problem? Is something missing?** panel, for the file chosen
+there. It opens a review in that panel with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
 reuse a prior failure bundle. The review displays the exact metadata and sharing choices.
 Descriptions are not supported in the anonymous envelope; describe the problem privately
-or in the GitHub form without private names or paths. Whole files use the private-send card on Discord. A separate box,
+or in the GitHub form without private names or paths. Whole files go privately to Dutchy on Discord. A separate box,
 **You may use this report in a public test case**, starts unticked.
 Nothing is sent before clicking Send. A report is sent only when a matching receipt
 arrives. A temporary failure gets one short retry, then keeps the report locally;
@@ -589,7 +588,7 @@ Report summaries identify the authoring app from the native format, such as Fusi
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
-The desktop keeps its page scrollbar visible to reach every private-send option in the results.
+The desktop keeps its page scrollbars visible, so the report panel and every result can be reached.
 Copied-report notices use the success colour and clear on the next action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
 
@@ -598,7 +597,7 @@ bundle without narrowing. Ordinary diagnosis, narrowing, and doctor also try to 
 bundle when cadmpeg's decoded model fails a check. A cut must reproduce the same
 failure signature; Dutchman widens it if needed and keeps no bundle if proof fails.
 A refused cut, including a closure wider than the current fragment byte limit, is a
-normal no-bundle result; choose summary or the private-send card.
+normal no-bundle result; choose summary or the private Discord steps.
 Shrinking runs for up to ten seconds (or the shorter time limit). Creating
 `diagnose/cancel-bundle` in the output folder stops shrinking between candidates and
 keeps the last proven cut.
@@ -609,8 +608,8 @@ previews never show their contents. Bundles contain numeric geometry. Review the
 before choosing to send. A bundle is the default when available. The service caps the entire multipart request at 25 MiB, including metadata and
 upload overhead. Dutchman keeps gzip bundles at least 64 KiB below that cap and checks the complete
 size before enabling Send. If it will not fit, use the
-private-send card or send a summary. Decode refusals have no bundle yet; choose
-an anonymous summary or the private-send card. Nothing is sent by diagnosis.
+private Discord steps or send a summary. Decode refusals have no bundle yet; choose
+an anonymous summary or the private Discord steps. Nothing is sent by diagnosis.
 
 ## Assembly placements
 

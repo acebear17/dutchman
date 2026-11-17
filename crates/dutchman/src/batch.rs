@@ -925,7 +925,8 @@ pub fn run_each(
 }
 
 /// [`run_each`] with each file in its own process started from `program`, so a stop for low
-/// memory or a crash ends that file and not the program running the batch.
+/// memory or a crash ends that file and not the program running the batch. Setting `stop`
+/// starts no further file and ends those converting within 30 seconds.
 pub fn run_isolated(
     work: &[Job],
     options: &ConvertOptions,
@@ -945,7 +946,15 @@ pub fn run_isolated(
         stop,
         |job, index| {
             let callback = |event| on_event(Event::Progress(index, event));
-            convert_isolated_job_with_progress(program, job, options, &limits, None, &callback)
+            // Stop also ends the files converting, after their grace period.
+            convert_isolated_job_with_progress(
+                program,
+                job,
+                options,
+                &limits,
+                Some(stop),
+                &callback,
+            )
         },
         &on_event,
     );
