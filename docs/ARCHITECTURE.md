@@ -109,7 +109,8 @@ A plugin host must open a design archive with its STEP blobs, evaluate it with `
 that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
 `model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and
 lengths; face results include names, areas, sample points and optional planar normals.
-It must enforce deadlines, bound responses, isolate evaluations from the user's open
+Measured inference also runs `timeline.suppress` and `inspect.compare`; a host
+without them leaves the surface distance unmeasured and the other measures decide. It must enforce deadlines, bound responses, isolate evaluations from the user's open
 design and serialize engine access if needed. The `Send + Sync` contract also permits
 native assembly workers to share an evaluator.
 
@@ -251,7 +252,13 @@ revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved 
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,
 or the complete shape comparison at the final body-building feature, confirms its replay;
-planning has no callback and keeps the blocker. Every admitted candidate has a named loss.
+planning has no callback and keeps the blocker. Every admitted candidate has a named loss. When
+neither is confirmed, measured inference (`history/infer.rs`) maps every region of the sketch the
+pick can name (bounded, see fusion.md) and asks the same callback to measure each; exactly one
+match is kept and the feature's outcome carries `Inferred`. The callback loads the source's solid
+beside a one-body replay at the last body-building feature for `inspect.compare`'s surface
+distance. The last blend whose input edges fail their proof is measured the same way over nearby
+rebuilt edges, from `prove_blends`.
 Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
 area around it. Complete-loop extrudes whose regions those curves subdivide use an editable

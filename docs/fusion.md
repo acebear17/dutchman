@@ -216,6 +216,30 @@ features need usable stored source bodies at that same state. Unknown or failed 
 feature. Every accepted inference adds `history/profile-region-inferred`; the original geometry
 remains available as before.
 
+When neither candidate is confirmed, measured inference takes over. The regions of the carrier
+sketch come from its loops, each loop with the loops directly inside it as holes (a ring and the
+disc inside it are two regions); a selection of one native pick tries each region, a selection of
+two tries each pair (under even-odd nesting a union is the loops in an odd number of them). Only
+sketches whose loops alone bound their regions and do not touch qualify, with at most 24
+candidates and 120 s of measuring per feature. Each candidate is mapped normally and replayed in
+SolidCraft: at the last body-building feature against the original final shape (body count, box,
+volume and area within the check's tolerances, and, for a one-body part, the largest distance
+between the two surfaces from `inspect.compare` with the source loaded beside the replay, within
+the box allowance of 0.01 mm or 2e-4 of the body's diagonal); earlier, against the centres of the
+bodies the source stores after the feature. Exactly one match is kept, with
+`history/profile-region-measured`. Of several, the one alone with the source solid's face count is
+kept; otherwise it is a tie and the feature stays blocked, as it does when none matches or any
+candidate cannot be measured. A final shape that later differs from the source cuts the timeline
+before the first measured feature, so it never keeps fewer features than without measuring.
+
+The same applies to the last fillet or chamfer of a history when its input edges cannot be proven
+on the rebuilt body (a midpoint off every edge, or an edge with other ends or length). For each
+source edge the candidates are the up to three nearest rebuilt edges of its kind (straight or
+curved) within 2 mm of its midpoint; every combination using distinct edges, up to 24, is written
+and the complete replay compared with the original final shape. Blends before the last stay
+refused: the bodies the source stores after them barely move with a fillet, so they cannot tell
+candidate edges apart.
+
 ## Assembly placements
 
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed
