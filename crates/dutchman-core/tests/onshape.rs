@@ -672,6 +672,104 @@ fn holes_use_locations_and_retain_entry_forms() {
 }
 
 #[test]
+fn counterbored_countersunk_and_tapped_holes_keep_their_forms_threads_and_drill_points() {
+    let (model, report) = read(&fixture("hole-forms")).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "sketch", "hole", "hole", "hole"],
+        "{:?}",
+        report.losses()
+    );
+    let wire = timeline(&model);
+    let hole = |i: usize| wire["model"]["features"][i]["definition"]["value"]["value"].clone();
+    let counterbore = hole(3);
+    assert_eq!(counterbore["profile"]["kind"], "sketch_entities");
+    assert_eq!(
+        counterbore["profile"]["value"]["entities"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        counterbore["shape"]["construction"]["value"]["kind"],
+        json!({"kind": "counterbore", "diameter": 6.0, "depth": 2.0})
+    );
+    assert_eq!(counterbore["extent"]["kind"], "through_all");
+    let countersink = hole(4)["shape"]["construction"]["value"]["kind"].clone();
+    assert_eq!(countersink["kind"], "countersink");
+    assert!((countersink["angle"].as_f64().unwrap() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    let tapped = hole(5);
+    assert_eq!(tapped["shape"]["diameter"], 3.3);
+    assert_eq!(tapped["extent"], json!({"kind": "blind", "length": 6.0}));
+    assert_eq!(tapped["bottom"]["kind"], "angled");
+    assert_eq!(tapped["bottom"]["depth_to_tip"], false);
+    assert!(
+        (tapped["bottom"]["included_angle"].as_f64().unwrap() - 118f64.to_radians()).abs() < 1e-12
+    );
+    let thread = &tapped["shape"]["construction"]["value"]["specification"];
+    assert_eq!(thread["kind"], "threaded");
+    assert_eq!(thread["standard"], "ISO");
+    assert_eq!(thread["designation"], "M4");
+    assert_eq!(thread["major_diameter"], 4.0);
+    assert!((thread["pitch"].as_f64().unwrap() - 0.7).abs() < 1e-12);
+    assert_eq!(thread["depth"], json!({"kind": "blind", "depth": 5.0}));
+}
+
+#[test]
+fn hole_standards_and_drill_points_outside_the_mapping_name_their_loss() {
+    for (edit, reason) in [
+        (
+            json!({"parameterId": "standardTappedOrClearance", "value": {"standard": "ISO", "size": "M4", "type": "Pipe"}}),
+            "hole standard type is not supported yet",
+        ),
+        (
+            json!({"parameterId": "standardBlindInLast", "value": {"standard": "ISO"}}),
+            "hole standard table is not supported yet",
+        ),
+        (
+            json!({"parameterId": "tipAngle", "expression": "200 deg"}),
+            "drill point angle is not supported yet",
+        ),
+    ] {
+        let bytes = changed(&fixture("hole-forms"), |path, value| {
+            if path.ends_with("features.json") {
+                let params = value["features"][5]["parameters"].as_array_mut().unwrap();
+                params.retain(|p| p["parameterId"] != edit["parameterId"]);
+                params.push(edit.clone());
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(kinds(&model).last().unwrap(), "native", "{reason}");
+        assert!(
+            report.losses().iter().any(|l| l.detail.contains(reason)),
+            "{reason}: {:?}",
+            report.losses()
+        );
+    }
+    // A flat-bottomed blind hole states a 180 degree tip.
+    let bytes = changed(&fixture("hole-forms"), |path, value| {
+        if path.ends_with("features.json") {
+            value["features"][5]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"parameterId": "tipAngle", "expression": "180 deg"}));
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model).last().unwrap(),
+        "hole",
+        "{:?}",
+        report.losses()
+    );
+    assert_eq!(
+        timeline(&model)["model"]["features"][5]["definition"]["value"]["value"]["bottom"]["kind"],
+        "flat"
+    );
+}
+
+#[test]
 fn a_resolvable_default_tangent_fillet_maps_and_missing_tangents_name_the_loss() {
     for complete in [true, false] {
         let bytes = changed(&fixture("plate-fillet"), |path, value| {

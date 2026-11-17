@@ -123,10 +123,59 @@ def write_bundle(cli, name, features, commands, details=None, default_features=N
             bundle.writestr(info, step.read_bytes())
 
 
+def compact(value):
+    """Onshape's literal qCompressed value stream, without its dictionary or references."""
+    if isinstance(value, str):
+        return f"S{len(value):x}${value}"
+    if isinstance(value, list):
+        return f"A{len(value):x}" + "".join(compact(v) for v in value)
+    return f"M{len(value):x}" + "".join(compact(k) + compact(v) for k, v in value.items())
+
+
+def sketch_point_query(key, sketch, point):
+    literal = "%" + compact({"entityType": "VERTEX", "historyType": "CREATION", "operationId": [f"{sketch}.wireOp"],
+                             "queryType": "SKETCH_ENTITY", "sketchEntityId": point})
+    return query(key, btType="BTMIndividualQuery-138", queryString=f"query=qCompressed(1.0,{json.dumps(literal)},id);")
+
+
+def hole_forms(cli):
+    """Counterbored, countersunk and tapped blind holes in a 10 mm plate, each at its own sketch point."""
+    plate = feature("extrude", "Plate", [enum("bodyType", "SOLID"), enum("operationType", "NEW"), sketch_query("entities", "Base sketch"),
+                                         enum("endBound", "BLIND"), quantity("depth", "10 mm"), param("oppositeDirection", "BTMParameterBoolean-144", value=True)])
+    points = feature("newSketch", "Hole locations", [query("sketchPlane", btType="BTMIndividualCreatedByQuery-137", featureId="Top")],
+                     btType="BTMSketch-151", entities=[{"btType": "BTMSketchPoint-158", "entityId": f"p{i}", "x": x, "y": .005}
+                                                       for i, x in enumerate([.005, .015, .025])], constraints=[])
+
+    def hole(fid, point, *parameters):
+        return feature("hole", fid, [sketch_point_query("locations", "Hole locations", point), *parameters])
+
+    counterbore = hole("Counterbore", "p0", enum("style", "C_BORE"), enum("endStyle", "THROUGH"), quantity("holeDiameter", "3 mm"),
+                       quantity("cBoreDiameter", "6 mm"), quantity("cBoreDepth", "2 mm"))
+    countersink = hole("Countersink", "p1", enum("style", "C_SINK"), enum("endStyle", "THROUGH"), quantity("holeDiameter", "3 mm"),
+                       quantity("cSinkDiameter", "6 mm"), quantity("cSinkAngle", "90 deg"))
+    # REST leaves tipAngle out at its 118 degree default; the depth runs to the shoulder.
+    tapped = hole("Tapped", "p2", enum("style", "SIMPLE"), enum("endStyle", "BLIND"), quantity("holeDiameter", "3.3 mm"),
+                  quantity("tapDrillDiameter", "3.3 mm"), quantity("majorDiameter", "4 mm"), quantity("holeDepth", "6 mm"),
+                  param("isTappedThrough", "BTMParameterBoolean-144", value=False), quantity("tappedDepth", "5 mm"),
+                  param("standardTappedOrClearance", "BTMParameterLookupTablePath-1419",
+                        value={"standard": "ISO", "size": "M4", "pitch": "0.7 mm", "type": "Tapped", "engagement": "75%"}))
+    write_bundle(cli, "onshape-hole-forms", [rectangle("Base sketch", 0, 0, .03, .01), plate, points, counterbore, countersink, tapped],
+                 [command("sketch.create", plane="XY", name="Base sketch"),
+                  command("sketch.line", points=[[0, 0], [30, 0], [30, 10], [0, 10]], closed=True),
+                  command("sketch.finish"), command("solid.extrude", distance="10 mm", direction="negative", operation="new", name="Plate"),
+                  command("solid.hole", position=[5, 5, 0], diameter="3 mm", type="counterbore", cb_diameter="6 mm", cb_depth="2 mm", name="Counterbore"),
+                  command("solid.hole", position=[15, 5, 0], diameter="3 mm", type="countersink", cs_diameter="6 mm", cs_angle="90", name="Countersink"),
+                  command("solid.hole", position=[25, 5, 0], diameter="3.3 mm", depth="6 mm", type="drilled", tip_angle="118", name="Tapped")])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cli", default="solidcraft-cli")
+    parser.add_argument("--only", help="regenerate one bundle, such as onshape-hole-forms")
     args = parser.parse_args()
+    if args.only == "onshape-hole-forms":
+        hole_forms(args.cli)
+        return
     fillet = feature("fillet", "Corner round", [query("entities", btType="BTMIndividualQuery-138", deterministicIds=["upright"]), quantity("radius", "1 mm"), enum("crossSection", "CIRCULAR")])
     write_bundle(args.cli, "onshape-plate-fillet", [rectangle("Base sketch"), extrude(), fillet],
                  plate_commands() + [command("solid.fillet", edges=[[0, 0, 1]], radius="1 mm", tangent_chain=False, name="Corner round")],
@@ -142,6 +191,7 @@ def main():
     hole = feature("hole", "Bore", [query("entities", btType="BTMIndividualSketchUniqueVerticesQuery-1472", featureId="Hole locations"), enum("style", "SIMPLE"), enum("endStyle", "THROUGH"), quantity("holeDiameter", "2 mm")])
     write_bundle(args.cli, "onshape-hole", [rectangle("Base sketch"), extrude(True), points, hole],
                  plate_commands(True) + [command("solid.hole", position=[5, 5, 0], diameter="2 mm", type="simple", name="Bore")])
+    hole_forms(args.cli)
     write_bundle(args.cli, "onshape-unsupported", [rectangle("Base sketch"), extrude(), feature("fixtureCustom", "Custom feature", [], namespace="synthetic")], plate_commands())
 
 

@@ -509,68 +509,198 @@ pub(super) fn map(
             };
             Ok(definition(kind, operation))
         }
-        "hole" => {
-            if enabled(feature, "isTapped")
-                || parameter(feature, "standardTappedOrClearance").is_ok()
-            {
-                return Err("this hole style or thread is not supported yet".into());
-            }
-            if enabled(feature, "oppositeDirection") {
-                return Err("reversed hole drilling is not supported yet".into());
-            }
-            let profile = profile(
-                feature,
-                if rows(feature, "parameters")?
-                    .iter()
-                    .any(|p| p.get("parameterId").and_then(Value::as_str) == Some("locations"))
-                {
-                    "locations"
-                } else {
-                    "entities"
-                },
-                model,
-            )?;
-            if parameter(feature, "scope")
-                .ok()
-                .and_then(|p| p.get("queries"))
-                .and_then(Value::as_array)
-                .is_some_and(|a| !a.is_empty())
-            {
-                inputs
-                    .load(ordinal, feature)?
-                    .whole_body_scope_key(feature, "scope")?;
-            }
-            let form = match value(feature, "style") {
-                Some("SIMPLE") => json!({"kind":"simple"}),
-                Some("C_BORE") => {
-                    json!({"kind":"counterbore","diameter":length(feature, "cBoreDiameter", model)?,"depth":length(feature, "cBoreDepth", model)?})
-                }
-                Some("C_SINK") => {
-                    json!({"kind":"countersink","diameter":length(feature, "cSinkDiameter", model)?,"angle":quantity(parameter(feature, "cSinkAngle")?, true, model)?})
-                }
-                _ => return Err("this hole style is not supported yet".into()),
-            };
-            let extent = match value(feature, "endStyle") {
-                Some("THROUGH") | Some("THROUGH_ALL") => json!({"kind": "through_all"}),
-                Some("BLIND") => {
-                    if let Ok(tip) = parameter(feature, "tipAngle") {
-                        if quantity(tip, true, model)? != std::f64::consts::PI {
-                            return Err(
-                                "blind holes with a drill point are not supported yet".into()
-                            );
-                        }
-                    }
-                    json!({"kind": "blind", "length": length(feature, "holeDepth", model)?})
-                }
-                _ => return Err("this hole end is not supported yet".into()),
-            };
-            Ok(definition(
-                "hole",
-                json!({"profile": profile, "profile_filter": "points",
-                "shape": {"diameter": length(feature, "holeDiameter", model)?, "construction": {"kind": "form", "value": {"kind": form}}},
-                "extent": extent}),
-            ))
-        }
+        "hole" => hole(feature, ordinal, inputs, model),
         other => Err(format!("{other} features are not supported yet")),
     }
+}
+
+/// Onshape's default included drill-point angle, used when the REST feature omits
+/// `tipAngle` (REST leaves default values out).
+const DEFAULT_TIP_ANGLE_DEGREES: f64 = 118.0;
+
+fn hole(
+    feature: &Value,
+    ordinal: usize,
+    inputs: &topology::Inputs<'_>,
+    model: &mut Model,
+) -> Mapping<Value> {
+    if enabled(feature, "oppositeDirection") {
+        return Err("reversed hole drilling is not supported yet".into());
+    }
+    if rows(feature, "parameters")?.iter().any(|p| {
+        p.get("parameterId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("standard") && id != "standardTappedOrClearance")
+    }) {
+        return Err("this hole standard table is not supported yet".into());
+    }
+    let standard = parameter(feature, "standardTappedOrClearance")
+        .ok()
+        .and_then(|p| p.get("value"))
+        .filter(|v| !v.is_null());
+    let tapped = match standard.map(|s| s.get("type").and_then(Value::as_str)) {
+        None => false,
+        Some(Some("Tapped")) => true,
+        Some(Some("Clearance")) => false,
+        Some(_) => return Err("this hole standard type is not supported yet".into()),
+    };
+    if enabled(feature, "isTapped") && !tapped {
+        return Err("a tapped hole without a thread standard is not supported yet".into());
+    }
+    let profile = profile(
+        feature,
+        if rows(feature, "parameters")?
+            .iter()
+            .any(|p| p.get("parameterId").and_then(Value::as_str) == Some("locations"))
+        {
+            "locations"
+        } else {
+            "entities"
+        },
+        model,
+    )?;
+    if parameter(feature, "scope")
+        .ok()
+        .and_then(|p| p.get("queries"))
+        .and_then(Value::as_array)
+        .is_some_and(|a| !a.is_empty())
+    {
+        inputs
+            .load(ordinal, feature)?
+            .whole_body_scope_key(feature, "scope")?;
+    }
+    let form = match value(feature, "style") {
+        Some("SIMPLE") => json!({"kind":"simple"}),
+        Some("C_BORE") => {
+            json!({"kind":"counterbore","diameter":length(feature, "cBoreDiameter", model)?,"depth":length(feature, "cBoreDepth", model)?})
+        }
+        Some("C_SINK") => {
+            json!({"kind":"countersink","diameter":length(feature, "cSinkDiameter", model)?,"angle":quantity(parameter(feature, "cSinkAngle")?, true, model)?})
+        }
+        _ => return Err("this hole style is not supported yet".into()),
+    };
+    let through = match value(feature, "endStyle") {
+        Some("THROUGH") | Some("THROUGH_ALL") => true,
+        Some("BLIND") => false,
+        _ => return Err("this hole end is not supported yet".into()),
+    };
+    // A tapped hole is drilled at its tap-drill diameter; the thread is a label.
+    let diameter = if tapped && parameter(feature, "tapDrillDiameter").is_ok() {
+        length(feature, "tapDrillDiameter", model)?
+    } else {
+        length(feature, "holeDiameter", model)?
+    };
+    let mut construction = json!({"kind": form});
+    if let (Some(standard), Some(fields)) = (standard, construction.as_object_mut()) {
+        fields.insert(
+            "specification".into(),
+            specification(feature, standard, tapped, through, model)?,
+        );
+    }
+    let mut operation = json!({"profile": profile, "profile_filter": "points",
+        "shape": {"diameter": diameter, "construction": {"kind": "form", "value": construction}}});
+    let fields = operation
+        .as_object_mut()
+        .ok_or("the hole definition is missing")?;
+    if through {
+        fields.insert("extent".into(), json!({"kind": "through_all"}));
+    } else {
+        // Onshape measures a blind hole's depth to the shoulder, where the drill point begins.
+        let tip = match parameter(feature, "tipAngle") {
+            Ok(tip) => quantity(tip, true, model)?,
+            Err(_) => DEFAULT_TIP_ANGLE_DEGREES.to_radians(),
+        };
+        let bottom = if (tip - std::f64::consts::PI).abs() < 1e-9 {
+            json!({"kind": "flat"})
+        } else if tip > 0.0 && tip < std::f64::consts::PI {
+            json!({"kind": "angled", "included_angle": tip, "depth_to_tip": false})
+        } else {
+            return Err("this drill point angle is not supported yet".into());
+        };
+        fields.insert(
+            "extent".into(),
+            json!({"kind": "blind", "length": length(feature, "holeDepth", model)?}),
+        );
+        fields.insert("bottom".into(), bottom);
+    }
+    Ok(definition("hole", operation))
+}
+
+/// The thread or clearance standard of a hole, read from Onshape's legacy hole table
+/// value (`standard`, `size`, `pitch`, `type`). The thread is cosmetic in Onshape.
+fn specification(
+    feature: &Value,
+    standard: &Value,
+    tapped: bool,
+    through: bool,
+    model: &Model,
+) -> Mapping<Value> {
+    let name = standard
+        .get("standard")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("the hole standard is missing")?;
+    let size = standard
+        .get("size")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if !tapped {
+        let mut clearance = json!({"kind": "clearance", "standard": name, "modeled": false,
+            "cosmetic": false, "hand": "right", "depth": {"kind": "hole_depth"}});
+        let fields = clearance
+            .as_object_mut()
+            .ok_or("the hole clearance is missing")?;
+        if let Some(size) = size {
+            fields.insert("designation".into(), json!(size));
+        }
+        if let Some(fit) = standard
+            .get("fit")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            fields.insert("fit".into(), json!(fit));
+        }
+        return Ok(clearance);
+    }
+    let depth = if through || enabled(feature, "isTappedThrough") {
+        json!({"kind": "hole_depth"})
+    } else {
+        json!({"kind": "blind", "depth": length(feature, "tappedDepth", model)?})
+    };
+    let mut threaded = json!({"kind": "threaded", "standard": name, "modeled": false,
+        "cosmetic": true, "hand": "right", "depth": depth});
+    let fields = threaded
+        .as_object_mut()
+        .ok_or("the hole thread is missing")?;
+    if let Some(size) = size {
+        fields.insert("designation".into(), json!(size));
+    }
+    // Pitch reads like "1.00 mm" (metric) or "32 tpi" (unified threads per inch).
+    if let Some(pitch) = standard.get("pitch").and_then(Value::as_str) {
+        let mut parts = pitch.split_whitespace();
+        if let (Some(Ok(n)), Some(unit), None) = (
+            parts.next().map(str::parse::<f64>),
+            parts.next(),
+            parts.next(),
+        ) {
+            let pitch = match unit {
+                "mm" => Some(n),
+                "tpi" if n > 0.0 => Some(25.4 / n),
+                _ => None,
+            };
+            if let Some(pitch) = pitch.filter(|p| p.is_finite() && *p > 0.0) {
+                fields.insert("pitch".into(), json!(pitch));
+            }
+        }
+    }
+    if parameter(feature, "majorDiameter").is_ok() {
+        fields.insert(
+            "major_diameter".into(),
+            json!(length(feature, "majorDiameter", model)?),
+        );
+    }
+    Ok(threaded)
 }

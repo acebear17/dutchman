@@ -90,6 +90,10 @@ fn each_bundle_converts_with_expected_history_rows_and_losses() {
         ("plate-fillet", vec!["sketch", "extrude", "fillet"]),
         ("revolve", vec!["sketch", "revolve"]),
         ("hole", vec!["sketch", "extrude", "sketch", "hole"]),
+        (
+            "hole-forms",
+            vec!["sketch", "extrude", "sketch", "hole", "hole", "hole"],
+        ),
         ("unsupported", vec!["sketch", "extrude", "native"]),
     ] {
         let (model, mut report) = model(name);
@@ -116,6 +120,26 @@ fn each_bundle_converts_with_expected_history_rows_and_losses() {
         );
         let doc = document(&output);
         assert!(doc["features"].is_array());
+        if name == "hole-forms" {
+            let holes: Vec<&Value> = doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["type"] == "hole")
+                .collect();
+            assert_eq!(holes.len(), 3);
+            assert_eq!(holes[0]["hole"]["type"], "counterbore");
+            assert_eq!(holes[1]["hole"]["type"], "countersink");
+            assert_eq!(holes[2]["hole"]["type"], "drilled");
+            let tip: f64 = holes[2]["hole"]["tip_angle"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!((tip - 118.0).abs() < 1e-9);
+            assert_eq!(holes[2]["thread"], "M4x0.7");
+            assert_eq!(holes[2]["depth"], "6 mm");
+        }
         if name == "unsupported" {
             assert_eq!(
                 outcome.features.last().unwrap().status,
@@ -181,7 +205,7 @@ fn real_solidcraft_replays_the_synthetic_bodies_against_the_step_exports() {
         eprintln!("Set SOLIDCRAFT_CLI to replay Onshape fixture histories");
         return;
     };
-    for name in ["plate-fillet", "revolve", "hole"] {
+    for name in ["plate-fillet", "revolve", "hole", "hole-forms"] {
         let (model, mut report) = model(name);
         let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
         writer.write(&model, &mut Vec::new(), &mut report).unwrap();

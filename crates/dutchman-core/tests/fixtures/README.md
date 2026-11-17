@@ -154,13 +154,16 @@ to a saved sub-assembly file when choosing project roots.
 ## Onshape bundles
 
 `onshape-plate-fillet.onshape-bundle`, `onshape-revolve.onshape-bundle`,
-`onshape-hole.onshape-bundle`, and `onshape-unsupported.onshape-bundle` are synthetic.
+`onshape-hole.onshape-bundle`, `onshape-hole-forms.onshape-bundle` (invented counterbored,
+countersunk and tapped blind holes in a 30 × 10 × 10 mm plate, its STEP from SolidCraft CLI
+0.44.0), and `onshape-unsupported.onshape-bundle` are synthetic.
 `onshape.py` constructs their REST response objects from Onshape's public OpenAPI
 schemas (`BTFeatureListResponse-2457`, `BTMSketch-151`, `BTMFeature-134`, and
 `BTExportModelBodiesResponse-734`) and the Dutchman bundle v1 specification. It
 creates elementary shapes from scratch with SolidCraft CLI 0.40.1 and exports
 their exact STEP reference bodies. No Onshape account, real document data, vendor
-sample, or third-party design was used. Run `python3 onshape.py` to regenerate.
+sample, or third-party design was used. Run `python3 onshape.py` to regenerate, or
+`python3 onshape.py --only onshape-hole-forms` for that bundle alone.
 The plate is 20 × 10 × 2 mm with one 1 mm vertical-edge fillet; the ring is a full
 turn of a 5–10 mm radial rectangle; the hole has a 2 mm bore through a plate below
 XY. The unsupported custom feature is a synthetic no-op after the plate.
