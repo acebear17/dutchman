@@ -3633,6 +3633,25 @@ fn click_first(harness: &mut Harness<'static, App>, labels: &[&str]) -> bool {
     false
 }
 
+/// Presses Copy and open DM, if the window shows it: what it copied.
+#[cfg(feature = "test-support")]
+fn press_dm_for_shot(harness: &mut Harness<'static, App>) -> Option<String> {
+    let found = match harness.query_all_by_label("Copy and open DM").next() {
+        Some(node) => {
+            node.click_accesskit();
+            true
+        }
+        None => false,
+    };
+    if !found {
+        return None;
+    }
+    harness.step();
+    let copied = last_copy(harness).unwrap_or_default();
+    harness.run_steps(12);
+    Some(copied)
+}
+
 /// What the last frame copied, if anything.
 #[cfg(feature = "test-support")]
 fn last_copy(harness: &Harness<'static, App>) -> Option<String> {
@@ -3669,6 +3688,7 @@ fn report_flow_case_screenshots() {
         h.ctx.set_theme(ThemePreference::Light);
         h.state_mut().preview_solidcraft(Some("0.44.1"));
         h.state_mut().set_checker_for_test(true);
+        h.state_mut().set_file_manager(|_| Ok(()));
         h.state_mut().set_out_dir(work.path().join("converted"));
         h
     };
@@ -3779,10 +3799,8 @@ fn report_flow_case_screenshots() {
                 "day",
                 "Right after Stop.",
             );
-            if click_first(&mut h, &["Copy and open DM"]) {
-                if let Some(text) = last_copy(&h) {
-                    std::fs::write(dir.join("C5-04-dm-while-running.txt"), text).unwrap();
-                }
+            if let Some(text) = press_dm_for_shot(&mut h) {
+                std::fs::write(dir.join("C5-04-dm-while-running.txt"), text).unwrap();
                 shot(
                     &mut h,
                     &dir,
@@ -3844,10 +3862,8 @@ fn report_flow_case_screenshots() {
             "day",
             "Its way to report a problem.",
         );
-        if click_first(&mut h, &["Copy and open DM"]) {
-            if let Some(text) = last_copy(&h) {
-                std::fs::write(dir.join(format!("{}-dm.txt", case.shot)), text).unwrap();
-            }
+        if let Some(text) = press_dm_for_shot(&mut h) {
+            std::fs::write(dir.join(format!("{}-dm.txt", case.shot)), text).unwrap();
             h.run_steps(8);
             shot(
                 &mut h,
