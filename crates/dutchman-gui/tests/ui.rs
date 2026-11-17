@@ -1077,7 +1077,7 @@ fn solidcraft_panel_refuses_a_chosen_cli_older_than_the_oldest_supported() {
     harness.state_mut().choose_solidcraft_cli(&cli);
     harness.run_steps(8);
     assert!(harness
-        .query_by_label_contains("older than the 0.18.2 Dutchman supports")
+        .query_by_label_contains("older than SolidCraft 0.18 patch 2")
         .is_some());
     assert!(harness.query_by_label("Find automatically").is_none());
 }
