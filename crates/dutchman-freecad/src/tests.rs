@@ -73,11 +73,12 @@ fn two_bodies(second: &str) -> Model {
         sketch_feature(2, 2),
         extrude(3, 2, second)
     ]);
-    let mut bodies = arena["bodies"].as_array().unwrap().clone();
+    // Topology lives under `geometry` in CADIR v11.
+    let mut bodies = wire["geometry"]["bodies"].as_array().unwrap().clone();
     let mut other = bodies[0].clone();
     other["id"] = json!("synthetic:test:body#2");
     bodies.push(other);
-    arena["bodies"] = json!(bodies);
+    wire["geometry"]["bodies"] = json!(bodies);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         fidelity: None,
@@ -754,9 +755,9 @@ fn joints_core_left_out_are_reported_only_when_the_macro_cannot_build_them() {
 #[test]
 fn unsupported_joint_families_and_fixed_limits_have_specific_notes() {
     for definition in [
-        json!({"kind": "rack_pinion"}),
+        json!({"kind": "rack_pinion", "coupled_joints": []}),
         json!({"kind": "screw"}),
-        json!({"kind": "gears"}),
+        json!({"kind": "gears", "coupled_joints": []}),
         json!({"kind": "belt"}),
         json!({"kind": "plane_coincidence", "sense": "opposed"}),
         json!({"kind": "point_on_axis"}),
