@@ -914,11 +914,12 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.state_mut().add_inputs([first, second]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
-    for program in ["Creo", "NX"] {
-        assert!(harness
-            .query_by_label(&format!("{program} .prt: opens, no geometry yet  L1"))
-            .is_some());
-    }
+    assert!(harness
+        .query_by_label("Creo .prt: opens, no geometry yet  L1")
+        .is_some());
+    assert!(harness
+        .query_by_label("NX .prt: reads geometry  L1")
+        .is_some());
     convert(&mut harness);
     assert!(harness
         .state()
