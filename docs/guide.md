@@ -4,6 +4,10 @@ The desktop app also accepts pasted files, paths, Onshape links, and confirmed H
 downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
 flags, MCP tools, or report fields.
 
+Desktop Onshape jobs keep the `.onshape-bundle` beside the `.sc`; **Show bundle**
+reveals it and **Send to Dutchman** opens private report review with it attached.
+To share a document with us, send the .onshape-bundle; never send your keys.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 

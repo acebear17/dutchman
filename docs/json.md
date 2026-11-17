@@ -1290,6 +1290,13 @@ unknown context values are null. Keep the gzip and prepared metadata private.
 Cut refusals (including the fragment byte limit) return `ok: true` and
 `bundle_available: false`, with a plain `summary` and `private_send`; no bundle is saved.
 
+Desktop Onshape report review uses the same report-send envelope with
+`source_format: "onshape-bundle"` and a single part whose role is `Onshape bundle`.
+Its gzip wraps the original offline ZIP archive, including the manifest and source
+geometry. It is a whole document attachment; it is not a minimal reproduction.
+No fields or consent values change. Oversize archives remain available through
+the private-send card.
+
 ### Appearance loss codes
 
 Dropped appearance assignments use `dutchman/appearance.wire` (wire body or saved free

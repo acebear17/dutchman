@@ -25,10 +25,13 @@ struct Mock {
     sent: Vec<(String, String, String)>,
     sleeps: Vec<Duration>,
     bodies: Vec<Vec<u8>>,
+    authorizations: Vec<String>,
 }
 impl HttpClient for Mock {
     fn send(&mut self, request: &Request) -> Result<Response> {
         assert!(request.headers["Authorization"].starts_with("On testACCESS123456:HmacSHA256:"));
+        self.authorizations
+            .push(request.headers["Authorization"].clone());
         self.bodies.push(request.body.clone());
         self.sent.push((
             request.method.clone(),
@@ -71,7 +74,7 @@ fn prepare(element: &str, kind: &str) -> Mock {
             // Only the name is retained; document metadata is never stored verbatim.
             response(
                 200,
-                json!({"name":"Synthetic mechanism", "owner":{"id":"private-account", "name":"Private person"}}),
+                json!({"name":"Synthetic mechanism", "owner":{"id":"private-account", "name":"Private person", "email":"private-person@example.test"}}),
             ),
             response(
                 200,
@@ -202,6 +205,62 @@ fn two_part_revolute_assembly_bundle_is_exact_and_version_cache_uses_no_calls() 
     assert_eq!(again.cache_hits, 3);
     assert!(cached.sent.is_empty());
 }
+#[test]
+fn fetched_bundles_contain_no_keys_signatures_headers_or_account_details() {
+    for (element, mut mock) in [(AS, assembly_mock()), (PS, partstudio_mock(MID, "1"))] {
+        let dir = tempfile::tempdir().unwrap();
+        // Response headers must never become archive files or metadata either.
+        for reply in &mut mock.replies {
+            reply.headers.insert(
+                "Authorization".into(),
+                "private-response-authorization".into(),
+            );
+            reply.headers.insert(
+                "X-Onshape-Signature".into(),
+                "private-response-signature".into(),
+            );
+        }
+        let report = run(&mut mock, &dir, element, 50).unwrap();
+        assert!(!mock.authorizations.is_empty());
+        let mut forbidden = vec![
+            ACCESS,
+            SECRET,
+            "Authorization",
+            "HmacSHA256",
+            "private-response-authorization",
+            "private-response-signature",
+            "private-account",
+            "Private person",
+            "private-person@example.test",
+        ];
+        for authorization in &mock.authorizations {
+            forbidden.push(authorization);
+            forbidden.push(authorization.rsplit(':').next().unwrap());
+        }
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(std::fs::read(report.output).unwrap()))
+                .unwrap();
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index).unwrap();
+            let name = file.name().unwrap().into_owned();
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).unwrap();
+            for &value in &forbidden {
+                assert!(
+                    !name.contains(value),
+                    "Archive name contains a private value"
+                );
+                assert!(
+                    !bytes
+                        .windows(value.len())
+                        .any(|window| window == value.as_bytes()),
+                    "{name} contains a private value"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn workspace_head_is_resolved_again_instead_of_returning_a_stale_cache() {
     let dir = tempfile::tempdir().unwrap();
@@ -595,6 +654,9 @@ fn echoed_credentials_and_account_fields_are_never_bundled() {
     for body in [
         json!({"features":[],"name":SECRET}),
         json!({"features":[],"userName":"Private person"}),
+        json!({"features":[],"userId":"private-account"}),
+        json!({"features":[],"email":"private-person@example.test"}),
+        json!({"features":[],"Authorization":"private-authorization"}),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let mut mock = assembly_mock();

@@ -362,6 +362,38 @@ pub(crate) fn fetch(link: String, folder: &std::path::Path) -> Result<std::path:
     }
 }
 
+/// The source archive stays intact; report transport wraps it in its existing gzip envelope.
+pub(crate) struct ReportBundle(pub(crate) Vec<u8>);
+
+pub(crate) fn is_bundle(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("onshape-bundle"))
+}
+
+impl ReportBundle {
+    pub(crate) fn read(path: &std::path::Path) -> Result<Option<Self>, String> {
+        use std::io::Read;
+        // Match the report transport's maximum uncompressed attachment size.
+        const CAP: u64 = 128 * 1024 * 1024;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .and_then(|file| file.take(CAP + 1).read_to_end(&mut bytes))
+            .map_err(|_| "Could not read the Onshape bundle; check that it is still in the output folder and retry.".to_owned())?;
+        // The review still offers the original file through the private-send card.
+        Ok((bytes.len() as u64 <= CAP).then_some(Self(bytes)))
+    }
+}
+
+impl dutchman::report_send::BundleSource for ReportBundle {
+    fn parts(&self) -> Result<Vec<dutchman::report_send::BundlePart>, String> {
+        Ok(vec![dutchman::report_send::BundlePart {
+            role: "Onshape bundle".into(),
+            bytes: self.0.clone(),
+        }])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
