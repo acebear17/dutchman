@@ -418,6 +418,125 @@ fn up_to_face_uses_analytic_boundaries_of_that_feature_input() {
         .any(|loss| loss.detail.contains("non-planar terminating")));
 }
 
+/// A synthetic box body in metres: twelve straight edges and six planar faces whose
+/// `orientation` says whether the outward side follows the stored surface normal.
+fn box_body(low: [f64; 3], high: [f64; 3], tag: &str) -> (Vec<Value>, Vec<Value>) {
+    let corner = |i: usize| -> [f64; 3] {
+        std::array::from_fn(|axis| {
+            if i >> axis & 1 == 1 {
+                high[axis]
+            } else {
+                low[axis]
+            }
+        })
+    };
+    let point = |p: [f64; 3]| json!({"x": p[0], "y": p[1], "z": p[2]});
+    let mut edges = Vec::new();
+    let mut ends = Vec::new();
+    for a in 0..8usize {
+        for axis in 0..3 {
+            if a >> axis & 1 == 0 {
+                let b = a | 1 << axis;
+                let (p, q) = (corner(a), corner(b));
+                let mut direction = [0.0; 3];
+                direction[axis] = 1.0;
+                edges.push(json!({"id": format!("{tag}e{a}{b}"), "curve": {"type": "LINE", "origin": point(p), "direction": point(direction)},
+                    "geometry": {"startPoint": point(p), "endPoint": point(q), "midPoint": point(std::array::from_fn(|j| (p[j] + q[j]) / 2.0))}}));
+                ends.push((a, b));
+            }
+        }
+    }
+    let mut faces = Vec::new();
+    for axis in 0..3 {
+        for (side, name) in [(0, "low"), (1, "high")] {
+            let mut normal = [0.0; 3];
+            normal[axis] = 1.0;
+            let (min, max) = (
+                corner(side << axis),
+                corner(7 & !(usize::from(side == 0) << axis)),
+            );
+            let coedges: Vec<_> = ends
+                .iter()
+                .filter(|(a, b)| a >> axis & 1 == side && b >> axis & 1 == side)
+                .map(|(a, b)| json!({"edgeId": format!("{tag}e{a}{b}"), "orientation": true}))
+                .collect();
+            faces.push(
+                json!({"id": format!("{tag}{name}{axis}"), "orientation": side == 1,
+                "surface": {"type": "PLANE", "origin": point(min), "normal": point(normal)},
+                "box": {"minCorner": point(min), "maxCorner": point(max)},
+                "loops": [{"isOuter": true, "coedges": coedges}]}),
+            );
+        }
+    }
+    (edges, faces)
+}
+
+fn up_to_next(operation: &str, extra: Option<([f64; 3], [f64; 3])>) -> Vec<u8> {
+    changed(&fixture("plate-fillet"), |path, value| {
+        if path.ends_with("features.json") {
+            value["features"][2] = json!({"btType": "BTMFeature-134", "featureType": "extrude", "featureId": "toNext", "name": "To next", "parameters": [
+                {"parameterId": "bodyType", "value": "SOLID"}, {"parameterId": "operationType", "value": operation},
+                {"parameterId": "entities", "queries": [{"btType": "BTMIndividualSketchRegionQuery-140", "featureId": "Base sketch"}]},
+                {"parameterId": "endBound", "value": "UP_TO_NEXT"}
+            ]});
+        }
+        if path.ends_with("bodydetails/2.json") {
+            let (mut edges, mut faces) = box_body([0.0; 3], [0.02, 0.01, 0.002], "");
+            if let Some((low, high)) = extra {
+                let (more_edges, more_faces) = box_body(low, high, "boss");
+                edges.extend(more_edges);
+                faces.extend(more_faces);
+            }
+            value["bodies"][0]["edges"] = json!(edges);
+            value["bodies"][0]["faces"] = json!(faces);
+        }
+    })
+}
+
+#[test]
+fn up_to_next_ends_on_the_first_face_every_profile_ray_meets() {
+    let (model, report) = read(&up_to_next("REMOVE", None)).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "extrude"],
+        "{:?}",
+        report.losses()
+    );
+    let wire = timeline(&model);
+    let termination = &wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]
+        ["side"]["termination"];
+    assert_eq!(termination["kind"], "to_face");
+    assert_eq!(termination["face"]["value"]["faces"], json!(["high2"]));
+    assert_eq!(
+        termination["face"]["value"]["state"],
+        "onshape:model:input#toNext"
+    );
+
+    for (bytes, expected) in [
+        (
+            up_to_next("NEW", None),
+            "up-to-next extrude that starts inside the material",
+        ),
+        (
+            up_to_next(
+                "REMOVE",
+                Some(([0.005, 0.002, 0.0005], [0.008, 0.004, 0.001])),
+            ),
+            "other input geometry in its path",
+        ),
+    ] {
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(kinds(&model), ["sketch", "extrude", "native"]);
+        assert!(
+            report.losses().iter().any(|loss| loss.code.as_deref()
+                == Some("onshape/history.not-supported")
+                && loss.detail.contains(expected)),
+            "{expected}: {:?}",
+            report.losses()
+        );
+    }
+}
+
 #[test]
 fn circles_arcs_and_simple_splines_remain_exact_sketch_entities() {
     let bytes = changed(&fixture("revolve"), |path, value| {
