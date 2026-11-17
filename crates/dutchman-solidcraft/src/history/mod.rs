@@ -2494,7 +2494,7 @@ mod tests {
             2,
             1,
             "Body",
-            json!({"kind": "tree_node", "value": {"role": "history"}}),
+            json!({"kind": "tree_node", "value": {"role": "history", "children": {"children": []}}}),
         );
         let model = with(cube(), json!([datum(1, 0), body]), json!([]));
         let mapping = map(
@@ -2622,7 +2622,7 @@ mod tests {
         source.ir = cadmpeg_ir::examples::unit_cube().unwrap();
         source.fidelity = None;
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        let template = wire["model"].clone();
+        let template = wire["geometry"].clone();
         for (prefix, label) in [("skin", "Skin"), ("other", "Other")] {
             let text = serde_json::to_string(&template)
                 .unwrap()
@@ -2634,7 +2634,7 @@ mod tests {
                 "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces",
                 "shells", "regions", "bodies",
             ] {
-                wire["model"][arena]
+                wire["geometry"][arena]
                     .as_array_mut()
                     .unwrap()
                     .extend(copy[arena].as_array().unwrap().iter().cloned());
@@ -2643,7 +2643,7 @@ mod tests {
         wire["geometry"]["bodies"][0]["name"] = json!("Solid");
         source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let model = &wire["model"];
-        let mut ctx = Context::testing(model);
+        let mut ctx = Context::new(model).with_geometry(&wire["geometry"]);
         ctx.source = Some(&source);
         let outputs: Value = serde_json::from_str(
             &outputs
@@ -2704,12 +2704,27 @@ mod tests {
             {"id": "one", "profiles": [[{"entity": "a", "reversed": false}]]},
         ]});
         let ctx = Context::testing(&model);
-        let whole =
-            |sketch: &str| json!({"definition": {"profile": {"kind": "sketch", "value": sketch}}});
+        let whole = |sketch: &str| {
+            feature(
+                1,
+                0,
+                "Extrude",
+                json!({"kind": "extrude", "value": {
+                    "profile": {"kind": "planar", "value": {"kind": "sketch", "value": sketch}}
+                }}),
+            )
+        };
         assert!(whole_of_several(&whole("two"), &ctx));
         assert!(!whole_of_several(&whole("one"), &ctx));
-        let picked = json!({"definition": {"profile": {"kind": "sketch_profiles",
-            "value": {"sketch": "two", "profiles": [0]}}}});
+        let picked = feature(
+            1,
+            0,
+            "Extrude",
+            json!({"kind": "extrude", "value": {
+                "profile": {"kind": "planar", "value": {"kind": "sketch_profiles",
+                    "value": {"sketch": "two", "profiles": [0]}}}
+            }}),
+        );
         assert!(!whole_of_several(&picked, &ctx));
 
         let mut history = History {

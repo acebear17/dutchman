@@ -55,3 +55,11 @@ retaining the outer `procedural` category for construction-backed surfaces.
 Appearance test targets use `value`, and shell builders leave face ownership
 on `Face.shell` rather than listing faces in `Shell.members`.
 Synthetic view presentations state their required `properties` map explicitly.
+Face appearance evaluation receives the complete solved surface enum; analytic
+torus seam retries and spherical-corner picks read its `value` payload. Sketch
+point-to-line dimensions resolve their line locus through `value` too.
+Spreadsheet fixtures include their empty layout lists; tree nodes state empty
+child membership, and NURBS surfaces state their normal orientation. Stored-body
+fixtures copy topology from `geometry` and bind that home to the history context.
+Whole-sketch profile fixtures use the operation and planar-profile wrappers;
+rational spline checks change the poles' `kind` discriminator.

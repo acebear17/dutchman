@@ -321,7 +321,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
 fn appearance_point(ctx: &Context, face: &Value) -> Option<V3> {
     let geometry = ctx
         .row("surfaces", face.get("surface")?.as_str()?)?
-        .pointer("/geometry/value")?;
+        .get("geometry")?;
     uv::point(ctx, face, geometry).or_else(|| point_on(ctx, face))
 }
 
@@ -785,10 +785,11 @@ mod tests {
         let mut edges = Vec::new();
         let mut coedges = Vec::new();
         for (k, corner) in corners.iter().enumerate() {
+            let next = k / per_loop * per_loop + (k + 1) % per_loop;
             points.push(json!({"id": format!("p{k}"),
                 "position": {"x": corner[0], "y": corner[1], "z": corner[2]}}));
             vertices.push(json!({"id": format!("v{k}"), "point": format!("p{k}")}));
-            edges.push(json!({"id": format!("e{k}"), "start": format!("v{k}")}));
+            edges.push(json!({"id": format!("e{k}"), "ends": {"start": format!("v{k}"), "end": format!("v{next}")}}));
             coedges.push(json!({"id": format!("c{k}"), "edge": format!("e{k}")}));
         }
         let loops: Vec<Value> = corners
@@ -825,9 +826,9 @@ mod tests {
     #[test]
     fn a_conical_appearance_uses_the_radius_at_the_picked_height() {
         let (mut model, face) = cylinder_face(&[[5.0, 0.0, 0.0], [10.0, 0.0, 10.0]], 1);
-        model["surfaces"][0]["geometry"]["kind"] = json!("cone");
-        model["surfaces"][0]["geometry"]["half_angle"] = json!(0.5_f64.atan());
-        model["surfaces"][0]["geometry"]["ratio"] = json!(1.0);
+        model["surfaces"][0]["geometry"]["value"]["kind"] = json!("cone");
+        model["surfaces"][0]["geometry"]["value"]["half_angle"] = json!(0.5_f64.atan());
+        model["surfaces"][0]["geometry"]["value"]["ratio"] = json!(1.0);
         let ctx = Context::testing(&model);
         let p = point_on(&ctx, &face).unwrap();
         assert!((p[0] + 7.5).abs() < 1e-9 && p[1].abs() < 1e-9 && (p[2] - 5.0).abs() < 1e-9);
