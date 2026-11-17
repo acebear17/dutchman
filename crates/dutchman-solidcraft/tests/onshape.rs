@@ -139,6 +139,7 @@ fn each_bundle_converts_with_expected_history_rows_and_losses() {
             assert!((tip - 118.0).abs() < 1e-9);
             assert_eq!(holes[2]["thread"], "M4x0.7");
             assert_eq!(holes[2]["depth"], "6 mm");
+            assert_eq!(holes[2]["thread_depth"], "5 mm");
         }
         if name == "unsupported" {
             assert_eq!(

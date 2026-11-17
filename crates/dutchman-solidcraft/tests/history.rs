@@ -3634,7 +3634,7 @@ fn solidcraft_keeps_the_bore_of_a_cosmetic_tapped_hole() {
 
 #[test]
 fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
-    let thread_note = |change: Value| {
+    let converted = |change: Value, target: &str, blind: Option<f64>| {
         let model = holed_cube(4.0, |hole| {
             let mut specification = cosmetic_hole_thread();
             specification
@@ -3646,10 +3646,15 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
                 .unwrap()
                 .retain(|_, v| !v.is_null());
             hole["shape"]["construction"]["value"]["specification"] = specification;
+            if let Some(length) = blind {
+                hole["extent"] = json!({"kind": "blind", "length": length});
+            }
         });
         let (document, report) = convert(
             &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
         );
         assert!(
             history_line(&report).starts_with("4 of 4 features rebuilt"),
@@ -3662,16 +3667,60 @@ fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
             .find(|loss| loss.detail.contains("thread"))
             .map(|loss| loss.detail.clone())
             .unwrap_or_default();
-        (document["features"][3]["thread"].clone(), note)
+        (document["features"][3].clone(), note)
     };
-    let (label, note) = thread_note(json!({"hand": "left", "class": "6H",
-        "depth": {"kind": "blind", "depth": 3.0}}));
-    assert_eq!(label, "M6x1");
+    let thread_note = |change: Value| {
+        let (hole, note) = converted(change, "0.43.0", None);
+        (hole["thread"].clone(), note)
+    };
+    let details = json!({"hand": "left", "class": "6H", "depth": {"kind": "blind", "depth": 3.0}});
+    // Older targets keep the label and name everything else.
+    for (target, blind) in [("0.30.1", None), ("0.30.1", Some(6.0))] {
+        let (hole, note) = converted(details.clone(), target, blind);
+        assert_eq!(hole["thread"], "M6x1");
+        for key in ["hand", "thread_class", "thread_depth"] {
+            assert!(hole.get(key).is_none(), "{target}: {key}");
+        }
+        assert_eq!(
+            note,
+            "its thread is kept as a cosmetic M6x1 label over the whole hole, without its \
+             left-hand direction, its 6H tolerance class, and its 3 mm thread length"
+        );
+    }
+    // 0.40 stores the hand and, on a blind plain hole, the thread length.
+    let (hole, note) = converted(details.clone(), "0.40.0", Some(6.0));
+    assert_eq!(hole["hand"], "left");
+    assert_eq!(hole["thread_depth"], "3 mm");
+    assert!(hole.get("thread_class").is_none());
     assert_eq!(
         note,
-        "its thread is kept as a cosmetic M6x1 label over the whole hole, without its \
-         left-hand direction, its 6H tolerance class, and its 3 mm thread length"
+        "its thread is kept as a cosmetic M6x1 label, without its 6H tolerance class"
     );
+    // 0.43 also stores the class; a through hole's wall is unknown, so its length is named.
+    let (hole, note) = converted(details.clone(), "0.43.0", Some(6.0));
+    assert_eq!(hole["thread_class"], "6H");
+    assert_eq!(hole["thread_depth"], "3 mm");
+    assert!(note.is_empty(), "{note}");
+    let (hole, note) = converted(details.clone(), "0.43.0", None);
+    assert_eq!(hole["hand"], "left");
+    assert!(hole.get("thread_depth").is_none());
+    assert_eq!(
+        note,
+        "its thread is kept as a cosmetic M6x1 label over the whole hole, without its 3 mm \
+         thread length"
+    );
+    // A thread as long as the wall is the default full-length thread.
+    let (hole, note) = converted(
+        json!({"depth": {"kind": "blind", "depth": 6.0}}),
+        "0.43.0",
+        Some(6.0),
+    );
+    assert!(hole.get("thread_depth").is_none());
+    assert!(note.is_empty(), "{note}");
+    // A class SolidCraft would refuse stays a named loss.
+    let (hole, note) = converted(json!({"class": "6g"}), "0.43.0", None);
+    assert!(hole.get("thread_class").is_none());
+    assert!(note.contains("its 6g tolerance class"), "{note}");
     let (label, note) = thread_note(json!({"designation": "M5", "pitch": 0.5}));
     assert_eq!(label, "M5x0.5");
     assert!(note.is_empty(), "{note}");
