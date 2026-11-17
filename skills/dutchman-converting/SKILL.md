@@ -237,10 +237,11 @@ Sheet-metal histories map base flanges and full-edge flanges on unchanged rectan
 sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
 outer-face heights, inside/outside placement, angles, and bend radii map. Other dimensions
 or unproven selections keep geometry and explain the blocked feature. CADIR's hem developed
-length has no exact mapping to SolidCraft's outer-face length. Do not claim
-that K-factor or relief settings were preserved: CADIR does not supply them, so sheet rules
-use SolidCraft defaults. Contour flange, bend, unfold/refold and corner-relief operations
-are not present in the pinned CADIR version.
+length has no exact mapping to SolidCraft's outer-face length. Contour flanges map when cadmpeg supplies an open line/arc chain, one blind normal sweep
+and material on one side. Their thickness, inside bend radius and supplied K-factor become a
+sheet rule; unsupported contour forms keep geometry with the specific reason. Relief settings
+use SolidCraft defaults. The pinned Inventor codec does not yet decode contour flanges; do not
+promise Inventor contour history until that decoding reaches the pin.
 
 ## 3. Convert
 

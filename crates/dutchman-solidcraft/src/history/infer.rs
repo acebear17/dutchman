@@ -58,7 +58,7 @@ pub(super) fn map(
         prefix.sheet_rules = trial
             .sheet_rules
             .iter()
-            .map(|(thickness, name)| super::sheet::rule(name, *thickness))
+            .map(super::sheet::SheetRule::value)
             .collect();
         checked = true;
         if !check(&prefix, stored.as_deref(), final_state) {

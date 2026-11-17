@@ -96,8 +96,10 @@ note. See [Fusion visibility](fusion.md#parts-and-history).
 Sheet-metal history follows the same mapping limits in [Feature history](history.md#sheet-metal) as the CLI:
 base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
 input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,
-appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
-relief use the target rule defaults because CADIR does not supply them.
+appear as the first blocked feature's reason; the conversion keeps the geometry. Contour
+flanges map from an open chain of sketch lines and arcs with one blind normal sweep and
+material on either side; their thickness, bend radius and supplied K-factor form a rule.
+Other contour forms report their specific reason. Relief settings use the target defaults.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain

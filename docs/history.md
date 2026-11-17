@@ -348,10 +348,15 @@ from the sheet's outer face. Any other plate, or a bend without its plate, keeps
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
-relieve) needs no SolidCraft feature and is counted as not needed. CADIR has no
-contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
-settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
-first feature that stops the history; the original geometry is still converted.
+relieve) needs no SolidCraft feature and is counted as not needed. Contour flanges map when
+cadmpeg supplies one open chain of sketch lines and arcs, one blind distance along the sketch
+normal, and material on the left or right. Thickness,
+inside bend radius and any supplied K-factor become a separate sheet rule. Centered,
+symmetric, two-sided, drafted, object-ended, oblique and closed-profile contour flanges keep
+the source geometry and report the reason. Unfold/refold history and corner relief that
+changes geometry are not supported yet; sheet rules keep SolidCraft's defaults for relief
+settings. The report names the first feature that stops the history; the original geometry
+is still converted.
 
 ## Partial history
 
