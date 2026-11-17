@@ -127,7 +127,9 @@ jobs:
           packaging+='|scripts/[^/]*msi[^/]*$|scripts/package[^/]*$|scripts/macos-dmg\.sh$|scripts/archive-readme\.py$|scripts/downloads\.py$'
           packaging+='|packaging/linux/|assets/(install|dmg|windows)/|skills/'
           packaging+='|crates/dutchman-gui/assets/(Dutchman\.icns|dutchman-app-icon\.svg)$|crates/dutchman-gui/examples/ico\.rs$'
-          packaging+='|crates/dutchman-gui/src/(update\.rs|update/))'
+          packaging+='|crates/dutchman-gui/src/(update\.rs|update/)'
+          # The SolidCraft plugin's manifest and its wasm size settings.
+          packaging+='|crates/dutchman-plugin/plugin\.json$|\.cargo/config\.toml$)'
           # A Markdown text change under assets/install/ or skills/ (the installed agent guide, the skill) is copied
           # into the archives as it is: it needs no release build.
           matched=$(git diff --name-only "$BASE" HEAD | grep -E "$packaging" | grep -vE '^(assets/install|skills)/.*\.md$' || true)
@@ -260,6 +262,59 @@ jobs:
             dist/*.AppImage.sha256
             dist/*.AppImage.zsync
             dist/*.AppImage.zsync.sha256
+          retention-days: 30
+
+  # The SolidCraft plugin: dutchman-plugin-<version>.zip, the manifest and the WebAssembly
+  # component SolidCraft installs from Preferences > Plugins (docs/solidcraft-plugin.md). It
+  # is one file for every platform, so it is built once, on Linux.
+  plugin:
+    needs: plan
+    if: needs.plan.outputs.full == 'true' && inputs.targets != 'linux-x86_64'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-tools
+        run: cargo install --locked wasm-tools
+      - name: Build the component
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
+      - name: Package
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          scripts/package-plugin.sh target/wasm32-unknown-unknown/release/dutchman_plugin.wasm dist/plugin "$version"
+          mkdir -p dist/out
+          cp "dist/plugin/dutchman-plugin-$version.zip" "dist/plugin/dutchman-plugin-$version.zip.sha256" dist/out/
+          # The package holds exactly the manifest and the component, and the manifest names
+          # this version.
+          python3 - "dist/out/dutchman-plugin-$version.zip" "$version" <<'PY'
+          import json, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          assert sorted(z.namelist()) == ["dutchman.wasm", "plugin.json"], z.namelist()
+          manifest = json.loads(z.read("plugin.json"))
+          assert manifest["version"] == sys.argv[2], manifest["version"]
+          assert manifest["runtime"]["module"] == "dutchman.wasm"
+          assert len(z.read("dutchman.wasm")) <= 64 * 1024 * 1024
+          PY
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      # The packaged component, run in Wasmtime on the public fixtures: each must convert as
+      # the command line does, and the log shows the guest's peak memory per file (the
+      # `peak_guest_memory` lines), which the manifest's memory request has to cover.
+      - name: Convert the public fixtures with the packaged component
+        run: |
+          set -euo pipefail
+          DUTCHMAN_PLUGIN_COMPONENT="$PWD/dist/plugin/dutchman.wasm" \
+            cargo test --release --locked -p dutchman-plugin --features host-tests --test component -- --nocapture 2>&1 | tee dist/component-test.log
+          grep -E '^peak_guest_memory' dist/component-test.log | sort -t= -k4 -n -r | head -5 >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dutchman-${{ env.VERSION }}-plugin
+          path: |
+            dist/out/dutchman-plugin-*.zip
+            dist/out/dutchman-plugin-*.zip.sha256
           retention-days: 30
 
   # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.
