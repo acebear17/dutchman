@@ -38,7 +38,7 @@ use dutchman_core::{
     Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, Report, Severity, Stage,
     Writer,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub use verify::{
     cached_solidcraft_version, chosen_cli, discover, find_cli, search_report, solidcraft_minor,
@@ -635,6 +635,48 @@ impl SolidCraftWriter {
         }
     }
 
+    /// The regions SolidCraft finds in the sketch feature `sketch` of `prefix`, as it lists
+    /// them (`sketch.inspect`): each one's area and the centre of that area. `None` when
+    /// SolidCraft cannot say, or lists more than measured inference would try.
+    fn sketch_regions(
+        &self,
+        model: &Model,
+        prefix: &history::History,
+        step: &str,
+        sketch: u64,
+    ) -> Option<Vec<history::infer::SketchRegion>> {
+        if self.memory_refusal().is_some() {
+            return None;
+        }
+        let cli = self.selected_evaluator(&self.verification).ok()?;
+        let design = self
+            .history_design(model, prefix, step, Live::History)
+            .ok()?;
+        let script = [json!({"command": "sketch.inspect", "params": {"sketch": sketch}})];
+        let results = cli
+            .run(&design, &script, self.timeout, "sketch regions")
+            .ok()?;
+        let profiles = results.first()?.get("profiles")?.as_array()?;
+        // Pairs of more regions than this would exceed the candidates measured anyway.
+        if profiles.len() > history::infer::MAX_CANDIDATES {
+            return None;
+        }
+        profiles
+            .iter()
+            .map(|profile| {
+                let point = profile.get("centroid_sketch")?.as_array()?;
+                let (x, y) = (point.first()?.as_f64()?, point.get(1)?.as_f64()?);
+                let area = profile.get("area_mm2")?.as_f64()?;
+                (x.is_finite() && y.is_finite() && area.is_finite()).then_some(
+                    history::infer::SketchRegion {
+                        area,
+                        point: [x, y],
+                    },
+                )
+            })
+            .collect()
+    }
+
     /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
     /// A shape mismatch alone cannot identify a bad operation: retain the mapped timeline
     /// for correction, hidden beside the original, and say it differs.
@@ -880,6 +922,43 @@ impl SolidCraftWriter {
             }
             result => result,
         })
+    }
+}
+
+/// The writer's SolidCraft measurements, as measured inference asks for them.
+pub(crate) struct Measuring<'a, 'p> {
+    pub(crate) writer: &'a SolidCraftWriter,
+    pub(crate) model: &'a Model,
+    pub(crate) step: &'a str,
+    pub(crate) progress: Option<&'a dutchman_core::Progress<'p>>,
+}
+
+impl history::infer::Host for Measuring<'_, '_> {
+    fn fit(
+        &mut self,
+        prefix: &history::History,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        compare: bool,
+    ) -> history::infer::Fit {
+        self.writer.profile_check(
+            self.model,
+            prefix,
+            self.step,
+            stored,
+            final_state,
+            compare,
+            self.progress,
+        )
+    }
+
+    fn regions(
+        &mut self,
+        prefix: &history::History,
+        sketch: u64,
+    ) -> Option<Vec<history::infer::SketchRegion>> {
+        self.writer
+            .sketch_regions(self.model, prefix, self.step, sketch)
     }
 }
 
@@ -1306,8 +1385,11 @@ impl Writer for SolidCraftWriter {
                 &mut history_report,
                 self.resolved_version(),
                 self.sketches,
-                &mut |prefix, stored, final_state, compare| {
-                    self.profile_check(model, prefix, &step, stored, final_state, compare, progress)
+                &mut Measuring {
+                    writer: self,
+                    model,
+                    step: &step,
+                    progress,
                 },
                 progress,
             );

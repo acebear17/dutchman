@@ -680,8 +680,11 @@ fn prepare_history(
         &mut part_report,
         writer.resolved_version(),
         writer.sketches,
-        &mut |prefix, stored, final_state, compare| {
-            writer.profile_check(part, prefix, step, stored, final_state, compare, progress)
+        &mut crate::Measuring {
+            writer,
+            model: part,
+            step,
+            progress,
         },
         progress,
     );

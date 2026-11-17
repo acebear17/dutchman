@@ -13235,6 +13235,8 @@ struct MeasuringEvaluator {
     calls: std::sync::Mutex<Vec<String>>,
     tie: bool,
     faces: bool,
+    /// Lists the halves of a square split down the middle as its sketch's regions.
+    halves: bool,
 }
 
 impl MeasuringEvaluator {
@@ -13248,6 +13250,10 @@ impl MeasuringEvaluator {
             f["type"] == "extrude" && f.get("suppressed").and_then(Value::as_bool) != Some(true)
         })?;
         let text = extrude["profiles"].to_string();
+        if extrude["profiles"]["type"] == "points" {
+            // The left half named by its centre is the source's shape; the right half is not.
+            return Some(Some(text.contains("[2.5,5.0]")));
+        }
         Some(match (text.contains("\"l1\""), text.contains("\"l5\"")) {
             (true, false) => Some(true),
             (false, true) => Some(false),
@@ -13287,6 +13293,12 @@ impl dutchman_solidcraft::SolidCraftEvaluator for MeasuringEvaluator {
         label: &str,
     ) -> Result<Vec<Value>, String> {
         self.calls.lock().unwrap().push(label.to_owned());
+        if self.halves && commands[0]["command"] == "sketch.inspect" {
+            return Ok(vec![json!({"profiles": [
+                {"index": 0, "area_mm2": 50.0, "centroid_sketch": [2.5, 5.0]},
+                {"index": 1, "area_mm2": 50.0, "centroid_sketch": [7.5, 5.0]},
+            ]})]);
+        }
         if !self.faces {
             return Err("the host has no such command".to_owned());
         }
@@ -13409,4 +13421,50 @@ fn solidcraft_measures_the_one_region_that_rebuilds_the_source() {
         inferred.deviation_nm.is_some_and(|nm| nm < 10_000),
         "{inferred:?}"
     );
+}
+
+/// The cube's square with a loose line down its middle, which cadmpeg's one loop does not
+/// show: SolidCraft's own regions of the sketch are the candidates.
+fn split_square_selection() -> Model {
+    let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
+        "selections": ["synthetic:native:selection#half"]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    m["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(line(5, [5.0, -1.0], [5.0, 11.0]));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn solidcraft_regions_of_the_written_sketch_are_measured_when_cadmpeg_loops_do_not_bound_them() {
+    let host = std::sync::Arc::new(MeasuringEvaluator {
+        halves: true,
+        ..MeasuringEvaluator::default()
+    });
+    let (document, report) = convert(
+        &split_square_selection(),
+        &SolidCraftWriter::new().evaluator(host.clone()),
+    );
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(
+        extrude.status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert_eq!(extrude.inferred.unwrap().candidates, 2);
+    assert_eq!(
+        document["features"][1]["profiles"],
+        json!({"type": "points", "points": [[2.5, 5.0]]})
+    );
+    assert!(host
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| call == "sketch regions"));
 }

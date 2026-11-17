@@ -35,8 +35,48 @@ pub(crate) struct Measure {
 /// stores after the feature). `final_state` means no later active feature builds geometry, so
 /// the final source is also this feature's state; `compare` also loads the source's solid
 /// beside the replay, when it has one body, for the distance between their surfaces.
-pub(crate) type Check<'a> =
-    dyn FnMut(&History, Option<&[crate::verify::StoredBody]>, bool, bool) -> Fit + 'a;
+pub(crate) trait Host {
+    fn fit(
+        &mut self,
+        prefix: &History,
+        stored: Option<&[crate::verify::StoredBody]>,
+        final_state: bool,
+        compare: bool,
+    ) -> Fit;
+
+    /// The regions SolidCraft finds in the sketch feature `sketch` of `prefix`: each one's
+    /// area and the point it names it by. `None` when SolidCraft cannot say.
+    fn regions(&mut self, _prefix: &History, _sketch: u64) -> Option<Vec<SketchRegion>> {
+        None
+    }
+}
+
+/// A measurement alone, with no sketch regions: planning and tests.
+impl<F> Host for F
+where
+    F: FnMut(&History, Option<&[crate::verify::StoredBody]>, bool, bool) -> Fit,
+{
+    fn fit(
+        &mut self,
+        prefix: &History,
+        stored: Option<&[crate::verify::StoredBody]>,
+        final_state: bool,
+        compare: bool,
+    ) -> Fit {
+        self(prefix, stored, final_state, compare)
+    }
+}
+
+/// The measuring host, as the mapper takes it.
+pub(crate) type Check<'a> = dyn Host + 'a;
+
+/// One region of a sketch as SolidCraft finds it: its area (mm²) and a point (in the sketch's
+/// own coordinates) that names it, the centre of its area.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SketchRegion {
+    pub(crate) area: f64,
+    pub(crate) point: [f64; 2],
+}
 
 const UNCONFIRMED: &str =
     "its inferred profile region could not be confirmed by the source body check";
@@ -72,7 +112,7 @@ pub(super) fn map(
             continue;
         };
         tried += 1;
-        let Fit::Matches(measure) = check(&trial.prefix, stored.as_deref(), final_state, false)
+        let Fit::Matches(measure) = check.fit(&trial.prefix, stored.as_deref(), final_state, false)
         else {
             continue;
         };
@@ -195,17 +235,17 @@ fn measured(
     final_state: bool,
     check: &mut Check<'_>,
 ) -> Option<Result<Mapped, String>> {
-    let features = match regions(feature, ctx)? {
-        Ok(features) => features,
-        Err(why) => return Some(Err(why)),
-    };
-    let total = features.len();
     let stored = stored_body_centers(feature);
     // Short of the final state, only the bodies the source stores after the feature can be
     // compared with: without them nothing could match.
     if !final_state && stored.is_none() {
         return None;
     }
+    let features = match regions(feature, ctx, history, params, check)? {
+        Ok(features) => features,
+        Err(why) => return Some(Err(why)),
+    };
+    let total = features.len();
     let started = Instant::now();
     let mut found: Vec<(Trial, Measure)> = Vec::new();
     let mut measured = 0usize;
@@ -223,7 +263,7 @@ fn measured(
             continue;
         };
         measured += 1;
-        match check(&trial.prefix, stored.as_deref(), final_state, true) {
+        match check.fit(&trial.prefix, stored.as_deref(), final_state, true) {
             Fit::Matches(measure) if measure.deviation.is_none_or(|d| d.within()) => {
                 found.push((trial, measure));
             }
@@ -290,37 +330,37 @@ fn measured(
 /// the first two readings already tried. `None` when the feature has no single unresolved
 /// sketch pick whose sketch's loops alone bound its regions; the reason when there are more
 /// regions than are measured.
-fn regions(feature: &Value, ctx: &Context) -> Option<Result<Vec<Value>, String>> {
+fn regions(
+    feature: &Value,
+    ctx: &Context,
+    history: &History,
+    params: &[Value],
+    check: &mut Check<'_>,
+) -> Option<Result<Vec<Value>, String>> {
     let refs = unresolved(feature, ctx)?;
     let [(path, selection)] = refs.as_slice() else {
         return None;
     };
     let sketch = selection.pointer("/value/sketch")?.as_str()?;
     let picks = selection.pointer("/value/selections")?.as_array()?.len();
-    let row = ctx.row("sketches", sketch)?;
-    let entities = profile::sketch_entities(ctx, sketch);
-    let loops = super::crossing::loop_regions(row, &entities)?;
-    let count = loops.len();
-    if !(1..=2).contains(&picks) || count <= picks {
+    if !(1..=2).contains(&picks) {
         return None;
     }
-    let mut choices: Vec<Vec<usize>> = Vec::new();
-    if picks == 1 {
-        choices.extend((0..count).map(|a| vec![a]));
-    } else {
-        for a in 0..count {
-            for b in a + 1..count {
-                choices.push(vec![a, b]);
-            }
-        }
+    let row = ctx.row("sketches", sketch)?;
+    let entities = profile::sketch_entities(ctx, sketch);
+    let Some(loops) = super::crossing::loop_regions(row, &entities) else {
+        // Other curves divide the loops cadmpeg lists: SolidCraft's own regions of the
+        // written sketch, each named by a point, are the candidates.
+        return solidcraft_regions(feature, path, sketch, picks, ctx, history, params, check);
+    };
+    let count = loops.len();
+    if count <= picks {
+        return None;
     }
-    if choices.len() > MAX_CANDIDATES {
-        return Some(Err(format!(
-            "its profile region could not be inferred: its sketch has {} candidate regions, \
-             more than the {MAX_CANDIDATES} measured",
-            choices.len()
-        )));
-    }
+    let choices = match choices(count, picks) {
+        Ok(choices) => choices,
+        Err(why) => return Some(Err(why)),
+    };
     let mut features = Vec::new();
     let mut seen: Vec<Vec<usize>> = Vec::new();
     for choice in choices {
@@ -347,6 +387,88 @@ fn regions(feature: &Value, ctx: &Context) -> Option<Result<Vec<Value>, String>>
     }
     (!features.is_empty()).then_some(Ok(features))
 }
+
+/// Every choice of `picks` (one or two) of `count` regions, or the reason when there are more
+/// than are measured.
+fn choices(count: usize, picks: usize) -> Result<Vec<Vec<usize>>, String> {
+    let mut choices: Vec<Vec<usize>> = Vec::new();
+    if picks == 1 {
+        choices.extend((0..count).map(|a| vec![a]));
+    } else {
+        for a in 0..count {
+            for b in a + 1..count {
+                choices.push(vec![a, b]);
+            }
+        }
+    }
+    if choices.len() > MAX_CANDIDATES {
+        return Err(format!(
+            "its profile region could not be inferred: its sketch has {} candidate regions, \
+             more than the {MAX_CANDIDATES} measured",
+            choices.len()
+        ));
+    }
+    Ok(choices)
+}
+
+/// Candidates from the regions SolidCraft finds in the written sketch, each named by the
+/// centre of its area. A centre outside its own region names another region or none: that
+/// candidate then rebuilds another region's shape, or fails, and cannot add a wrong match.
+#[allow(clippy::too_many_arguments)]
+fn solidcraft_regions(
+    feature: &Value,
+    path: &str,
+    sketch: &str,
+    picks: usize,
+    ctx: &Context,
+    history: &History,
+    params: &[Value],
+    check: &mut Check<'_>,
+) -> Option<Result<Vec<Value>, String>> {
+    let id = ctx.sketches.get(sketch)?.feature;
+    let mut prefix = history.clone();
+    prefix.params = params.to_vec();
+    prefix.next_id = ctx.next_id;
+    prefix.looks = ctx.looks.clone();
+    prefix.default_bodies = ctx.default_bodies.clone();
+    super::params::unsigned_dimensions(&mut prefix, ctx);
+    prefix.sheet_rules = ctx
+        .sheet_rules
+        .iter()
+        .map(|(thickness, name)| super::sheet::rule(name, *thickness))
+        .collect();
+    let found = check.regions(&prefix, id)?;
+    let count = found.len();
+    if count <= picks {
+        return None;
+    }
+    let choices = match choices(count, picks) {
+        Ok(choices) => choices,
+        Err(why) => return Some(Err(why)),
+    };
+    let mut features = Vec::new();
+    let mut seen: Vec<Vec<[f64; 2]>> = Vec::new();
+    for choice in choices {
+        let points: Vec<[f64; 2]> = choice
+            .iter()
+            .filter_map(|&index| found.get(index))
+            .map(|region| region.point)
+            .collect();
+        if points.len() != picks || seen.contains(&points) {
+            continue;
+        }
+        let mut candidate = feature.clone();
+        let slot = candidate.pointer_mut(path)?;
+        *slot = json!({"kind": MEASURED_POINTS, "value": {"sketch": sketch, "points": points}});
+        seen.push(points);
+        features.push(candidate);
+    }
+    (!features.is_empty()).then_some(Ok(features))
+}
+
+/// The profile form of a measured candidate named by points in the written sketch: Dutchman's
+/// own, never read from a source file.
+pub(super) const MEASURED_POINTS: &str = "dutchman_measured_points";
 
 /// The feature's unresolved sketch picks: each one's JSON pointer and its selection. `None`
 /// when it has none, or a pick names no earlier mapped sketch.

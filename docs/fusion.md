@@ -221,9 +221,12 @@ remains available as before.
 When neither candidate is confirmed, measured inference takes over. The regions of the carrier
 sketch come from its loops, each loop with the loops directly inside it as holes (a ring and the
 disc inside it are two regions); a selection of one native pick tries each region, a selection of
-two tries each pair (under even-odd nesting a union is the loops in an odd number of them). Only
-sketches whose loops alone bound their regions and do not touch qualify, with at most 24
-candidates and 120 s of measuring per feature. Each candidate is mapped normally and replayed in
+two tries each pair (under even-odd nesting a union is the loops in an odd number of them). When
+other curves divide those loops (a line across a circle, a loop cadmpeg does not list), the
+regions are the ones SolidCraft itself finds in the written sketch (`sketch.inspect`), each named
+by the centre of its area; a centre outside its own region names another region or none, which
+can only add a duplicate or a failed candidate, never a wrong match. At most 24 candidates and
+120 s of measuring per feature. Each candidate is mapped normally and replayed in
 SolidCraft: at the last body-building feature against the original final shape (body count, box,
 volume and area within the check's tolerances, and, for a one-body part, the largest distance
 between the two surfaces from `inspect.compare` with the source loaded beside the replay, within
