@@ -2,6 +2,7 @@
 //! to the native-codec rule: STEP decoding remains in cadmpeg, all writer policy is shared.
 
 mod archive;
+mod expression;
 mod features;
 mod query;
 mod regions;
@@ -90,12 +91,19 @@ fn definition(kind: &str, value: Value) -> Value {
     json!({"kind": "operation", "value": {"kind": kind, "value": value}})
 }
 
-fn loss(report: &mut Report, subject: &str, reason: &str) {
+fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool) {
     report.push_coded(
         Severity::Degraded,
         subject,
         "onshape/history.not-supported",
-        format!("{reason}; kept the final STEP geometry"),
+        format!(
+            "{reason}; kept {}",
+            if has_step {
+                "the final STEP geometry"
+            } else {
+                "the supported sketch geometry"
+            }
+        ),
     );
 }
 
@@ -147,16 +155,47 @@ pub(super) fn read(
     }
     let prefix = format!("partstudios/{eid}");
     let inputs = topology::Inputs::new(&bundle, &prefix, mid).map_err(Error::Decode)?;
-    let source = bundle.bytes(&format!("{prefix}/export.step"))?;
-    // This supplies exact final bodies and the comparison reference, never historical picks.
-    let mut model =
-        crate::decode::decode_with_progress(Format::Step, path, source, report, progress)?;
-    model.source_step = Some(String::from_utf8(source.to_vec()).map_err(|_| {
-        Error::Decode("Onshape STEP export is not UTF-8; fetch a new bundle".into())
-    })?);
     let response = bundle.json(&format!("{prefix}/features.json"))?;
     microversion(&response, "sourceMicroversion", mid).map_err(Error::Decode)?;
     let features = rows(&response, "features").map_err(Error::Decode)?;
+    let step_path = format!("{prefix}/export.step");
+    let mut model = if bundle.contains(&step_path) {
+        let source = bundle.bytes(&step_path)?;
+        // Exact final bodies and comparison reference, never historical picks.
+        let mut model =
+            crate::decode::decode_with_progress(Format::Step, path, source, report, progress)?;
+        model.source_step = Some(String::from_utf8(source.to_vec()).map_err(|_| {
+            Error::Decode("Onshape STEP export is not UTF-8; fetch a new bundle".into())
+        })?);
+        model
+    } else if !features.is_empty()
+        && features.iter().all(|feature| {
+            feature.get("suppressed").and_then(Value::as_bool) == Some(true)
+                || feature.get("parentSuppressed").and_then(Value::as_bool) == Some(true)
+                || matches!(
+                    feature.get("featureType").and_then(Value::as_str),
+                    Some("newSketch" | "assignVariable")
+                )
+        })
+    {
+        Model {
+            ir: cadmpeg_ir::CadIr::empty(),
+            fidelity: None,
+            name: path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Onshape sketches")
+                .to_owned(),
+            source_file: path.file_name().map(|s| s.to_string_lossy().into_owned()),
+            assembly: None,
+            source_step: None,
+        }
+    } else {
+        return Err(Error::Decode(
+            "Onshape bundle has body-building features but no STEP export; fetch a new bundle"
+                .into(),
+        ));
+    };
     // One body creator followed by modifying operations has an unambiguous final
     // body identity. This binds writer body names, including through-all cuts.
     // Several creators cannot be paired with final STEP bodies by list order.
@@ -231,7 +270,7 @@ pub(super) fn read(
                 model.ir.model.parameters.truncate(sizes.3);
                 model.ir.model.feature_input_topologies.truncate(sizes.4);
                 if !suppressed {
-                    loss(report, name, &reason);
+                    loss(report, name, &reason, model.source_step.is_some());
                 }
                 definition(
                     "native",

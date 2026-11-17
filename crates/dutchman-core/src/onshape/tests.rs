@@ -8,8 +8,12 @@ use super::*;
 const FIXTURE: &[u8] =
     include_bytes!("../../tests/fixtures/onshape-default-plane-regions.onshape-bundle");
 
-fn changed(mut edit: impl FnMut(&mut Value)) -> Vec<u8> {
-    let mut archive = zip::ZipArchive::new(Cursor::new(FIXTURE)).unwrap();
+fn changed(edit: impl FnMut(&mut Value)) -> Vec<u8> {
+    changed_fixture(FIXTURE, edit)
+}
+
+fn changed_fixture(fixture: &[u8], mut edit: impl FnMut(&mut Value)) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(fixture)).unwrap();
     let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..archive.len() {
         let mut member = archive.by_index(i).unwrap();
@@ -52,6 +56,7 @@ fn compact(value: &Value) -> String {
     match value {
         Value::String(s) => format!("S{:x}${s}", s.len()),
         Value::Number(n) => format!("D{:x}", n.as_i64().unwrap()),
+        Value::Bool(b) => if *b { "T" } else { "F" }.to_owned(),
         Value::Array(a) => format!(
             "A{:x}{}",
             a.len(),
@@ -470,4 +475,261 @@ fn sketch_dimension_ordinals_restart_for_each_owner() {
         .find(|sketch| sketch["id"] == id("sketch", "otherSketch"))
         .unwrap();
     assert!(unnamed.get("name").is_none());
+}
+
+#[test]
+fn zlib_cap_queries_keep_face_sketches_in_the_source_frame() {
+    use base64::Engine;
+    let bytes = changed(|response| {
+        let mut face_sketch = response["features"][0].clone();
+        face_sketch["featureId"] = json!("cap-sketch");
+        let creator = response["features"][1]["featureId"].as_str().unwrap();
+        let cap = json!({"entityType":"FACE", "historyType":"CREATION", "queryType":"CAP_FACE",
+            "operationId":[format!("{creator}.opExtrude")], "isStart":false});
+        let literal = format!("%{}", compact(&cap));
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(literal.as_bytes()).unwrap();
+        let encoded = format!(
+            "&{:x}${}",
+            literal.len(),
+            base64::engine::general_purpose::STANDARD.encode(encoder.finish().unwrap())
+        );
+        face_sketch["parameters"][0]["queries"][0] = json!({"queryString":format!("query=qCompressed(1.0,{},id);", serde_json::to_string(&encoded).unwrap())});
+        response["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(face_sketch);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(
+        kinds(&wire),
+        ["sketch", "extrude", "sketch"],
+        "{:?}",
+        report.losses()
+    );
+    let sketch = wire["sketches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id("sketch", "cap-sketch"))
+        .unwrap();
+    assert_eq!(
+        sketch["placement"]["frame"]["origin"],
+        topology::point([0.0, 0.0, 5.0])
+    );
+}
+
+#[test]
+fn tangent_propagation_follows_vertices_and_refuses_incomplete_chains() {
+    let edge = |name: &str, vertices: Value, tangent: Value| {
+        json!({"id":name,"vertices":vertices,
+        "geometry":{"startVector":tangent,"endVector":tangent}})
+    };
+    let state = topology::State::testing(vec![
+        edge("first", json!(["a", "b"]), topology::point([1.0, 0.0, 0.0])),
+        edge("next", json!(["b", "c"]), topology::point([-1.0, 0.0, 0.0])),
+        edge(
+            "corner",
+            json!(["c", "d"]),
+            topology::point([0.0, 1.0, 0.0]),
+        ),
+    ]);
+    let selected = json!({"kind":"historical","value":{"state":"input","edges":["first"]}});
+    let expanded = state.tangent_chain(&selected).unwrap();
+    assert_eq!(expanded["value"]["edges"], json!(["first", "next"]));
+    let state = topology::State::testing(vec![edge("first", json!(["a", "b"]), Value::Null)]);
+    assert!(state
+        .tangent_chain(&selected)
+        .unwrap_err()
+        .contains("endpoint tangents"));
+}
+
+#[test]
+fn revolve_uses_a_construction_line_in_the_sketch_frame() {
+    let bytes = changed_fixture(
+        include_bytes!("../../tests/fixtures/onshape-revolve.onshape-bundle"),
+        |response| {
+            let native = response["features"][0]["featureId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            response["features"][0]["entities"].as_array_mut().unwrap().push(json!({"btType":"BTMSketchCurveSegment-155","entityId":"axis-line","isConstruction":true,
+            "geometry":{"btType":"BTCurveGeometryLine-117","dirY":1.0},"startParam":0.0,"endParam":0.015}));
+            let query = json!({"entityType":"EDGE","historyType":"CREATION","queryType":"SKETCH_ENTITY","operationId":[format!("{native}.wireOp")],"sketchEntityId":"axis-line"});
+            let axis = response["features"][1]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p["parameterId"] == "axis")
+                .unwrap();
+            replace_query(&mut axis["queries"][0], &query);
+            response["features"][1]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|p| p["parameterId"] != "revolveType");
+            response["features"][1]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"parameterId":"fullRevolve","value":true}));
+        },
+    );
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "revolve"], "{:?}", report.losses());
+    assert_eq!(
+        wire["features"][1]["definition"]["value"]["value"]["construction"]["value"]["axis"]
+            ["direction"],
+        topology::point([0.0, 1.0, 0.0])
+    );
+}
+
+#[test]
+fn origin_coincidence_and_midpoint_keep_explicit_point_relations() {
+    let bytes = changed(|response| {
+        response["features"][0]["entities"]
+            .as_array_mut()
+            .unwrap()
+            .extend([
+                json!({"btType":"BTMSketchPoint-158","entityId":"zero"}),
+                json!({"btType":"BTMSketchPoint-158","entityId":"left-point","x":-0.004}),
+                json!({"btType":"BTMSketchPoint-158","entityId":"right-point","x":0.004}),
+            ]);
+        response["features"][0]["constraints"] = json!([
+            {"constraintType":"COINCIDENT","entityId":"origin-relation","parameters":[
+                {"parameterId":"localFirst","value":"zero"},{"parameterId":"externalSecond","queries":[{"queryString":"qOrigin(EntityType.VERTEX);"}]}]},
+            {"constraintType":"MIDPOINT","entityId":"middle-relation","parameters":[
+                {"parameterId":"localMidpoint","value":"zero"},{"parameterId":"localEntity1","value":"left-point"},{"parameterId":"localEntity2","value":"right-point"}]}
+        ]);
+    });
+    let (wire, report) = read(&bytes);
+    let constraints = wire["sketch_constraints"].as_array().unwrap();
+    assert!(
+        constraints
+            .iter()
+            .any(|c| c["definition"]["kind"] == "point_coordinate_values"),
+        "{:?}",
+        report.losses()
+    );
+    assert!(
+        constraints
+            .iter()
+            .any(|c| c["definition"]["kind"] == "midpoint"),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn variables_keep_dependencies_and_drive_a_symmetric_extrusion() {
+    let bytes = changed(|response| {
+        let rows = response["features"].as_array_mut().unwrap();
+        rows[1]["parameters"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|p| p["parameterId"] == "depth")
+            .unwrap()["expression"] = json!("2 * (#span + 1 mm)");
+        rows[1]["parameters"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"parameterId":"symmetric","value":true}));
+        rows.insert(0,json!({"featureId":"spacing-variable","featureType":"assignVariable","parameters":[
+            {"parameterId":"mode","value":"ASSIGNED"},{"parameterId":"variableType","value":"LENGTH"},
+            {"parameterId":"name","value":"span"},{"parameterId":"lengthValue","expression":"3 mm"}]}));
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(
+        kinds(&wire),
+        ["tree_node", "sketch", "extrude"],
+        "{:?}",
+        report.losses()
+    );
+    let extrude = &wire["features"][2]["definition"]["value"]["value"];
+    assert_eq!(extrude["extent"]["kind"], "symmetric");
+    assert_eq!(extrude["extent"]["side"]["termination"]["length"], 8.0);
+    let owned = wire["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| {
+            p.pointer("/properties/source_kind").and_then(Value::as_str) == Some("AlongDistance")
+        })
+        .unwrap();
+    assert_eq!(
+        owned["dependencies"],
+        json!([id("parameter", "spacing-variable")])
+    );
+    assert!(owned["expression"].as_str().unwrap().contains("span"));
+}
+
+#[test]
+fn variable_arithmetic_refuses_forward_references_wrong_units_and_excessive_nesting() {
+    use super::expression::{evaluate, Dimension};
+    let model = cadmpeg_ir::document::Model::default();
+    for source in ["#missing", "1 mm + 2 deg", "1 mm / 0", "sin(2 mm)"] {
+        assert!(
+            evaluate(source, Dimension::Length, &model).is_err(),
+            "{source}"
+        );
+    }
+    let nested = format!("{}1 mm{}", "(".repeat(100), ")".repeat(100));
+    assert!(evaluate(&nested, Dimension::Length, &model).is_err());
+    assert_eq!(
+        evaluate("2 * (3 mm + 1 cm)", Dimension::Length, &model)
+            .unwrap()
+            .value,
+        26.0
+    );
+}
+
+#[test]
+fn compressed_hole_locations_keep_only_the_selected_sketch_point() {
+    let bytes = changed(|response| {
+        let sketch = response["features"][0]["featureId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        response["features"][0]["entities"].as_array_mut().unwrap().extend([
+            json!({"btType":"BTMSketchPoint-158","entityId":"chosen-point","x":0.002,"y":0.003}),
+            json!({"btType":"BTMSketchPoint-158","entityId":"other-point","x":0.004,"y":0.003})]);
+        let mut query = json!({});
+        replace_query(
+            &mut query,
+            &json!({"entityType":"VERTEX","historyType":"CREATION","queryType":"SKETCH_ENTITY", "operationId":[format!("{sketch}.wireOp")],"sketchEntityId":"chosen-point"}),
+        );
+        response["features"].as_array_mut().unwrap().push(json!({"featureId":"hole","featureType":"hole","parameters":[
+            {"parameterId":"locations","queries":[query]}, {"parameterId":"style","value":"SIMPLE"},
+            {"parameterId":"endStyle","value":"THROUGH"},{"parameterId":"holeDiameter","expression":"1 mm"}]}));
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(
+        kinds(&wire),
+        ["sketch", "extrude", "hole"],
+        "{:?}",
+        report.losses()
+    );
+    let profile = &wire["features"][2]["definition"]["value"]["value"]["profile"];
+    assert_eq!(profile["kind"], "sketch_entities");
+    assert_eq!(profile["value"]["entities"].as_array().unwrap().len(), 1);
+    assert!(profile["value"]["entities"][0]
+        .as_str()
+        .unwrap()
+        .ends_with("chosen-point"));
+}
+
+#[test]
+fn an_opaque_external_id_is_not_assumed_to_be_the_origin() {
+    let bytes = changed(|response| {
+        response["features"][0]["entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"btType":"BTMSketchPoint-158","entityId":"zero"}));
+        response["features"][0]["constraints"] = json!([{"constraintType":"COINCIDENT","entityId":"external-relation","parameters":[
+            {"parameterId":"localFirst","value":"zero"},{"parameterId":"externalSecond","queries":[{"queryString":"","deterministicIds":["unidentified-reference"]}]}]}]);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"]);
+    assert!(report.losses().iter().any(|l| l.code.as_deref()
+        == Some("onshape/sketch.constraint-not-supported")
+        && l.detail.contains("does not identify the sketch origin")));
 }

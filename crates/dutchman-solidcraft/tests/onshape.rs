@@ -193,3 +193,30 @@ fn real_solidcraft_replays_the_synthetic_bodies_against_the_step_exports() {
         );
     }
 }
+
+#[test]
+fn sketch_only_history_writes_without_an_import_or_step_blob() {
+    let (mut model, mut report) = model("plate-fillet");
+    model.source_step = None;
+    model.ir.geometry = Default::default();
+    model
+        .ir
+        .model
+        .features
+        .retain(|feature| feature.ordinal == 0);
+    let writer = SolidCraftWriter::new();
+    writer.convertible(&model).unwrap();
+    let mut bytes = Vec::new();
+    writer.write(&model, &mut bytes, &mut report).unwrap();
+    let doc = document(&bytes);
+    assert_eq!(doc["features"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["features"][0]["type"], "sketch");
+    assert!(matches!(
+        report.outcome().unwrap().check,
+        Check::NotApplicable(_)
+    ));
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    for i in 0..zip.len() {
+        assert!(!zip.by_index(i).unwrap().name().unwrap().ends_with(".step"));
+    }
+}

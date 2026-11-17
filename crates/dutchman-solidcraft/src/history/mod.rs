@@ -1320,7 +1320,13 @@ fn map_into(
     }
     params::unsigned_dimensions(references, &ctx);
     references.next_id = ctx.next_id;
-    if !ctx.builds {
+    // A complete sketch-only design has no source bodies to rebuild. Other
+    // histories still need a body builder, including any stopped sketch prefix.
+    let complete_sketches = keep_sketches
+        && crate::sketches_only(model)
+        && blocked.is_none()
+        && !history.features.is_empty();
+    if !ctx.builds && !complete_sketches {
         return Err(blocked.unwrap_or_else(|| {
             if no_timeline {
                 "the design carries no feature history".to_owned()

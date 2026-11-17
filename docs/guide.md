@@ -17,7 +17,11 @@ See [the port audit](cadir-v11.md) for the pinned reader contract.
 
 Local Onshape bundles (`.onshape-bundle`) convert through the same command:
 `dutchman convert bracket.onshape-bundle bracket.sc`. The reader works offline on
-one Part Studio. See [Onshape](onshape.md) for editable features, required rollback
+one Part Studio, including sketch-only bundles without STEP. Supported history includes
+resolved extrusion-cap sketches, tangent chains, construction-line revolve axes,
+counterbore/countersink holes, midpoint relations, assigned variables and symmetric
+blind extrudes. Unresolved selections and unsupported expressions retain named losses.
+See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.
 Older v1 bundles without consistency metadata still convert. Default-plane sketches

@@ -175,3 +175,11 @@ all identifiers and geometry are invented. It includes default features and empt
 rollback bodydetails, rather than fabricated sketch faces in bodydetails. No
 private query, identifier or geometry is copied. Regenerate with
 `python3 onshape-regions.py --cli /path/to/solidcraft-cli`.
+
+The Onshape tests in `src/onshape/tests.rs` and `tests/onshape.rs` also build
+synthetic variants in memory: zlib cap queries with booleans, shared-vertex tangent
+chains, diameter `length` dimensions, hole `locations` and entry forms, construction
+line axes, origin and midpoint relations, and assigned-variable symmetric extrudes.
+All identifiers, dimensions and geometry in those variants were invented for tests.
+`dutchman/tests/onshape.rs` uses a synthetic response client to capture and convert
+a sketch-only Part Studio without any STEP request or network connection.

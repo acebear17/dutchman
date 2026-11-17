@@ -1400,3 +1400,52 @@ fn two_dimensions_in_one_sketch_keep_the_history_with_distinct_ordinals() {
     assert_eq!(report["history"]["mapped"], 2, "{report:#}");
     assert_eq!(report["history"]["total"], 2, "{report:#}");
 }
+
+#[test]
+fn sketch_only_fetch_skips_step_and_converts_without_a_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = prepare(PS, "PARTSTUDIO");
+    mock.replies.extend([
+        response(200,json!({"sourceMicroversion":MID,"features":[{
+            "btType":"BTMSketch-151","featureType":"newSketch","featureId":"sketch","name":"Sketch",
+            "parameters":[{"parameterId":"sketchPlane","queries":[{"btType":"BTMIndividualCreatedByQuery-137","featureId":"Top"}]}],
+            "entities":[{"btType":"BTMSketchPoint-158","entityId":"point","x":0.003,"y":0.004}],"constraints":[]
+        }]})),
+        response(200,json!({"microversionId":MID,"bodies":[]})),
+        response(404,json!({})),response(404,json!({})),
+    ]);
+    let report = run(&mut mock, &dir, PS, 50).unwrap();
+    assert_eq!(report.calls, 7);
+    assert!(mock
+        .sent
+        .iter()
+        .all(|(method, path, _)| method == "GET" && !path.contains("/export/")));
+    assert!(mock.replies.is_empty());
+    let bundle = dir.path().join("test.onshape-bundle");
+    let mut report = dutchman_core::Report::default();
+    let model =
+        dutchman_core::read(dutchman_core::Format::OnshapeBundle, &bundle, &mut report).unwrap();
+    assert!(model.source_step.is_none());
+    assert!(model.ir.geometry.bodies.is_empty());
+    assert_eq!(model.ir.model.sketches.len(), 1);
+    use dutchman_core::Writer;
+    let mut output = Vec::new();
+    dutchman_solidcraft::SolidCraftWriter::new()
+        .write(&model, &mut output, &mut report)
+        .unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(output)).unwrap();
+    let doc = zip_value(&mut zip, "document.json");
+    assert!(
+        doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "sketch"),
+        "{doc}"
+    );
+    assert!(doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["type"] == "sketch"));
+}

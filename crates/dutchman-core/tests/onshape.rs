@@ -526,7 +526,10 @@ fn rest_zero_defaults_and_empty_constraints_can_be_omitted() {
 fn unsupported_variants_and_unresolved_quantities_get_named_losses() {
     for (field, expected) in [
         ("radius", "radius"),
-        ("tangentPropagation", "tangent-chain"),
+        (
+            "tangentPropagation",
+            "tangent propagation needs complete input vertices and endpoint tangents",
+        ),
         ("isVariable", "isVariable"),
         ("deterministicIds", "deterministic"),
         ("crossSection", "circular constant-radius"),
@@ -596,4 +599,135 @@ fn boolean_scopes_must_resolve_to_the_sole_rollback_body() {
             .iter()
             .any(|loss| loss.detail.contains("Boolean scope does not select")));
     }
+}
+
+#[test]
+fn diameter_dimensions_use_the_length_parameter() {
+    let bytes = changed(&fixture("hole"), |path, value| {
+        if path.ends_with("features.json") {
+            value["features"][2]["entities"] = json!([{"btType":"BTMSketchCurve-4","entityId":"circle",
+                "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.003}}]);
+            value["features"][2]["constraints"] = json!([{"constraintType":"DIAMETER","entityId":"diameter-dimension",
+                "parameters":[{"parameterId":"localFirst","value":"circle"},{"parameterId":"length","expression":"6 mm"}]}]);
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    let wire = timeline(&model);
+    assert!(
+        wire["model"]["sketch_constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["definition"]["kind"] == "diameter"),
+        "{:?}",
+        report.losses()
+    );
+    assert!(wire["model"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["value"]["value"] == 6.0));
+}
+
+#[test]
+fn holes_use_locations_and_retain_entry_forms() {
+    for (style, form, extra) in [
+        ("SIMPLE", "simple", json!([])),
+        (
+            "C_BORE",
+            "counterbore",
+            json!([{"parameterId":"cBoreDiameter","expression":"4 mm"},{"parameterId":"cBoreDepth","expression":"1 mm"}]),
+        ),
+        (
+            "C_SINK",
+            "countersink",
+            json!([{"parameterId":"cSinkDiameter","expression":"4 mm"},{"parameterId":"cSinkAngle","expression":"90 deg"}]),
+        ),
+    ] {
+        let bytes = changed(&fixture("hole"), |path, value| {
+            if path.ends_with("features.json") {
+                let params = value["features"][3]["parameters"].as_array_mut().unwrap();
+                params[0]["parameterId"] = json!("locations");
+                params
+                    .iter_mut()
+                    .find(|p| p["parameterId"] == "style")
+                    .unwrap()["value"] = json!(style);
+                params.extend(extra.as_array().unwrap().clone());
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        let wire = timeline(&model);
+        assert_eq!(
+            kinds(&model).last().unwrap(),
+            "hole",
+            "{:?}",
+            report.losses()
+        );
+        assert_eq!(
+            wire["model"]["features"][3]["definition"]["value"]["value"]["shape"]["construction"]
+                ["value"]["kind"]["kind"],
+            form
+        );
+    }
+}
+
+#[test]
+fn a_resolvable_default_tangent_fillet_maps_and_missing_tangents_name_the_loss() {
+    for complete in [true, false] {
+        let bytes = changed(&fixture("plate-fillet"), |path, value| {
+            if path.ends_with("features.json") {
+                value["features"][2]["parameters"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"parameterId":"tangentPropagation","value":true}));
+            }
+            if path.ends_with("bodydetails/2.json") && complete {
+                value["bodies"][0]["vertices"] =
+                    json!([{"id":"bottom-vertex"},{"id":"top-vertex"}]);
+                let edge = &mut value["bodies"][0]["edges"][0];
+                edge["vertices"] = json!(["bottom-vertex", "top-vertex"]);
+                edge["geometry"]["startVector"] = json!({"z":1.0});
+                edge["geometry"]["endVector"] = json!({"z":1.0});
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model).last().unwrap(),
+            if complete { "fillet" } else { "native" },
+            "{:?}",
+            report.losses()
+        );
+        if !complete {
+            assert!(report.losses().iter().any(|l| l
+                .detail
+                .contains("tangent propagation needs complete input vertices")));
+        }
+    }
+}
+
+#[test]
+fn missing_step_does_not_bypass_body_history_validation() {
+    let source = fixture("plate-fillet");
+    let mut input = zip::ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..input.len() {
+        let mut entry = input.by_index(i).unwrap();
+        if entry.name().unwrap().ends_with("export.step") {
+            continue;
+        }
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).unwrap();
+        output
+            .start_file(
+                entry.name().unwrap().as_ref(),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        output.write_all(&data).unwrap();
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    assert!(read(&bytes)
+        .unwrap_err()
+        .to_string()
+        .contains("body-building features but no STEP"));
 }

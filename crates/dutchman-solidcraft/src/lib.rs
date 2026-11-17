@@ -295,7 +295,11 @@ impl SolidCraftWriter {
             Some(_) => {
                 Err("none of the assembly's parts has geometry SolidCraft can import".to_owned())
             }
-            None if parameters_only(model) => Ok(()),
+            None if parameters_only(model)
+                || (sketches_only(model) && !self.import_only && self.sketches) =>
+            {
+                Ok(())
+            }
             None => step::restatable(model).map_err(|err| match err {
                 Error::Encode(reason) | Error::NoGeometry(reason) | Error::Restate(reason) => {
                     reason
@@ -362,7 +366,14 @@ impl SolidCraftWriter {
                 report.append(history_report);
                 Outcome {
                     mode: Mode::History,
-                    check: Check::Unverified("not checked: inspect writes nothing".to_owned()),
+                    check: if sketches_only(model) {
+                        Check::NotApplicable(
+                            "the design contains sketches and no source bodies to compare"
+                                .to_owned(),
+                        )
+                    } else {
+                        Check::Unverified("not checked: inspect writes nothing".to_owned())
+                    },
                     features: mapping.features,
                 }
             }
@@ -993,6 +1004,30 @@ fn parameters_only(model: &Model) -> bool {
         && matches!(step::restatable(model), Err(Error::NoGeometry(_)))
 }
 
+/// A neutral timeline that builds sketches and no bodies needs no STEP fallback.
+fn sketches_only(model: &Model) -> bool {
+    use cadmpeg_ir::features::FeatureOperation;
+    model.assembly.is_none()
+        && model.source_step.is_none()
+        && model.ir.geometry.bodies.is_empty()
+        && model.ir.geometry.faces.is_empty()
+        && !model.ir.model.sketches.is_empty()
+        && model.ir.model.features.iter().any(|feature| {
+            feature.suppressed != Some(true)
+                && matches!(
+                    feature.evaluation.definition().operation(),
+                    FeatureOperation::Sketch { .. }
+                )
+        })
+        && model.ir.model.features.iter().all(|feature| {
+            feature.suppressed == Some(true)
+                || matches!(
+                    feature.evaluation.definition().operation(),
+                    FeatureOperation::Sketch { .. } | FeatureOperation::TreeNode { .. }
+                )
+        })
+}
+
 /// Whether any part `assembly` places, at any depth, has geometry SolidCraft can import.
 fn any_part(assembly: &dutchman_core::Assembly) -> bool {
     assembly.parts.iter().any(|part| match &part.assembly {
@@ -1230,6 +1265,29 @@ impl Writer for SolidCraftWriter {
             let bytes = container::Container::empty()
                 .finish(&document::parameters_design(model, &params))?;
             report.set_outcome(parameters_outcome(model));
+            return out
+                .write_all(&bytes)
+                .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
+        }
+        if sketches_only(model) {
+            if self.import_only || !self.sketches {
+                return Err(Error::NoGeometry("the design contains only sketches; enable sketches and editable history to convert it".to_owned()));
+            }
+            let mapping = history::map_with_sketches(model, report, self.resolved_version(), true);
+            let history = mapping.result.map_err(Error::Encode)?;
+            if let Some(reason) = &history.stop {
+                return Err(Error::Encode(format!(
+                    "cannot write the sketch-only design: {reason}"
+                )));
+            }
+            let bytes = self.history_design_report(model, &history, "", Live::Whole, report)?;
+            report.set_outcome(Outcome {
+                mode: Mode::History,
+                check: Check::NotApplicable(
+                    "the design contains sketches and no source bodies to compare".to_owned(),
+                ),
+                features: mapping.features,
+            });
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));

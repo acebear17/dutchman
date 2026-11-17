@@ -167,6 +167,8 @@ impl Reader<'_> {
         }
         let value = match tag {
             'S' => Value::String(self.string()?),
+            'T' => Value::Bool(true),
+            'F' => Value::Bool(false),
             'R' => {
                 let index = self.count()?;
                 let size = self.values.get(index).ok_or(REFUSED)?.1;

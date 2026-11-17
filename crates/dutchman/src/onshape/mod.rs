@@ -679,9 +679,11 @@ fn capture<C: HttpClient>(
                 {
                     paths.insert("variables", variables);
                 }
-                let step = format!("{prefix}/export.step");
-                fetcher.export_step(source, &eid, &step)?;
-                paths.insert("step", step);
+                if !sketch_only(list) {
+                    let step = format!("{prefix}/export.step");
+                    fetcher.export_step(source, &eid, &step)?;
+                    paths.insert("step", step);
+                }
             }
             "ASSEMBLY" => {
                 let base = format!(
@@ -753,6 +755,20 @@ fn check_microversion(value: &Value, expected: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Known non-body features can be captured without asking the export service
+// to translate a Part Studio with no bodies. Unknown features still need STEP.
+fn sketch_only(features: &[Value]) -> bool {
+    !features.is_empty()
+        && features.iter().all(|feature| {
+            feature.get("suppressed").and_then(Value::as_bool) == Some(true)
+                || feature.get("parentSuppressed").and_then(Value::as_bool) == Some(true)
+                || matches!(
+                    feature.get("featureType").and_then(Value::as_str),
+                    Some("newSketch" | "assignVariable")
+                )
+        })
 }
 
 fn needs_topology(value: &Value, depth: usize) -> Result<bool> {

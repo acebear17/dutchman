@@ -46,6 +46,7 @@ pub(super) struct State {
     pub row: Value,
     faces: BTreeMap<String, Value>,
     edges: BTreeMap<String, Value>,
+    complete_vertices: bool,
 }
 
 /// The small rollback index is admitted once, independent of feature count.
@@ -117,6 +118,8 @@ fn load(
     let mut faces = BTreeMap::new();
     let mut edges = BTreeMap::new();
     let mut bodies = BTreeSet::new();
+    let mut vertices = BTreeSet::new();
+    let mut complete_vertices = true;
     let mut samples = Vec::new();
     for body in rows(&response, "bodies")? {
         if !bodies.insert(text(body, "id")?.to_owned()) {
@@ -130,7 +133,27 @@ fn load(
                 return Err("bodydetails repeats a face id".into());
             }
         }
+        let mut body_vertices = BTreeSet::new();
+        for vertex in optional_rows(body, "vertices")? {
+            let vertex_id = text(vertex, "id")?;
+            if !vertices.insert(vertex_id.to_owned()) || !body_vertices.insert(vertex_id.to_owned())
+            {
+                return Err("bodydetails repeats an input vertex id".into());
+            }
+        }
+        if vertices.len() > super::ROWS {
+            return Err("bodydetails exceeds the vertex limit".into());
+        }
         for edge in optional_rows(body, "edges")? {
+            complete_vertices &=
+                edge.get("vertices")
+                    .and_then(Value::as_array)
+                    .is_some_and(|ids| {
+                        ids.len() <= 2
+                            && ids
+                                .iter()
+                                .all(|id| id.as_str().is_some_and(|id| body_vertices.contains(id)))
+                    });
             if edges
                 .insert(text(edge, "id")?.to_owned(), edge.clone())
                 .is_some()
@@ -175,7 +198,12 @@ fn load(
     let row = json!({"id": id("input", text(feature, "featureId")?), "input_of": id("feature", text(feature, "featureId")?),
         "bodies": bodies, "faces": faces.keys().collect::<Vec<_>>(), "edges": edges.keys().collect::<Vec<_>>(),
         "vertices": [], "edge_geometry": samples, "native_ref": format!("{prefix}/bodydetails/{ordinal}.json")});
-    Ok(State { row, faces, edges })
+    Ok(State {
+        row,
+        faces,
+        edges,
+        complete_vertices,
+    })
 }
 
 fn sample(edge: &Value) -> Mapping<Value> {
@@ -227,12 +255,16 @@ impl State {
     /// A single input body selected explicitly is the same scope as the writer's
     /// implicit sole-body target. Never turn a subset into an all-body operation.
     pub fn whole_body_scope(&self, feature: &Value) -> Mapping<()> {
+        self.whole_body_scope_key(feature, "booleanScope")
+    }
+
+    pub fn whole_body_scope_key(&self, feature: &Value, key: &str) -> Mapping<()> {
         let bodies = rows(&self.row, "bodies")?;
         if bodies.len() != 1 {
             return Err("Boolean scopes with multiple input bodies are not supported yet".into());
         }
         let mut selected = BTreeSet::new();
-        for query in queries(feature, "booleanScope")? {
+        for query in queries(feature, key)? {
             for native in rows(query, "deterministicIds")? {
                 let native = native
                     .as_str()
@@ -283,6 +315,75 @@ impl State {
             .ok_or("selection is missing")?
             .insert(kind.into(), json!(selected));
         Ok(json!({"kind": "historical", "value": value}))
+    }
+
+    /// Expand only through shared topological vertices with resolved endpoint
+    /// tangents. Missing neighbours must not silently shorten the source chain.
+    pub fn tangent_chain(&self, selection: &Value) -> Mapping<Value> {
+        let reason = "tangent propagation needs complete input vertices and endpoint tangents; this edge set is not supported yet";
+        if !self.complete_vertices {
+            return Err(reason.into());
+        }
+        let mut incident: BTreeMap<&str, Vec<(&str, [f64; 3])>> = BTreeMap::new();
+        for (edge_id, edge) in &self.edges {
+            let vertices = rows(edge, "vertices").map_err(|_| reason)?;
+            if vertices.is_empty()
+                && edge.pointer("/curve/type").and_then(Value::as_str) == Some("CIRCLE")
+            {
+                continue;
+            }
+            let [start, end] = vertices else {
+                return Err(reason.into());
+            };
+            for (vertex, key) in [(start, "startVector"), (end, "endVector")] {
+                let vertex = vertex.as_str().ok_or(reason)?;
+                let tangent = edge
+                    .get("geometry")
+                    .and_then(|g| g.get(key))
+                    .ok_or(reason)?;
+                let tangent =
+                    unit(vector(tangent, 1.0).map_err(|_| reason)?).map_err(|_| reason)?;
+                incident
+                    .entry(vertex)
+                    .or_default()
+                    .push((edge_id.as_str(), tangent));
+            }
+        }
+        let mut selected: BTreeSet<String> = rows(selection.get("value").ok_or(reason)?, "edges")?
+            .iter()
+            .map(|id| id.as_str().map(str::to_owned).ok_or(reason))
+            .collect::<Result<_, _>>()?;
+        let mut pending: Vec<String> = selected.iter().cloned().collect();
+        while let Some(edge_id) = pending.pop() {
+            let edge = self.edges.get(&edge_id).ok_or(reason)?;
+            for vertex in rows(edge, "vertices").map_err(|_| reason)? {
+                let neighbours = incident.get(vertex.as_str().ok_or(reason)?).ok_or(reason)?;
+                let tangent = neighbours
+                    .iter()
+                    .find(|(id, _)| *id == edge_id)
+                    .map(|(_, t)| *t)
+                    .ok_or(reason)?;
+                for (other, other_tangent) in neighbours {
+                    let dot = tangent
+                        .iter()
+                        .zip(other_tangent)
+                        .map(|(a, b)| a * b)
+                        .sum::<f64>()
+                        .abs();
+                    // Only floating point roundoff in unit-vector arithmetic is allowed.
+                    if dot >= 1.0 - 32.0 * f64::EPSILON && selected.insert((*other).to_owned()) {
+                        pending.push((*other).to_owned());
+                    }
+                }
+            }
+        }
+        let mut result = selection.clone();
+        result
+            .get_mut("value")
+            .and_then(Value::as_object_mut)
+            .ok_or(reason)?
+            .insert("edges".into(), json!(selected));
+        Ok(result)
     }
 
     pub fn require_edges(&self, selection: &Value) -> Mapping<()> {
@@ -350,5 +451,20 @@ impl State {
             json!({"origin": point(vector(curve.get("origin").ok_or("axis origin is missing")?, 1000.0)?),
             "direction": point(unit(vector(curve.get("direction").ok_or("axis direction is missing")?, 1.0)?)?)}),
         )
+    }
+}
+
+#[cfg(test)]
+impl State {
+    pub(super) fn testing(edges: Vec<Value>) -> Self {
+        Self {
+            row: Value::Null,
+            faces: BTreeMap::new(),
+            complete_vertices: true,
+            edges: edges
+                .into_iter()
+                .filter_map(|edge| Some((edge.get("id")?.as_str()?.to_owned(), edge)))
+                .collect(),
+        }
     }
 }

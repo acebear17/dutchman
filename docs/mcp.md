@@ -938,3 +938,9 @@ workspace paths for STEP/variables, followed by a final head check. One change
 triggers a refetch; a second returns `onshape/changed`. Successful bundle manifests
 record `consistent: true` and per-file path kinds/microversions. All attempts share
 the tool's call budget. See [Onshape](onshape.md#fetching-a-document) for cache and privacy details.
+
+Offline Onshape bundles can contain sketches alone without a STEP export. Resolved
+extrusion-cap sketches, tangent chains, counterbore/countersink hole locations, sketch
+construction-line revolve axes, midpoint relations, assigned variables and symmetric
+blind extrudes use the shared converter. Unsupported expressions and unresolved
+external origin references retain named losses; see [Onshape](onshape.md).

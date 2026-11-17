@@ -85,6 +85,10 @@ impl Bundle {
             .ok_or_else(|| failure(format!("{path} is missing")))
     }
 
+    pub fn contains(&self, path: &str) -> bool {
+        self.members.contains_key(path)
+    }
+
     pub fn json(&self, path: &str) -> Result<Value, Error> {
         serde_json::from_slice(self.bytes(path)?)
             .map_err(|_| failure(format!("{path} could not be read as JSON")))

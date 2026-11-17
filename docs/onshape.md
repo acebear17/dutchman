@@ -10,8 +10,9 @@ dutchman convert bracket.onshape-bundle bracket.sc
 
 The ZIP follows `dutchman.onshape-bundle/1`: `manifest.json`,
 `partstudios/<eid>/features.json`, `bodydetails/index.json` and the required
-`bodydetails/<i>.json` responses, plus `export.step`. Features and bodydetails
-are raw REST responses. The reader accepts stored and deflated members, without
+`bodydetails/<i>.json` responses, plus `export.step` when the Part Studio has bodies.
+Sketch-only bundles omit STEP. Features and bodydetails are raw REST responses.
+The reader accepts stored and deflated members, without
 extracting them to disk. Assemblies and bundles with multiple elements are not
 supported yet; fetch one Part Studio instead.
 
@@ -25,16 +26,17 @@ continue to apply. A present consistency flag must be a JSON boolean.
 
 | Source construction | Reader mapping | Limits and named losses |
 |---|---|---|
-| Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes; other attachments need the source's full in-plane frame. |
+| Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, and forward end caps of resolved blind extrusions whose source sketch supplies the frame; other attachments need the source's full in-plane frame. |
 | Lines, circular arcs, circles, points | Exact sketch entities | Text, images, projected references without solved curves, and other curves are not supported yet. |
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points; the writer retains its own knot and degree limits. |
-| Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
-| Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units or an evaluated quantity are required. Driven dimensions are reported; expressions needing FeatureScript evaluation are not evaluated locally. |
-| Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal. Multiple-body Boolean scopes, symmetric/second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
-| Solid revolve | Full or one-direction angle about a resolved straight input edge | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
-| Fillet | Circular, constant radius, explicit input edges | Variable, partial, conic, curvature, overflow, and tangent-chain expansion are not supported yet. The writer must prove every edge on replay. |
-| Chamfer | Equal offsets, explicit input edges | Unequal and angle forms and tangent-chain expansion are not supported yet. Replay proof still applies. |
-| Simple hole | Sketch points; through or flat blind | Recesses, tapping, reversed drilling, blind drill points, mate connectors and other ends are not supported yet. |
+| Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
+| Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
+| Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane. Multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
+| Solid revolve | Full or one-direction angle about a resolved straight input edge or sketch construction line | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
+| Fillet | Circular, constant radius, explicit input edges and resolvable tangent chains | Variable, partial, conic, curvature and overflow forms are not supported yet. Tangent propagation needs complete shared vertex IDs and endpoint tangents. The writer must prove every edge on replay. |
+| Chamfer | Equal offsets, explicit input edges | Unequal and angle forms are not supported yet. Tangent propagation has the same completeness requirement as fillets. Replay proof still applies. |
+| Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through or flat blind | Tapping, reversed drilling, blind drill points, mate connectors and other ends are not supported yet. |
+| Assigned variables | Named length, angle and number parameters, with dependencies | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. |
 | Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
 
 Face and edge queries use `deterministicIds`, looked up only in bodydetails at
@@ -47,7 +49,11 @@ Queries containing only arbitrary FeatureScript query strings cannot be evaluate
 offline. The built-in plane query forms are recognized explicitly, including literal
 `qCompressed` creation records naming `Top.planeOp`, `Front.planeOp`, or
 `Right.planeOp`. These planes supply their fixed origin, normal, and in-plane axis;
-a deterministic face ID alone cannot supply that frame.
+a deterministic face ID alone cannot supply that frame. Zlib literals and their
+boolean query fields are decoded within the same bounds. A cap query names the
+creating extrusion; the reader derives a forward end cap's location from that
+extrusion and its source sketch rather than from final STEP topology. Reversed and
+start caps still need an explicit source frame.
 
 A compressed sketch-region query carries topology disambiguation naming its source
 sketch curves through `derivedFrom`, `sketchEntityId`, and the sketch's `wireOp` and
@@ -71,8 +77,10 @@ stop body-building history rather than guessing a selection.
 
 ## Checking the result
 
-The STEP export supplies the exact final source bodies and the fallback shape.
-It does not supply construction history or historical selections. The same
+For a Part Studio with bodies, the STEP export supplies the exact final source
+bodies and the fallback shape. It does not supply construction history or historical
+selections. Sketch-only conversion writes editable sketches without an imported
+body or a STEP comparison. The same
 SolidCraft writer and [history checks](history.md#how-a-history-is-checked) used
 for the other formats replay the CADIR history, pair bodies by position and box,
 and compare boxes, area and volume against `export.step`. Existing tolerances and
@@ -82,14 +90,18 @@ failed proof or differing replay is reported and preserves the final geometry.
 
 Synthetic offline coverage includes the generic deterministic plane and region
 query shapes returned by the REST API. Feature-library parameter drift and rollback
-and tangent propagation semantics still require validation on owner-created data.
+semantics still require validation on owner-created data. Opaque external constraint
+IDs without an origin query are reported as unresolved references; they are never guessed to
+be the origin. Midpoint relations retain their source point loci through a
+construction carrier.
 
 The reader has defensive limits: 4,096 ZIP members, 16 MiB directory/ZIP64
 metadata, 32 MiB per JSON member, 256 MiB total expanded data, and 10,000 rows per
 input collection or topology arena. These are admission limits, not memory/time
 estimates. Compressed query literals additionally have a 1 MiB expanded limit,
 4 MiB reference-allocation budget, 10,000 parsed nodes and 64 nesting levels.
-Bodydetails indices may be a JSON array of rollback integers (or
+Variable expressions have a 65,536-byte input limit, 10,000 operands and
+64 parser levels. Bodydetails indices may be a JSON array of rollback integers (or
 `"i.json"` names), or an object with that array under `indices`.
 
 ## Fetching a document
@@ -169,7 +181,9 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   index needing non-sketch topology queries; and `bodydetails/index.json`, an array
   of those indices. Suppressed features and sketch-region-only queries do not
   request bodydetails. Optional `configuration.json` and `variables.json` are
-  included when their endpoints return data. Final `export.step` is fetched through
+  included when their endpoints return data. A Part Studio containing only sketches
+  and assigned variables skips the export request and has no `export.step`. For
+  other Part Studios, final `export.step` is fetched through
   an asynchronous AP242 STEP export, grouped into one file, in metres with the
   source orientation. The export does not store a blob in the source document,
   email anyone, or trigger a browser download.

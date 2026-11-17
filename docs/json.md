@@ -1350,3 +1350,9 @@ STEP/variables. Exported STEP records its initiating request's path kind, since
 poll/download endpoints identify jobs/files directly. Generated files inherit the
 content pin. No bundle is written after two changing workspace captures or an
 unfinished final check. See [Onshape](onshape.md#fetching-a-document) for consistency and cache rules.
+
+Onshape assigned-variable features count as `not_needed`: their named parameters
+remain editable without adding a solid feature. Sketch-only bundles have no STEP
+reference to compare. Unresolved tangent chains and unsupported variable expressions
+use `onshape/history.not-supported`; unresolved external origin references use
+`onshape/sketch.constraint-not-supported`. Report fields and schema versions are unchanged.

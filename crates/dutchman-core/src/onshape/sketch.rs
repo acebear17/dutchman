@@ -12,7 +12,7 @@ use crate::{Report, Severity};
 
 /// Built-in planes have a fixed source frame. Other face attachments cannot supply
 /// the sketch's in-plane rotation from bodydetails alone and are refused explicitly.
-fn frame(feature: &Value) -> Mapping<Value> {
+fn frame(feature: &Value, model: &Model) -> Mapping<Value> {
     let [query] = queries(feature, "sketchPlane")? else {
         return Err("multiple sketch planes are not supported yet".into());
     };
@@ -22,6 +22,9 @@ fn frame(feature: &Value) -> Mapping<Value> {
         .is_some_and(|s| s.contains("qCompressed("))
     {
         let resolved = compressed::resolved(query)?;
+        if resolved.get("queryType").and_then(Value::as_str) == Some("CAP_FACE") {
+            return cap_frame(&resolved, model);
+        }
         let [operation] = rows(&resolved, "operationId")? else {
             return Err("the sketch plane has multiple source operations".into());
         };
@@ -71,6 +74,84 @@ fn frame(feature: &Value) -> Mapping<Value> {
     };
     Ok(
         json!({"origin": topology::point([0.0; 3]), "normal": topology::point(normal), "u_axis": topology::point(u_axis)}),
+    )
+}
+
+// A cap query names its creating extrusion and original sketch edges. Resolve
+// the complete frame from that construction, never from a final STEP face.
+fn cap_frame(query: &Value, model: &Model) -> Mapping<Value> {
+    let reason = "this cap-face sketch attachment is not supported yet";
+    let [operation] = rows(query, "operationId")? else {
+        return Err(reason.into());
+    };
+    let native = operation
+        .as_str()
+        .and_then(|s| s.strip_suffix(".opExtrude"))
+        .ok_or(reason)?;
+    if text(query, "entityType")? != "FACE" || text(query, "historyType")? != "CREATION" {
+        return Err(reason.into());
+    }
+    let is_start = query
+        .get("isStart")
+        .and_then(Value::as_bool)
+        .ok_or(reason)?;
+    let feature = model
+        .features
+        .iter()
+        .find(|f| f.id.as_str() == id("feature", native))
+        .ok_or(reason)?;
+    let wire = serde_json::to_value(feature).map_err(|_| reason)?;
+    let extrude = wire.pointer("/definition/value/value").ok_or(reason)?;
+    if wire
+        .pointer("/definition/value/kind")
+        .and_then(Value::as_str)
+        != Some("extrude")
+    {
+        return Err(reason.into());
+    }
+    let profile = extrude.pointer("/profile/value").ok_or(reason)?;
+    let sketch_id = match profile.get("kind").and_then(Value::as_str) {
+        Some("sketch") => profile.get("value").and_then(Value::as_str),
+        Some("sketch_regions") => profile.pointer("/value/sketch").and_then(Value::as_str),
+        _ => None,
+    }
+    .ok_or(reason)?;
+    let sketch = model
+        .sketches
+        .iter()
+        .find(|s| s.id.as_str() == sketch_id)
+        .ok_or(reason)?;
+    let sketch = serde_json::to_value(sketch).map_err(|_| reason)?;
+    let frame = sketch.pointer("/placement/frame").ok_or(reason)?;
+    let origin = topology::vector(frame.get("origin").ok_or(reason)?, 1.0)?;
+    let normal = topology::unit(topology::vector(frame.get("normal").ok_or(reason)?, 1.0)?)?;
+    let sign = match extrude.pointer("/direction/kind").and_then(Value::as_str) {
+        Some("profile_normal") => 1.0,
+        Some("reversed_profile_normal") => -1.0,
+        _ => return Err(reason.into()),
+    };
+    if extrude.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
+        || extrude
+            .pointer("/extent/side/termination/kind")
+            .and_then(Value::as_str)
+            != Some("blind")
+    {
+        return Err(reason.into());
+    }
+    let depth = extrude
+        .pointer("/extent/side/termination/length")
+        .and_then(Value::as_f64)
+        .ok_or(reason)?;
+    if is_start || sign < 0.0 {
+        return Err("sketches on reversed or start extrusion caps need an explicit source frame; this attachment is not supported yet".into());
+    }
+    let distance = depth;
+    let [ox, oy, oz] = origin;
+    let [nx, ny, nz] = normal;
+    // The source cap's in-plane axes follow its extrusion sketch.
+    Ok(
+        json!({"origin": topology::point([ox + nx * distance, oy + ny * distance, oz + nz * distance]),
+        "normal": topology::point(normal), "u_axis": frame.get("u_axis")}),
     )
 }
 
@@ -168,7 +249,7 @@ pub(super) fn map(feature: &Value, model: &mut Model, report: &mut Report) -> Ma
     }
     let native = text(feature, "featureId")?;
     let sketch_id = id("sketch", native);
-    let plane = frame(feature)?;
+    let plane = frame(feature, model)?;
     let mut loci = BTreeMap::new();
     for entity in rows(feature, "entities")? {
         let native_entity = text(entity, "entityId")?;
@@ -224,10 +305,14 @@ pub(super) fn map(feature: &Value, model: &mut Model, report: &mut Report) -> Ma
     push(&mut model.sketches, sketch)?;
     for constraint in optional_rows(feature, "constraints")? {
         let parameter_count = model.parameters.len();
+        let entity_count = model.sketch_entities.len();
+        let constraint_count = model.sketch_constraints.len();
         let result = constraint_row(constraint, native, &sketch_id, &loci, model)
             .and_then(|row| push(&mut model.sketch_constraints, row));
         if let Err(reason) = result {
             model.parameters.truncate(parameter_count);
+            model.sketch_entities.truncate(entity_count);
+            model.sketch_constraints.truncate(constraint_count);
             report.push_coded(
                 Severity::Degraded,
                 feature
@@ -243,6 +328,31 @@ pub(super) fn map(feature: &Value, model: &mut Model, report: &mut Report) -> Ma
         "sketch",
         json!({"sketch": {"kind": "planar", "sketch": sketch_id}}),
     ))
+}
+
+fn locus_position(locus: &Value, model: &Model) -> Mapping<Value> {
+    let entity_id = text(locus, "value")?;
+    let entity = model
+        .sketch_entities
+        .iter()
+        .find(|e| e.id().as_str() == entity_id)
+        .ok_or("the midpoint source entity is missing")?;
+    let entity =
+        serde_json::to_value(entity).map_err(|_| "the midpoint source entity is unreadable")?;
+    let geometry = entity
+        .get("geometry")
+        .ok_or("the midpoint source geometry is missing")?;
+    let key = match text(locus, "kind")? {
+        "entity" if text(geometry, "kind")? == "point" => "position",
+        "start" if text(geometry, "kind")? == "line" => "start",
+        "end" if text(geometry, "kind")? == "line" => "end",
+        "center" => "center",
+        _ => return Err("this midpoint point locus is not supported yet".into()),
+    };
+    geometry
+        .get(key)
+        .cloned()
+        .ok_or("the midpoint source point is missing".into())
 }
 
 fn constraint_row(
@@ -283,8 +393,55 @@ fn constraint_row(
         "PARALLEL" | "PERPENDICULAR" | "TANGENT" | "EQUAL" | "CONCENTRIC" => {
             json!({"kind": kind.to_ascii_lowercase(), "first": entity("localFirst")?, "second": entity("localSecond")?})
         }
+        "COINCIDENT" if parameter(constraint, "externalSecond").is_ok() => {
+            let [query] = queries(constraint, "externalSecond")? else {
+                return Err("multiple external constraint references are not supported yet".into());
+            };
+            let source = query
+                .get("queryString")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if !matches!(
+                source.trim_end_matches(';'),
+                "qOrigin(EntityType.VERTEX)" | "query=qOrigin(EntityType.VERTEX)"
+            ) && !(query.get("featureId").and_then(Value::as_str) == Some("Origin")
+                && query.get("btType").and_then(Value::as_str)
+                    == Some("BTMIndividualCreatedByQuery-137"))
+            {
+                return Err("the external coincident reference does not identify the sketch origin; this constraint is not supported yet".into());
+            }
+            json!({"kind":"point_coordinate_values", "point":locus("localFirst")?,"values":[0.0,0.0]})
+        }
         "COINCIDENT" => {
             json!({"kind": "coincident_loci", "loci": [locus("localFirst")?, locus("localSecond")?]})
+        }
+        "MIDPOINT" => {
+            let midpoint = locus("localMidpoint")?;
+            let first = locus("localEntity1")?;
+            let second = locus("localEntity2")?;
+            let a = locus_position(&first, model)?;
+            let b = locus_position(&second, model)?;
+            if a == b {
+                return Err("a midpoint needs two distinct source points".into());
+            }
+            let carrier = id(
+                "entity",
+                &format!("{native}/midpoint/{}", text(constraint, "entityId")?),
+            );
+            push(
+                &mut model.sketch_entities,
+                json!({"id":carrier,"sketch":sketch_id,"endpoint_refs":[],"construction":true,
+                "geometry":{"kind":"line","start":a,"end":b}}),
+            )?;
+            for (suffix, endpoint, source) in [("a", "start", first), ("b", "end", second)] {
+                push(
+                    &mut model.sketch_constraints,
+                    json!({"id":format!("{cid}-{suffix}"),"sketch":sketch_id,
+                    "definition":{"kind":"coincident_loci","loci":[{"kind":endpoint,"value":carrier},source]}}),
+                )?;
+            }
+            json!({"kind":"midpoint","point":midpoint,"entity":carrier})
         }
         "LENGTH" | "DISTANCE" | "RADIUS" | "DIAMETER" | "ANGLE" => {
             if constraint.get("drivenDimension").and_then(Value::as_bool) == Some(true) {
@@ -294,11 +451,22 @@ fn constraint_row(
                 "LENGTH" => "length",
                 "DISTANCE" => "distance",
                 "RADIUS" => "radius",
-                "DIAMETER" => "diameter",
+                "DIAMETER" => "length",
                 _ => "angle",
             };
-            let dimension = parameter(constraint, key)?;
-            let value = quantity(dimension, kind == "ANGLE")?;
+            let dimension = parameter(constraint, key).or_else(|reason| {
+                if kind == "DIAMETER"
+                    && rows(constraint, "parameters").is_ok_and(|rows| {
+                        rows.iter()
+                            .all(|p| p.get("parameterId").and_then(Value::as_str) != Some("length"))
+                    })
+                {
+                    parameter(constraint, "diameter")
+                } else {
+                    Err(reason)
+                }
+            })?;
+            let value = quantity(dimension, kind == "ANGLE", model)?;
             let pid = id(
                 "parameter",
                 &format!("{native}/{}", text(constraint, "entityId")?),
@@ -317,10 +485,33 @@ fn constraint_row(
                         .is_some_and(|scope| scope.as_str() == owner)
                 })
                 .count();
+            let evaluated = dimension
+                .get("expression")
+                .and_then(Value::as_str)
+                .filter(|s| s.contains('#'))
+                .map(|source| {
+                    super::expression::evaluate(
+                        source,
+                        if kind == "ANGLE" {
+                            super::expression::Dimension::Angle
+                        } else {
+                            super::expression::Dimension::Length
+                        },
+                        model,
+                    )
+                })
+                .transpose()?;
+            let expression = evaluated
+                .as_ref()
+                .map(|v| v.expression.clone())
+                .unwrap_or_else(|| {
+                    format!("{value} {}", if kind == "ANGLE" { "rad" } else { "mm" })
+                });
+            let dependencies = evaluated.map(|v| v.dependencies).unwrap_or_default();
             push(
                 &mut model.parameters,
                 json!({"id": pid, "owner": owner, "ordinal": ordinal_in_owner, "name": format!("dimension{parameter_ordinal}"),
-                "dependencies": [], "properties": {}, "expression": format!("{value} {}", if kind == "ANGLE" { "rad" } else { "mm" }),
+                "dependencies": dependencies, "properties": {}, "expression": expression,
                 "value": {"kind": if kind == "ANGLE" { "angle" } else { "length" }, "value": value}}),
             )?;
             match kind {
