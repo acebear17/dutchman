@@ -403,3 +403,30 @@ fn adjacent_regions_keep_the_shared_edge_in_each_directed_boundary() {
         );
     }
 }
+
+#[test]
+fn two_sketch_dimensions_get_distinct_ordinals_within_their_feature() {
+    let bytes = changed(|response| {
+        let dimension = |id: &str, line: &str, expression: &str| {
+            json!({"btType": "BTMSketchConstraint-2", "entityId": id, "constraintType": "LENGTH",
+                "parameters": [
+                    {"btType": "BTMParameterString-149", "parameterId": "localFirst", "value": line},
+                    {"btType": "BTMParameterQuantity-147", "parameterId": "length", "expression": expression}]})
+        };
+        response["features"][0]["constraints"] = json!([
+            dimension("length", "outline.side0", "20 mm"),
+            dimension("width", "outline.side1", "10 mm")
+        ]);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+    let parameters = wire["parameters"].as_array().unwrap();
+    assert_eq!(parameters.len(), 2, "{parameters:?}");
+    let mut ordinals: Vec<u64> = parameters
+        .iter()
+        .map(|p| p["ordinal"].as_u64().unwrap())
+        .collect();
+    ordinals.sort_unstable();
+    assert_eq!(ordinals, [0, 1]);
+    assert_eq!(parameters[0]["owner"], parameters[1]["owner"]);
+}

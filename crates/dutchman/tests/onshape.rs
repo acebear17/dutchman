@@ -1343,3 +1343,60 @@ fn default_plane_and_deterministic_region_convert_with_editable_history() {
     assert!(written.iter().any(|f| f["type"] == "sketch"));
     assert!(written.iter().any(|f| f["type"] == "extrude"));
 }
+
+#[test]
+fn two_dimensions_in_one_sketch_keep_the_history_with_distinct_ordinals() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-default-plane-regions.onshape-bundle");
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(std::fs::read(source).unwrap())).unwrap();
+    let input = dir.path().join("two-dimensions.onshape-bundle");
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(&input).unwrap());
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        if name.ends_with("features.json") {
+            let mut features: Value = serde_json::from_slice(&bytes).unwrap();
+            let dimension = |id: &str, line: &str, expression: &str| {
+                json!({"btType": "BTMSketchConstraint-2", "entityId": id, "constraintType": "LENGTH",
+                    "parameters": [
+                        {"btType": "BTMParameterString-149", "parameterId": "localFirst", "value": line},
+                        {"btType": "BTMParameterQuantity-147", "parameterId": "length", "expression": expression}]})
+            };
+            features["features"][0]["constraints"] = json!([
+                dimension("length", "outline.side0", "20 mm"),
+                dimension("width", "outline.side1", "10 mm")
+            ]);
+            bytes = serde_json::to_vec(&features).unwrap();
+        }
+        writer
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, &bytes).unwrap();
+    }
+    writer.finish().unwrap();
+    let output_path = dir.path().join("plate.sc");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        !report.to_string().contains("model of it fails"),
+        "{report:#}"
+    );
+    assert_eq!(report["history"]["mapped"], 2, "{report:#}");
+    assert_eq!(report["history"]["total"], 2, "{report:#}");
+}
