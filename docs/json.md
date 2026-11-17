@@ -60,7 +60,7 @@ the output beside the input from `--to`. An existing derived output is kept with
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
 Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
 
-`dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout. During reading and conversion, progress JSON lines are written to
+`dutchman convert --json`, `dutchman inspect --json` and `dutchman contents --json` print one JSON object on stdout. During reading and conversion, progress JSON lines are written to
 stderr unless `--quiet` is set. The `dutchman-mcp` server's tools return the same objects, as structured
 content and as text, with `isError` set when `ok` is false. The schema is named in `schema`. Within a schema version, fields are only
 added: none is renamed, retyped or removed. A change that would break a reader gets a new
@@ -79,7 +79,7 @@ saved configuration. Bodies with unknown membership are kept. No schema fields c
 
 ## `dutchman.progress/1`
 
-`convert --json`, `convert-all --json`, `inspect --json`, and `watch --json` write progress
+`convert --json`, `convert-all --json`, `inspect --json`, `contents --json`, and `watch --json` write progress
 as one JSON object per line on stderr.
 Stdout remains the existing final report (or watch-event stream), with no progress objects
 embedded or appended.
@@ -143,7 +143,7 @@ report schemas and field names are unchanged.
 
 | Code | Meaning |
 |---|---|
-| 0 | The design was converted (`convert`) or read (`inspect`). Losses do not change this. `diagnose --narrow`, `--same-failure` and `--make-report` say what their codes mean in their own schemas below. |
+| 0 | The design was converted (`convert`) or read (`inspect`, `contents`). Losses do not change this. `diagnose --narrow`, `--same-failure` and `--make-report` say what their codes mean in their own schemas below. |
 | 1 | It could not be: unsupported or unreadable input, no geometry, an output that could not be written. With `--json`, the report has `"ok": false`. |
 | 2 | A usage error (unknown option, missing argument), or a memory-budget refusal. Usage errors print clap text on stderr. Memory refusals with `--json` return a failure report with `estimate` and `choices`. |
 
@@ -717,6 +717,62 @@ For `dutchman-web --solidcraft`, converted SolidCraft files also have `output.op
 same-origin link to open the design in the configured web app. FreeCAD macros have no `open`
 field. The link is built when the report is returned, from the current server settings; see
 [Open in SolidCraft](web.md#open-in-solidcraft).
+
+## `dutchman.contents/1`
+
+`dutchman contents --json` and the MCP `contents` tool list what a file holds and what
+Dutchman can map of each feature, without converting: nothing is written and SolidCraft is
+not run.
+
+```json
+{
+  "schema": "dutchman.contents/1",
+  "ok": true,
+  "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)", "program": "Fusion", "extension": "f3d", "words": "reads geometry"},
+  "solidcraft_version": "0.43.0",
+  "parts": [{"name": null, "bodies": 1, "features": 3, "parameters": 2, "history_reason": null}],
+  "bodies": {"count": 1, "items": [
+    {"part": null, "name": "Body1", "kind": "solid", "hidden": false}]},
+  "features": {"count": 3,
+    "verdicts": {"after_blocker": 0, "left_out": 0, "mapped": 2, "needs_solidcraft_check": 1, "not_needed": 0, "not_supported_yet": 0},
+    "items": [
+      {"part": null, "ordinal": 0, "kind": "sketch", "name": "Sketch1", "variant": null, "suppressed": false, "verdict": "mapped", "reason": null},
+      {"part": null, "ordinal": 1, "kind": "extrude", "name": "Extrude1", "variant": null, "suppressed": false, "verdict": "mapped", "reason": null},
+      {"part": null, "ordinal": 2, "kind": "fillet", "name": "Fillet1", "variant": null, "suppressed": false, "verdict": "needs_solidcraft_check", "reason": "its input edges are found on SolidCraft's replay of the history before it, while converting"}]},
+  "parameters": {"count": 2, "items": [
+    {"part": null, "name": "width", "value": 40.0, "unit": "mm", "expression": "40 mm", "feature": null},
+    {"part": null, "name": "d1", "value": 20.0, "unit": "mm", "expression": "width / 2", "feature": "Extrude1"}]},
+  "losses": [ … ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `solidcraft_version` | The SolidCraft release the verdicts are for: the newest Dutchman knows. |
+| `parts` | One row per part listed: `name` is the part file inside an assembly, `null` for a single part; counts of its bodies, features and parameters; `history_reason` says why none of its history maps, when none does (for example "the design carries no feature history"), else `null`. A part an assembly repeats is listed once. |
+| `bodies.items` | Each body: `part`, `name` (`null` when the source has none), `kind` (`solid`, `sheet`, `wire`, or `general` for mixed topology), and `hidden` when the source hides it. |
+| `features.items` | The timeline in order: `part`, `ordinal` (the source's timeline number), `kind` (cadmpeg's operation name), `name`, `variant` (its form, as in `history.features` of `dutchman.convert/1`), `suppressed`, `verdict` and `reason`. |
+| `features.verdicts` | How many features have each verdict; every verdict word is present. |
+| `parameters.items` | Design parameters first, then each feature's, in source order: `part`, `name`, `value` (a number, whole number, true/false or text; `null` when the source stores none), `unit` (`mm` for a length, `deg` for an angle, else `null`), `expression` (as written in the source) and `feature` (the feature it belongs to, `null` for a design parameter). |
+| `assembly` | For an assembly: `{"parts": <part files read>, "placements": <parts placed at the top level>}`. |
+| `losses` | What reading the file lost, as in `dutchman.convert/1`. Mapping notes are left out; `inspect` reports them. |
+
+Each feature's `verdict` is one of:
+
+| Verdict | Means |
+|---|---|
+| `mapped` | It becomes SolidCraft features as it is. |
+| `needs_solidcraft_check` | It maps, but converting keeps it only when SolidCraft confirms it. `reason` says what is checked: a fillet's or chamfer's input edges, found on SolidCraft's replay; a profile region inferred from the sketch selection; the whole of a sketch with several profiles; or a profile region the final check compares. Without a SolidCraft CLI, converting leaves these out. |
+| `not_needed` | SolidCraft needs no feature for it (a default plane, a component insert); `reason` may say why. |
+| `left_out` | Suppressed in the source, or it changes no geometry there; `reason` says which. |
+| `not_supported_yet` | Dutchman can't map it yet; `reason` says why. |
+| `after_blocker` | An earlier feature stops the editable history, so this one is not looked at and stays in the imported final shape. |
+
+The verdicts are the history mapping's, the same as `inspect` and `convert` use, with each step
+only SolidCraft can confirm named rather than run. Where a feature needs SolidCraft, `inspect`
+reports `mapped` or `blocked` from what it can tell without running SolidCraft, and a blocked
+one stops the features after it; `contents` names the check and goes on mapping the rest. A failure (an unreadable file, an unknown format) is the usual
+`{"ok": false, "error": …}` report with this schema.
 
 ## Watch events: `dutchman.watch-event/1`
 

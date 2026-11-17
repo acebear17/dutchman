@@ -15,6 +15,9 @@ pub const CONVERT: &str = "dutchman.convert/1";
 /// The schema of `dutchman inspect --json`.
 pub const INSPECT: &str = "dutchman.inspect/1";
 
+/// The schema of `dutchman contents --json`.
+pub const CONTENTS: &str = "dutchman.contents/1";
+
 /// The schema of `dutchman diagnose`'s report.
 pub const DIAGNOSE: &str = "dutchman.diagnose/1";
 
@@ -707,6 +710,247 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
             "reapplied": reapplied, "features": features}),
     );
     out
+}
+
+/// A verdict's report word, and the reason it reports with the feature's own.
+fn verdict_fields(feature: &dutchman_solidcraft::FeatureVerdict) -> (&'static str, Option<&str>) {
+    use dutchman_solidcraft::Verdict;
+    let reason = feature.outcome.reason.as_deref();
+    match feature.verdict {
+        Verdict::Mapped => ("mapped", reason),
+        Verdict::NeedsCheck(why) => ("needs_solidcraft_check", Some(why)),
+        Verdict::NotNeeded => ("not_needed", reason),
+        Verdict::LeftOut => ("left_out", reason),
+        Verdict::NotSupported => ("not_supported_yet", reason),
+        Verdict::AfterBlocker => ("after_blocker", reason),
+    }
+}
+
+/// The verdict words, in the order `features.verdicts` counts them.
+pub const VERDICTS: [&str; 6] = [
+    "mapped",
+    "needs_solidcraft_check",
+    "not_needed",
+    "left_out",
+    "not_supported_yet",
+    "after_blocker",
+];
+
+/// The `dutchman.contents/1` report: each part's bodies, its feature timeline with what
+/// Dutchman can map of each feature for `target`, and its parameters, read without converting.
+/// `report` holds what reading the file lost; `assembly` is `(part files read, placements)`.
+pub fn contents(
+    input: &Path,
+    report: &Report,
+    parts: &[dutchman_solidcraft::PartVerdicts<'_>],
+    target: &str,
+    assembly: Option<(usize, usize)>,
+) -> Value {
+    use dutchman_core::contents::{self as listing, ParameterAmount};
+    let mut bodies = Vec::new();
+    let mut features = Vec::new();
+    let mut parameters = Vec::new();
+    let mut summary = Vec::new();
+    let mut counts: BTreeMap<&str, usize> = VERDICTS.iter().map(|word| (*word, 0)).collect();
+    for part in parts {
+        let listed_bodies = listing::bodies(part.model);
+        let listed_parameters = listing::parameters(part.model);
+        let suppressed = listing::suppressed(part.model);
+        summary.push(json!({
+            "name": part.part,
+            "bodies": listed_bodies.len(),
+            "features": part.features.len(),
+            "parameters": listed_parameters.len(),
+            "history_reason": part.history,
+        }));
+        bodies.extend(listed_bodies.into_iter().map(|body| {
+            json!({"part": part.part, "name": body.name, "kind": body.kind, "hidden": body.hidden})
+        }));
+        for feature in &part.features {
+            let (verdict, reason) = verdict_fields(feature);
+            if let Some(count) = counts.get_mut(verdict) {
+                *count = count.saturating_add(1);
+            }
+            features.push(json!({
+                "part": part.part,
+                "ordinal": feature.outcome.ordinal,
+                "kind": feature.outcome.kind,
+                "name": feature.outcome.name,
+                "variant": feature.outcome.variant,
+                "suppressed": feature.outcome.ordinal.is_some_and(|o| suppressed.contains(&o)),
+                "verdict": verdict,
+                "reason": reason,
+            }));
+        }
+        parameters.extend(listed_parameters.into_iter().map(|parameter| {
+            let value = match parameter.value {
+                Some(ParameterAmount::Number(number)) => json!(number),
+                Some(ParameterAmount::Integer(integer)) => json!(integer),
+                Some(ParameterAmount::Boolean(flag)) => json!(flag),
+                Some(ParameterAmount::Text(text)) => json!(text),
+                None => Value::Null,
+            };
+            json!({
+                "part": part.part,
+                "name": parameter.name,
+                "value": value,
+                "unit": parameter.unit,
+                "expression": parameter.expression,
+                "feature": parameter.feature,
+            })
+        }));
+    }
+    let mut out = Map::new();
+    out.insert("schema".to_owned(), json!(CONTENTS));
+    out.insert("ok".to_owned(), json!(true));
+    out.insert("input".to_owned(), crate::json::input(input));
+    out.insert("solidcraft_version".to_owned(), json!(target));
+    out.insert("parts".to_owned(), Value::Array(summary));
+    out.insert(
+        "bodies".to_owned(),
+        json!({"count": bodies.len(), "items": bodies}),
+    );
+    out.insert(
+        "features".to_owned(),
+        json!({"count": features.len(), "verdicts": counts, "items": features}),
+    );
+    out.insert(
+        "parameters".to_owned(),
+        json!({"count": parameters.len(), "items": parameters}),
+    );
+    if let Some((parts, placements)) = assembly {
+        out.insert(
+            "assembly".to_owned(),
+            json!({"parts": parts, "placements": placements}),
+        );
+    }
+    out.insert("losses".to_owned(), losses(report));
+    Value::Object(out)
+}
+
+/// The text listing of a `dutchman.contents/1` report, one line each.
+pub fn contents_lines(report: &Value) -> Vec<String> {
+    let count = |n: u64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let total = |field: &str| {
+        report
+            .pointer(&format!("/{field}/count"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
+    let items = |field: &str| {
+        report
+            .pointer(&format!("/{field}/items"))
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let text = |row: &Value, field: &str| row.get(field).and_then(Value::as_str).map(str::to_owned);
+    let part =
+        |row: &Value| text(row, "part").map_or_else(String::new, |part| format!("[{part}] "));
+    let named = |row: &Value| text(row, "name").unwrap_or_else(|| "(unnamed)".to_owned());
+    let format = report
+        .pointer("/input/format_name")
+        .and_then(Value::as_str)
+        .unwrap_or("design");
+    let mut lines = vec![format!(
+        "{format}: {}, {}, {}; what maps is for SolidCraft {}",
+        count(total("bodies"), "body", "bodies"),
+        count(total("features"), "feature", "features"),
+        count(total("parameters"), "parameter", "parameters"),
+        report
+            .get("solidcraft_version")
+            .and_then(Value::as_str)
+            .unwrap_or("?"),
+    )];
+    if let Some((parts, placements)) = report
+        .pointer("/assembly/parts")
+        .and_then(Value::as_u64)
+        .zip(
+            report
+                .pointer("/assembly/placements")
+                .and_then(Value::as_u64),
+        )
+    {
+        lines.push(format!(
+            "assembly: {} placed, from {}",
+            count(placements, "part", "parts"),
+            count(parts, "part file", "part files")
+        ));
+    }
+    if !items("bodies").is_empty() {
+        lines.push("bodies:".to_owned());
+    }
+    for body in items("bodies") {
+        let hidden = if body.get("hidden").and_then(Value::as_bool) == Some(true) {
+            " (hidden)"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "  {}{} \"{}\"{hidden}",
+            part(body),
+            text(body, "kind").unwrap_or_default(),
+            named(body)
+        ));
+    }
+    if !items("features").is_empty() {
+        lines.push("features:".to_owned());
+    }
+    for feature in items("features") {
+        let verdict = text(feature, "verdict")
+            .unwrap_or_default()
+            .replace('_', " ")
+            .replace("solidcraft", "SolidCraft");
+        let mut line = format!(
+            "  {verdict:<22} {}{} \"{}\"",
+            part(feature),
+            text(feature, "kind").unwrap_or_default(),
+            named(feature)
+        );
+        if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
+            line.push_str(" (suppressed)");
+        }
+        if let Some(reason) = text(feature, "reason") {
+            line.push_str(&format!(": {reason}"));
+        }
+        lines.push(line);
+    }
+    for summary in report
+        .get("parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(reason) = text(summary, "history_reason") {
+            if summary.get("features").and_then(Value::as_u64) == Some(0) {
+                lines.push(format!(
+                    "{}no feature history maps: {reason}",
+                    part(&json!({"part": summary.get("name")}))
+                ));
+            }
+        }
+    }
+    if !items("parameters").is_empty() {
+        lines.push("parameters:".to_owned());
+    }
+    for parameter in items("parameters") {
+        let value = match parameter.get("value") {
+            Some(Value::Null) | None => "no value".to_owned(),
+            Some(Value::String(words)) => format!("\"{words}\""),
+            Some(value) => match text(parameter, "unit") {
+                Some(unit) => format!("{value} {unit}"),
+                None => value.to_string(),
+            },
+        };
+        let mut line = format!("  {}{} = {value}", part(parameter), named(parameter));
+        if let Some(expression) = text(parameter, "expression").filter(|e| !e.is_empty()) {
+            line.push_str(&format!(" ({expression})"));
+        }
+        if let Some(feature) = text(parameter, "feature") {
+            line.push_str(&format!(" in \"{feature}\""));
+        }
+        lines.push(line);
+    }
+    lines
 }
 
 /// Index a saved conversion's original losses by code and stage, preserving every field.
@@ -1611,6 +1855,38 @@ mod tests {
 #[cfg(test)]
 mod compact_loss_tests {
     use super::*;
+
+    #[test]
+    fn contents_lines_list_bodies_verdicts_and_parameters() {
+        let report = json!({
+            "schema": CONTENTS, "ok": true,
+            "input": {"format_name": "Fusion archive (.f3d)"},
+            "solidcraft_version": "0.43.0",
+            "parts": [{"name": null, "bodies": 1, "features": 2, "parameters": 1, "history_reason": null}],
+            "bodies": {"count": 1, "items": [{"part": null, "name": "Body1", "kind": "solid", "hidden": true}]},
+            "features": {"count": 2, "verdicts": {}, "items": [
+                {"part": null, "ordinal": 0, "kind": "extrude", "name": "Extrude1", "variant": null,
+                    "suppressed": false, "verdict": "mapped", "reason": null},
+                {"part": null, "ordinal": 1, "kind": "fillet", "name": "Fillet1", "variant": null,
+                    "suppressed": true, "verdict": "left_out", "reason": "suppressed in the source"}]},
+            "parameters": {"count": 1, "items": [{"part": null, "name": "width", "value": 40.0,
+                "unit": "mm", "expression": "40 mm", "feature": "Extrude1"}]},
+            "losses": [],
+        });
+        assert_eq!(
+            contents_lines(&report),
+            [
+                "Fusion archive (.f3d): 1 body, 2 features, 1 parameter; what maps is for SolidCraft 0.43.0",
+                "bodies:",
+                "  solid \"Body1\" (hidden)",
+                "features:",
+                "  mapped                 extrude \"Extrude1\"",
+                "  left out               fillet \"Fillet1\" (suppressed): suppressed in the source",
+                "parameters:",
+                "  width = 40.0 mm (40 mm) in \"Extrude1\"",
+            ]
+        );
+    }
 
     #[test]
     fn face_losses_group_by_reason_and_keep_full_verbose_details() {

@@ -27,7 +27,9 @@ mod replay;
 mod step;
 #[cfg(test)]
 mod testing;
+mod verdicts;
 mod verify;
+pub use verdicts::{FeatureVerdict, PartVerdicts, Verdict};
 
 use std::sync::OnceLock;
 use std::time::Duration;

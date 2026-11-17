@@ -101,6 +101,7 @@ fn an_mcp_client_converts_through_dutchman() {
             "compare_step",
             "convert",
             "inspect",
+            "contents",
             "formats",
             "convert_all",
             "report_preview",
@@ -237,6 +238,7 @@ fn iges_tools_return_the_shared_refusal_without_decoding() {
     for (tool, arguments) in [
         ("convert", json!({"input": input, "output": output})),
         ("inspect", json!({"input": input})),
+        ("contents", json!({"input": input})),
         (
             "convert_all",
             json!({"inputs": [input], "out_dir": dir.path().join("out")}),

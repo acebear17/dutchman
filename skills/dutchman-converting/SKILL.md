@@ -33,7 +33,7 @@ An Info note counts bodies left out from other configurations and names the save
 bodies with unknown membership stay.
 
 Dutchman converts native CAD files into SolidCraft designs. Use the `dutchman-mcp` tools when
-they are connected (`inspect`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
+they are connected (`inspect`, `contents`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's
 `docs/json.md`.
 
@@ -238,6 +238,22 @@ Tell the user what to expect in one or two sentences before converting, for exam
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),
 so you'll get the solid shape without the feature history."
 
+When someone asks what a file holds (its bodies, its features, its parameters) or which
+features would carry across, call `contents` with `input`. It writes nothing, runs no
+SolidCraft, and returns `dutchman.contents/1`:
+
+- `bodies.items`: each body's `kind`, `name` and `hidden`.
+- `features.items`: the timeline in order, with `kind`, `name`, `suppressed`, and a `verdict`:
+  `mapped`; `needs_solidcraft_check` (it maps, but converting keeps it only when SolidCraft
+  confirms it; say that a SolidCraft CLI is needed for it); `not_needed`; `left_out`;
+  `not_supported_yet` (explain `reason` plainly); or `after_blocker` (an earlier feature stops
+  the history, so this one stays in the imported shape).
+- `features.verdicts`: the count of each verdict, for a one-line summary.
+- `parameters.items`: `name`, `value` with `unit` (`mm`, `deg`, or none), `expression` as the
+  source wrote it, and the owning `feature`.
+
+Like `inspect`, its reply holds the file's private names: keep it local.
+
 Sheet-metal histories map base flanges and full-edge flanges on unchanged rectangular base
 sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
 outer-face heights, inside/outside placement, angles, and bend radii map. Other dimensions
@@ -429,6 +445,7 @@ change replay order: the neutral ordinal controls it.
 ```sh
 dutchman formats --json
 dutchman inspect --json /abs/part.f3d
+dutchman contents --json /abs/part.f3d
 dutchman convert --json /abs/part.f3d /abs/converted/part.sc
 dutchman convert-all --json --out-dir /abs/converted /abs/project
 ```

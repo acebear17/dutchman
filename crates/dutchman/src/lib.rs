@@ -781,6 +781,59 @@ pub fn inspect_report(input: &Path, search: &PartSearch) -> Value {
     }
 }
 
+/// Reads `input` and lists its bodies, its feature timeline with what Dutchman can map of each
+/// feature, and its parameters: the `dutchman.contents/1` report. Nothing is written and
+/// SolidCraft is not run; steps only SolidCraft can confirm are named as such.
+pub fn contents(input: &Path, search: &PartSearch) -> Result<Value, Error> {
+    contents_inner(input, search, None)
+}
+
+/// Lists contents with read progress and a five-second heartbeat.
+pub fn contents_with_progress(
+    input: &Path,
+    search: &PartSearch,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Result<Value, Error> {
+    let progress = dutchman_core::Progress::new(on_progress);
+    progress.run(|| contents_inner(input, search, Some(&progress)))
+}
+
+fn contents_inner(
+    input: &Path,
+    search: &PartSearch,
+    progress: Option<&dutchman_core::Progress<'_>>,
+) -> Result<Value, Error> {
+    if let Some(progress) = progress {
+        progress.stage(dutchman_core::Stage::Input);
+    }
+    let mut report = Report::default();
+    let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
+        path: input.to_path_buf(),
+    })?;
+    let model = dutchman_core::read_with_progress(format, input, search, &mut report, progress)?;
+    if let Some(progress) = progress {
+        progress.stage(dutchman_core::Stage::Map);
+    }
+    let writer = SolidCraftWriter::new();
+    let parts = writer.verdicts(&model);
+    Ok(json::contents(
+        input,
+        &report,
+        &parts,
+        &writer.resolved_version().to_string(),
+        model
+            .assembly
+            .as_ref()
+            .map(|assembly| (assembly.parts.len(), assembly.placements.len())),
+    ))
+}
+
+/// The `dutchman.contents/1` report of listing `input`, failed or not.
+pub fn contents_report(input: &Path, search: &PartSearch) -> Value {
+    contents(input, search)
+        .unwrap_or_else(|err| json::error(json::CONTENTS, json::input(input), &err))
+}
+
 impl Inspection {
     /// The `dutchman.inspect/1` report.
     pub fn json(&self, input: &Path) -> Value {
