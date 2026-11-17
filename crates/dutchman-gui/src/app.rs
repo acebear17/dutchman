@@ -3487,7 +3487,15 @@ mod tests {
         std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.43.0'\n").unwrap();
         std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
         h.get_by_label("SolidCraft not found").click_accesskit();
-        h.run_steps(8);
+        // Discovery runs in the background: wait for it, up to a few seconds on a slow runner.
+        for _ in 0..300 {
+            h.run_steps(1);
+            if h.state().found_version.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.run_steps(4);
         // The exact wording depends on what Dutchman knows of newer releases; the version is what matters.
         assert!(h.query_by_label_contains("SolidCraft 0.43").is_some());
         assert_eq!(h.state().found_version.as_deref(), Some("0.43.0"));
