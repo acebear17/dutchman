@@ -174,7 +174,7 @@ docker run --rm --entrypoint solidcraft-cli dutchman --version
 ```
 
 It is the same Dutchman for x86_64 and ARM64, plus the SolidCraft release that Dutchman targets
-(0.43 for now), and adds about 470 MB. Pin a release with `X.Y.Z-solidcraft`, such as
+(0.44 for now), and adds about 470 MB. Pin a release with `X.Y.Z-solidcraft`, such as
 `0.2.1-solidcraft`. In Compose, use `image: ghcr.io/dutchman-cad/dutchman:latest-solidcraft`.
 
 ### Build your own
@@ -207,13 +207,13 @@ RUN set -eu; \
 USER 1000:1000
 ```
 
-Then build it in that folder, with the SolidCraft 0.43.0 archive for x86_64 here, and use
+Then build it in that folder, with the SolidCraft 0.44.1 archive for x86_64 here, and use
 `dutchman` as before:
 
 ```sh
 docker build -t dutchman \
-  --build-arg SOLIDCRAFT_VERSION=0.43.0 \
-  --build-arg SOLIDCRAFT_SHA256=21eff6ddadc8b5b897e3eae3624a46de38ef33eb66dca364d486a4c61c33c815 .
+  --build-arg SOLIDCRAFT_VERSION=0.44.1 \
+  --build-arg SOLIDCRAFT_SHA256=d667d38cf1fd9516d3a09835946a428eb2825faec6765752451435412168b302 .
 ```
 
 It takes about a minute and adds about 470 MB. Build again after each `docker pull` to update

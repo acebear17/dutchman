@@ -7759,7 +7759,15 @@ fn solidcraft_replays_input_edge_flanges_with_the_expected_shape() {
             let corner = if back { "max" } else { "min" };
             let y = if back { 13.0 } else { -3.0 };
             assert!((actual["bbox"][corner][1].as_f64().unwrap() - y).abs() < 1e-6);
-            assert_eq!(actual["faces"], 14);
+            // 0.44 merges the plate, bend and flange side faces (one plane) into one face on each side: 14 becomes 10.
+            let version =
+                dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+            let faces = if version < "0.44.0".parse().unwrap() {
+                14
+            } else {
+                10
+            };
+            assert_eq!(actual["faces"], faces);
         }
     }
 }
