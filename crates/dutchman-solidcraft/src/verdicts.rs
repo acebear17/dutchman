@@ -47,7 +47,8 @@ pub struct FeatureVerdict {
 /// The verdicts of one part's features.
 #[derive(Debug)]
 pub struct PartVerdicts<'a> {
-    /// The part's file (or name) inside an assembly; `None` for a single part.
+    /// The part's file inside an assembly, or its name when it comes from the assembly's own
+    /// file; `None` for a single part.
     pub part: Option<String>,
     /// The part's model, for listing its bodies and parameters.
     pub model: &'a Model,
@@ -74,11 +75,13 @@ impl SolidCraftWriter {
         parts
             .into_iter()
             .map(|part| {
-                let file = part
-                    .source_file
-                    .clone()
-                    .unwrap_or_else(|| part.name.clone());
-                self.part_verdicts(part, part, Some(file))
+                // A part read from the assembly's own file (a FreeCAD or multi-component
+                // Fusion document) is named by its component, not by that shared file.
+                let label = match &part.source_file {
+                    Some(file) if part.source_file != model.source_file => file.clone(),
+                    _ => part.name.clone(),
+                };
+                self.part_verdicts(part, part, Some(label))
             })
             .collect()
     }

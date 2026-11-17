@@ -593,7 +593,7 @@ fn contents_json_lists_bodies_features_and_parameters() {
     assert_eq!(report["schema"], "dutchman.contents/1");
     assert_eq!(report["ok"], true);
     assert_eq!(report["bodies"]["count"], 1);
-    assert_eq!(report["bodies"]["items"][0]["kind"], "wire");
+    assert_eq!(report["bodies"]["items"][0]["kind"], "sheet");
     assert_eq!(report["features"]["count"], 1);
     let feature = &report["features"]["items"][0];
     assert_eq!(feature["kind"], "sketch");

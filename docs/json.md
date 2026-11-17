@@ -749,7 +749,7 @@ not run.
 | Field | Meaning |
 |---|---|
 | `solidcraft_version` | The SolidCraft release the verdicts are for: the newest Dutchman knows. |
-| `parts` | One row per part listed: `name` is the part file inside an assembly, `null` for a single part; counts of its bodies, features and parameters; `history_reason` says why none of its history maps, when none does (for example "the design carries no feature history"), else `null`. A part an assembly repeats is listed once. |
+| `parts` | One row per part listed: `name` is the part file inside an assembly (the component's name for a part held in the assembly's own file), `null` for a single part; counts of its bodies, features and parameters; `history_reason` says why none of its history maps, when none does (for example "the design carries no feature history"), else `null`. A part an assembly repeats is listed once. |
 | `bodies.items` | Each body: `part`, `name` (`null` when the source has none), `kind` (`solid`, `sheet`, `wire`, or `general` for mixed topology), and `hidden` when the source hides it. |
 | `features.items` | The timeline in order: `part`, `ordinal` (the source's timeline number), `kind` (cadmpeg's operation name), `name`, `variant` (its form, as in `history.features` of `dutchman.convert/1`), `suppressed`, `verdict` and `reason`. |
 | `features.verdicts` | How many features have each verdict; every verdict word is present. |

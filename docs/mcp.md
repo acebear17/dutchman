@@ -502,10 +502,12 @@ List what a file holds (shortened):
   "input":{"format":"fusion_archive","format_name":"Fusion archive (.f3d)","path":"/home/me/designs/design_sketch_constraints.f3d", …},
   "solidcraft_version":"0.43.0",
   "parts":[{"name":null,"bodies":1,"features":1,"parameters":2,"history_reason":"no feature in the history builds geometry"}],
-  "bodies":{"count":1,"items":[{"part":null,"name":…,"kind":"wire","hidden":false}]},
+  "bodies":{"count":1,"items":[{"part":null,"name":null,"kind":"sheet","hidden":false}]},
   "features":{"count":1,"verdicts":{"after_blocker":0,"left_out":0,"mapped":1,"needs_solidcraft_check":0,"not_needed":0,"not_supported_yet":0},
     "items":[{"part":null,"ordinal":0,"kind":"sketch","name":"Sketch 1","variant":null,"suppressed":false,"verdict":"mapped","reason":null}]},
-  "parameters":{"count":2,"items":[…]},
+  "parameters":{"count":2,"items":[
+    {"part":null,"name":"d1","value":10.0,"unit":"mm","expression":"10 mm","feature":"Sketch 1"},
+    {"part":null,"name":"d2","value":10.0,"unit":"mm","expression":"10 mm","feature":"Sketch 1"}]},
   "losses":[…]}}}
 ```
 

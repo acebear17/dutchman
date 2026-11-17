@@ -1044,23 +1044,8 @@ fn main() -> ExitCode {
             verbose,
             quiet,
         ),
-        Command::Contents {
-            input,
-            project,
-            search,
-            json,
-        } => contents(
-            &input,
-            &dutchman::PartSearch {
-                threads: 0,
-                part_positions: dutchman_core::PartPositions::Smart,
-                project,
-                also: search,
-            },
-            json,
-            quiet,
-            verbose,
-        ),
+        // Handled out of line: this function's frame is already large in debug builds.
+        command @ Command::Contents { .. } => contents_command(command, quiet, verbose),
         Command::Formats { json, markdown } => {
             if json {
                 print_json(&formats::json());
@@ -1621,6 +1606,27 @@ fn inspect(
     let losses = json::losses(&inspection.report);
     print_losses(losses.as_array().map_or(&[][..], Vec::as_slice), verbose);
     ExitCode::SUCCESS
+}
+
+/// Runs `dutchman contents`; any other command is a usage error.
+#[inline(never)]
+fn contents_command(command: Command, quiet: bool, verbose: bool) -> ExitCode {
+    let Command::Contents {
+        input,
+        project,
+        search,
+        json,
+    } = command
+    else {
+        return ExitCode::from(2);
+    };
+    let search = dutchman::PartSearch {
+        threads: 0,
+        part_positions: dutchman_core::PartPositions::Smart,
+        project,
+        also: search,
+    };
+    contents(&input, &search, json, quiet, verbose)
 }
 
 fn contents(

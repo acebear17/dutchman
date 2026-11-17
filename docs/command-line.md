@@ -221,8 +221,8 @@ expression and the feature it belongs to. The verdicts are:
 | `not supported yet` | Dutchman can't map it yet; the reason says why. |
 | `after blocker` | An earlier feature stops the history, so this one is kept in the imported final shape. |
 
-For an assembly, each line is marked with its part file, and a part repeated in the assembly
-is listed once. `contents --json` prints the same as a
+For an assembly, each line is marked with its part file (or, for a part held in the
+assembly's own file, its component name), and a part repeated in the assembly is listed once. `contents --json` prints the same as a
 [`dutchman.contents/1`](json.md#dutchmancontents1) report.
 
 ## Progress during conversion
