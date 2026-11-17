@@ -16,6 +16,11 @@ The reader accepts stored and deflated members, without
 extracting them to disk. Assemblies and bundles with multiple elements are not
 supported yet; fetch one Part Studio instead.
 
+A Part Studio with several parts converts as one design holding every part as a
+body, with one shared history, as in Onshape. Its STEP export lists each part as a
+product of its own; when every part sits once in the Part Studio's own frame, those
+products are not written as an assembly.
+
 Amended v1 manifests may record each file's request path kind (`m`, `v`, or `w`)
 and microversion, with a bundle-level `consistent` flag. A bundle marked
 `consistent: false` is refused: fetch it again, or use an immutable version link.
@@ -32,7 +37,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
 | Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane. Multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
-| Solid revolve | Full or one-direction angle about a resolved straight input edge or sketch construction line | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
+| Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
 | Fillet | Circular, constant radius, explicit input edges and resolvable tangent chains | Variable, partial, conic, curvature and overflow forms are not supported yet. Tangent propagation needs complete shared vertex IDs and endpoint tangents. The writer must prove every edge on replay. |
 | Chamfer | Equal offsets, explicit input edges | Unequal and angle forms are not supported yet. Tangent propagation has the same completeness requirement as fillets. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind to the shoulder with its drill point (118° when the feature leaves it out) or a flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A tapped hole keeps an ISO metric thread as a cosmetic label over the whole hole; its thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |

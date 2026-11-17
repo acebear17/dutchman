@@ -269,9 +269,11 @@ fn sketch_axis(feature: &Value, model: &Model) -> Mapping<Value> {
     };
     let start = world("start")?;
     let end = world("end")?;
-    Ok(
-        json!({"origin":topology::point(start), "direction":topology::point(topology::unit(topology::sub(end,start))?)}),
-    )
+    // The reference keeps the axis tied to its line, so the written revolve follows the
+    // line when the sketch is edited; origin and direction remain the placed axis.
+    Ok(json!({"origin":topology::point(start),
+        "direction":topology::point(topology::unit(topology::sub(end,start))?),
+        "reference":{"kind":"sketch_curves","value":{"sketch":sketch_id,"curves":[entity_id]}}}))
 }
 
 fn operation(feature: &Value) -> Mapping<&'static str> {

@@ -107,6 +107,56 @@ fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool) {
     );
 }
 
+/// A Part Studio is one design: its parts share one feature list and one frame. Its STEP
+/// export still states each part as a root product of its own, which would convert as an
+/// assembly whose parts hold none of that history. Parts that are each placed once, at the
+/// identity, become the design's own bodies, unless anything else names those placements.
+fn part_studio_bodies(model: &mut Model) {
+    use cadmpeg_ir::products::{OccurrenceParent, PrototypeReference};
+    let rows = &model.ir.model;
+    if rows.occurrences.len() < 2 || !rows.assembly_joints.is_empty() {
+        return;
+    }
+    let mut placed = std::collections::BTreeSet::new();
+    for occurrence in &rows.occurrences {
+        let PrototypeReference::Local { definition } = &occurrence.prototype else {
+            return;
+        };
+        if !matches!(occurrence.parent, OccurrenceParent::Root {})
+            || occurrence.transform != cadmpeg_ir::transform::Transform::identity()
+            || occurrence.scale.iter().any(|s| s.get() != 1.0)
+            || occurrence.linked_prototype.is_some()
+            || occurrence.link.is_some()
+            || occurrence.visible == Some(false)
+            || !placed.insert(definition.as_str())
+        {
+            return;
+        }
+    }
+    if rows.product_definitions.len() != placed.len()
+        || rows
+            .product_definitions
+            .iter()
+            .any(|definition| !placed.contains(definition.id.as_str()))
+    {
+        return;
+    }
+    // Each placement is named only by its own row; any other mention keeps the product
+    // structure as decoded. The products themselves stay, with their names and bodies.
+    let Ok(text) = serde_json::to_string(&model.ir) else {
+        return;
+    };
+    let named = |id: &str| text.matches(&format!("\"{id}\"")).count();
+    if rows
+        .occurrences
+        .iter()
+        .any(|occurrence| named(occurrence.id.as_str()) != 1)
+    {
+        return;
+    }
+    model.ir.model.occurrences.clear();
+}
+
 pub(super) fn read(
     path: &std::path::Path,
     bytes: &[u8],
@@ -167,6 +217,7 @@ pub(super) fn read(
         model.source_step = Some(String::from_utf8(source.to_vec()).map_err(|_| {
             Error::Decode("Onshape STEP export is not UTF-8; fetch a new bundle".into())
         })?);
+        part_studio_bodies(&mut model);
         model
     } else if !features.is_empty()
         && features.iter().all(|feature| {

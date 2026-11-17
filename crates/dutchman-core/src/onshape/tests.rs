@@ -655,10 +655,11 @@ fn tangent_propagation_follows_vertices_and_refuses_incomplete_chains() {
 
 #[test]
 fn revolve_uses_a_construction_line_in_the_sketch_frame() {
+    let mut native = String::new();
     let bytes = changed_fixture(
         include_bytes!("../../tests/fixtures/onshape-revolve.onshape-bundle"),
         |response| {
-            let native = response["features"][0]["featureId"]
+            native = response["features"][0]["featureId"]
                 .as_str()
                 .unwrap()
                 .to_owned();
@@ -688,6 +689,12 @@ fn revolve_uses_a_construction_line_in_the_sketch_frame() {
         wire["features"][1]["definition"]["value"]["value"]["construction"]["value"]["axis"]
             ["direction"],
         topology::point([0.0, 1.0, 0.0])
+    );
+    assert_eq!(
+        wire["features"][1]["definition"]["value"]["value"]["construction"]["value"]["axis"]
+            ["reference"],
+        json!({"kind":"sketch_curves","value":{"sketch":super::id("sketch", &native),
+            "curves":[super::id("entity", &format!("{native}/axis-line"))]}})
     );
 }
 
@@ -840,4 +847,49 @@ fn an_opaque_external_id_is_not_assumed_to_be_the_origin() {
     assert!(report.losses().iter().any(|l| l.code.as_deref()
         == Some("onshape/sketch.constraint-not-supported")
         && l.detail.contains("does not identify the sketch origin")));
+}
+
+/// The revolve fixture's model with its body owned by one of two root products, each placed
+/// once; `x` moves the second placement.
+fn two_part_studio(x: f64) -> Model {
+    let mut report = Report::default();
+    let model = crate::read_bytes(
+        Format::OnshapeBundle,
+        std::path::Path::new("synthetic.onshape-bundle"),
+        include_bytes!("../../tests/fixtures/onshape-revolve.onshape-bundle"),
+        &mut report,
+    )
+    .unwrap();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
+    wire["model"]["product_definitions"] = json!([
+        {"id": "synthetic:test:component#first", "kind": "part", "label": "Part 1", "bodies": [body], "bom_properties": {}, "sketches": []},
+        {"id": "synthetic:test:component#second", "kind": "part", "label": "Part 2", "bodies": [], "bom_properties": {}, "sketches": []},
+    ]);
+    let placed = |key: u32, definition: &str, x: f64| {
+        json!({"id": format!("synthetic:test:occurrence#{key}"),
+            "prototype": {"kind": "local", "definition": format!("synthetic:test:component#{definition}")},
+            "parent": {"kind": "root"}, "ordinal": key,
+            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            "scale": [1.0, 1.0, 1.0]})
+    };
+    wire["model"]["occurrences"] = json!([placed(0, "first", 0.0), placed(1, "second", x)]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn part_studio_parts_are_one_design_but_moved_parts_stay_placed() {
+    let mut model = two_part_studio(0.0);
+    part_studio_bodies(&mut model);
+    assert!(model.ir.model.occurrences.is_empty());
+    assert_eq!(model.ir.model.product_definitions.len(), 2);
+    assert!(crate::local_assembly(&model).unwrap().is_none());
+
+    let mut moved = two_part_studio(30.0);
+    part_studio_bodies(&mut moved);
+    assert_eq!(moved.ir.model.occurrences.len(), 2);
+    assert!(crate::local_assembly(&moved).unwrap().is_some());
 }
