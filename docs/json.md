@@ -279,6 +279,8 @@ sketch carries the source's bodies, which Fusion files can. In a design with com
 that features of more than one component carry isn't any one component's state, so it isn't used.
 A base feature written with its body as the design ends (`final_body`) isn't compared either: the
 source's stored state after it is the body before later features changed it.
+A base feature written with its own body as the source keeps it (a history body) is compared
+like any other feature.
 A state whose source marks any body centre as based on incomplete edge evidence
 (`body_centers_incomplete`) is not compared, even if every body has a centre entry, so the
 history stays unverified there.
