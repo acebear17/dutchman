@@ -1052,6 +1052,36 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
         .is_none());
 }
 
+#[cfg(unix)]
+#[test]
+fn solidcraft_panel_refuses_a_chosen_cli_older_than_the_oldest_supported() {
+    if isolate_missing_cli_preview(
+        "solidcraft_panel_refuses_a_chosen_cli_older_than_the_oldest_supported",
+    ) {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("solidcraft-cli");
+    std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.17.0'\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1120.0, 680.0))
+        .build_eframe(|cc| test_app(cc));
+    harness.state_mut().preview_solidcraft(None);
+    harness.run_steps(8);
+    harness
+        .get_by_label("SolidCraft not found")
+        .click_accesskit();
+    harness.run_steps(8);
+    harness.state_mut().choose_solidcraft_cli(&cli);
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label_contains("older than the 0.18.2 Dutchman supports")
+        .is_some());
+    assert!(harness.query_by_label("Find automatically").is_none());
+}
+
 #[test]
 fn update_pill_adapts_to_width_and_waits_for_a_click() {
     for (width, label) in [(760.0, "Update"), (1000.0, "Update to 0.2.6")] {

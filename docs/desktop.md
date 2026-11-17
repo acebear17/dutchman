@@ -186,7 +186,8 @@ opens the update window, when the update check already knows a newer Dutchman. T
 [Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
 
 **Choose solidcraft-cli…** in the panel picks the command-line tool that checks histories and
-remembers it; **Find automatically** goes back to searching. Choosing the SolidCraft app uses the
+remembers it; **Find automatically** goes back to searching. A file that does not answer as
+SolidCraft, or answers as a release older than 0.18.2, is refused with a message saying so. Choosing the SolidCraft app uses the
 `solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
 download leaves it out, and the portable ZIP and the MSI installer include it.
 

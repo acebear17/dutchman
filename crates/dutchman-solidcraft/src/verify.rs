@@ -384,6 +384,18 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
     let says_solidcraft = version_of(&cli)?.filter(|line| {
         line.to_ascii_lowercase().contains("solidcraft") && parse_version(line).is_some()
     });
+    if let Some(version) = says_solidcraft.as_deref().and_then(parse_version) {
+        if version < OLDEST_SOLIDCRAFT {
+            let [major, minor, patch] = OLDEST_SOLIDCRAFT;
+            return Err(format!(
+                "{} is SolidCraft {}.{}.{}, which is older than the {major}.{minor}.{patch} Dutchman supports. Choose the solidcraft-cli of a newer SolidCraft.",
+                cli.display(),
+                version[0],
+                version[1],
+                version[2]
+            ));
+        }
+    }
     match says_solidcraft {
         Some(_) => Ok(cli),
         None => Err(format!(
@@ -2741,6 +2753,16 @@ mod cli_tests {
         assert!(chosen_cli(&other)
             .unwrap_err()
             .contains("did not answer as solidcraft-cli"));
+    }
+
+    #[test]
+    fn a_chosen_cli_older_than_the_oldest_supported_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.17.0");
+        let why = chosen_cli(&cli).unwrap_err();
+        assert!(why.contains("older than the 0.18.2"), "{why}");
+        let floor = version_script(dir.path(), "floor", "solidcraft-cli 0.18.2");
+        assert_eq!(chosen_cli(&floor), Ok(floor));
     }
 
     #[test]
