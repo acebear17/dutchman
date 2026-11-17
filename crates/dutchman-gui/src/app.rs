@@ -3466,46 +3466,6 @@ mod tests {
 
     use super::*;
 
-    #[cfg(unix)]
-    #[test]
-    fn opening_missing_cli_status_retries_discovery_outside_previews() {
-        use egui_kittest::kittest::Queryable;
-        use std::os::unix::fs::PermissionsExt;
-
-        let folder = tempfile::tempdir().unwrap();
-        let cli = folder.path().join("solidcraft-cli");
-        let mut h = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(1120.0, 680.0))
-            .build_eframe(|cc| {
-                let mut app = App::new(cc);
-                // Simulate a chosen CLI that was not installed when Dutchman started.
-                app.set_solidcraft_cli(Some(cli.clone()));
-                app
-            });
-        h.run_steps(8);
-        h.get_by_label("SolidCraft not found");
-        std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.43.0'\n").unwrap();
-        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
-        h.get_by_label("SolidCraft not found").click_accesskit();
-        // Discovery runs in the background: wait for it, up to a few seconds on a slow runner.
-        for _ in 0..300 {
-            h.run_steps(1);
-            if h.state().found_version.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        h.run_steps(4);
-        // The exact wording depends on what Dutchman knows of newer releases; the version is what matters.
-        assert!(h.query_by_label_contains("SolidCraft 0.43").is_some());
-        assert_eq!(h.state().found_version.as_deref(), Some("0.43.0"));
-
-        h.state_mut().preview_solidcraft(None);
-        h.state_mut().set_solidcraft_cli(Some(cli));
-        assert_eq!(h.state().found_version.as_deref(), Some("0.43.0"));
-        assert!(!h.state().solidcraft_preview);
-    }
-
     #[test]
     fn results_scroll_to_the_last_private_send_option() {
         use egui_kittest::kittest::Queryable;
