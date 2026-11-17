@@ -3618,8 +3618,14 @@ struct FlowCase {
 #[cfg(feature = "test-support")]
 fn click_first(harness: &mut Harness<'static, App>, labels: &[&str]) -> bool {
     for label in labels {
-        if let Some(node) = harness.query_all_by_label(label).next() {
-            node.click_accesskit();
+        let found = match harness.query_all_by_label(label).next() {
+            Some(node) => {
+                node.click_accesskit();
+                true
+            }
+            None => false,
+        };
+        if found {
             harness.run_steps(12);
             return true;
         }
@@ -3820,8 +3826,14 @@ fn report_flow_case_screenshots() {
                 dutchman::present::REPORT_CONVERTED,
             ],
         );
-        if let Some(node) = h.query_all_by_label("Copy and open DM").next() {
-            node.scroll_to_me();
+        let dm = match h.query_all_by_label("Copy and open DM").next() {
+            Some(node) => {
+                node.scroll_to_me();
+                true
+            }
+            None => false,
+        };
+        if dm {
             h.run_steps(12);
         }
         shot(
