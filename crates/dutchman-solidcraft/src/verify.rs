@@ -414,6 +414,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Removals of whole bodies (`remove`).
+    RemoveBody,
 }
 
 impl VersionGate {
@@ -422,6 +424,7 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::RemoveBody => SolidCraftVersion::V0_40_0,
         }
     }
 
@@ -488,6 +491,9 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// The oldest release in the window when body removals were first written.
+    pub const V0_40_0: Self = Self([0, 40, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
