@@ -51,19 +51,18 @@ pub(crate) trait Host {
     }
 }
 
-/// A measurement alone, with no sketch regions: planning and tests.
-impl<F> Host for F
-where
-    F: FnMut(&History, Option<&[crate::verify::StoredBody]>, bool, bool) -> Fit,
-{
+/// Planning measures nothing: every candidate is unknown, so the refusal stands.
+pub(crate) struct Unmeasured;
+
+impl Host for Unmeasured {
     fn fit(
         &mut self,
-        prefix: &History,
-        stored: Option<&[crate::verify::StoredBody]>,
-        final_state: bool,
-        compare: bool,
+        _: &History,
+        _: Option<&[crate::verify::StoredBody]>,
+        _: bool,
+        _: bool,
     ) -> Fit {
-        self(prefix, stored, final_state, compare)
+        Fit::Unknown
     }
 }
 
