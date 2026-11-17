@@ -296,9 +296,22 @@ fn constraint_row(
                 &format!("{native}/{}", text(constraint, "entityId")?),
             );
             let parameter_ordinal = model.parameters.len();
+            let owner = id("feature", native);
+            // Ordinals number the parameters within their owning feature; cadmpeg's model
+            // check refuses two parameters of one feature with the same ordinal.
+            let ordinal_in_owner = model
+                .parameters
+                .iter()
+                .filter(|parameter| {
+                    parameter
+                        .owner
+                        .as_ref()
+                        .is_some_and(|scope| scope.as_str() == owner)
+                })
+                .count();
             push(
                 &mut model.parameters,
-                json!({"id": pid, "owner": id("feature", native), "name": format!("dimension{parameter_ordinal}"),
+                json!({"id": pid, "owner": owner, "ordinal": ordinal_in_owner, "name": format!("dimension{parameter_ordinal}"),
                 "expression": format!("{value} {}", if kind == "ANGLE" { "rad" } else { "mm" }),
                 "value": {"kind": if kind == "ANGLE" { "angle" } else { "length" }, "value": value}}),
             )?;
