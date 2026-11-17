@@ -1987,7 +1987,8 @@ fn techdraw_dxf_exports_page_text_and_reports_missing_ir_geometry() {
         .clone();
     model.ir.model.view_presentations.push(
         serde_json::from_value(serde_json::json!({
-            "id": "test:dxf:presentation#note", "object": note, "order": 0, "visible": false
+            "id": "test:dxf:presentation#note", "object": note, "order": 0, "visible": false,
+            "properties": {}
         }))
         .unwrap(),
     );

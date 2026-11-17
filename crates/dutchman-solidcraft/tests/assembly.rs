@@ -345,9 +345,11 @@ fn a_part_with_no_bodies_is_an_empty_component_its_joints_still_join() {
         let mut empty = assembly.parts[0].clone();
         let mut wire = serde_json::to_value(&empty.ir).unwrap();
         // Every arena emptied: a component with nothing in it.
-        for arena in wire["model"].as_object_mut().unwrap().values_mut() {
-            if arena.is_array() {
-                *arena = serde_json::json!([]);
+        for home in ["geometry", "model"] {
+            for arena in wire[home].as_object_mut().unwrap().values_mut() {
+                if arena.is_array() {
+                    *arena = serde_json::json!([]);
+                }
             }
         }
         empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -413,9 +415,11 @@ fn empty_leaf_numbers_include_holders_and_are_stable_across_workers() {
     let top = model.assembly.as_mut().unwrap();
     let mut empty = top.parts[0].clone();
     let mut wire = serde_json::to_value(&empty.ir).unwrap();
-    for arena in wire["model"].as_object_mut().unwrap().values_mut() {
-        if arena.is_array() {
-            *arena = json!([]);
+    for home in ["geometry", "model"] {
+        for arena in wire[home].as_object_mut().unwrap().values_mut() {
+            if arena.is_array() {
+                *arena = json!([]);
+            }
         }
     }
     empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -3176,7 +3180,7 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
         wire["geometry"]["shells"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"id":shell,"region":region,"members":[{"kind":"face","id":face}]}));
+            .push(json!({"id":shell,"region":region,"members":[]}));
         wire["geometry"]["faces"].as_array_mut().unwrap().push(json!({"id":face,"shell":shell,"surface":surface,"sense":"forward","loops":{"kind": "unspecified", "loops": []}}));
         wire["geometry"]["surfaces"].as_array_mut().unwrap().push(
             json!({"id": surface, "geometry": {"kind":"solved", "value": {

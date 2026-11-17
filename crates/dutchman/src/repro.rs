@@ -572,9 +572,12 @@ fn kinds(model: &Model) -> Value {
     let document = serde_json::to_value(&model.ir).unwrap_or(Value::Null);
     for surface in &model.ir.geometry.surfaces {
         let value = serde_json::to_value(&surface.geometry).unwrap_or(Value::Null);
-        let kind = value
-            .get("value")
-            .unwrap_or(&value)
+        let geometry = if value.get("kind").and_then(Value::as_str) == Some("solved") {
+            value.get("value").unwrap_or(&Value::Null)
+        } else {
+            &value
+        };
+        let kind = geometry
             .get("kind")
             .and_then(Value::as_str)
             .filter(|k| {
