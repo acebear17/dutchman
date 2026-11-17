@@ -2959,6 +2959,52 @@ fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
     assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
 }
 
+/// `holed_cube` with its extruded block replaced by a box feature of `height` standing on the
+/// origin with a 10 x 10 footprint.
+fn holed_box(height: f64) -> Model {
+    let mut model = holed_cube(4.0, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let identity = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    wire["model"]["features"][1]["definition"]["value"] = block([10.0, 10.0, height], identity);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_hole_on_the_face_of_a_box_primitive_maps() {
+    let (document, report) = convert(
+        &holed_box(10.0),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    assert_eq!(document["features"][1]["type"], "box");
+    let hole = &document["features"][3];
+    assert_eq!(hole["type"], "hole");
+    assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+}
+
+#[test]
+fn a_hole_on_a_face_the_box_primitive_lacks_still_refuses() {
+    // The box stops at z = 8, so the face at z = 10 is not one of its faces.
+    let (_, report) = convert(
+        &holed_box(8.0),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("its face is not proven to exist before the hole"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 #[test]
 fn counterbores_and_countersinks_keep_their_entry_dimensions() {
     for version in ["0.18.2", "0.25.1"] {

@@ -908,6 +908,9 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> 
         })
         .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))?;
     let op = super::operation(previous);
+    if super::operation_kind(previous) == Some("block") {
+        return box_cap(op, face);
+    }
     if super::operation_kind(previous) != Some("extrude")
         || op.get("op").and_then(Value::as_str) != Some("new_body")
         || op.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
@@ -992,6 +995,65 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> 
             let along = if height == 0.0 { -direction } else { direction };
             sketch.normal.map(|c| c * along)
         })
+    })
+}
+
+/// A box made as a new body: `face` must be one of its six faces, its four corners being four
+/// corners of the box that share a side. Returns the way that side faces, out of the box.
+fn box_cap(op: &Value, face: &PlanarFace) -> Option<V3> {
+    if op.get("op").and_then(Value::as_str) != Some("new_body") {
+        return None;
+    }
+    let (low, extent) = super::primitive::box_bounds(op).ok()?;
+    let high = [low[0] + extent[0], low[1] + extent[1], low[2] + extent[2]];
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-7;
+    if face.corners.len() != 4 {
+        return None;
+    }
+    (0..3).find_map(|axis| {
+        let at = |corner: &V3| corner.get(axis).copied();
+        let first = at(face.corners.first()?)?;
+        let side = [(low.get(axis)?, -1.0), (high.get(axis)?, 1.0)]
+            .into_iter()
+            .find(|(bound, _)| near(first, **bound))?
+            .1;
+        let bound = if side < 0.0 { low } else { high };
+        let bound = *bound.get(axis)?;
+        if !face
+            .corners
+            .iter()
+            .all(|c| at(c).is_some_and(|v| near(v, bound)))
+        {
+            return None;
+        }
+        // The four corners are the four distinct corners of that side.
+        let (u, v) = match axis {
+            0 => (1, 2),
+            1 => (0, 2),
+            _ => (0, 1),
+        };
+        let mut seen = [false; 4];
+        for corner in &face.corners {
+            let pick = |i: usize, lo: &V3, hi: &V3| {
+                let value = *corner.get(i)?;
+                if near(value, *lo.get(i)?) {
+                    Some(0)
+                } else if near(value, *hi.get(i)?) {
+                    Some(1)
+                } else {
+                    None
+                }
+            };
+            let slot = pick(u, &low, &high)? * 2 + pick(v, &low, &high)?;
+            let cell = seen.get_mut(slot)?;
+            if *cell {
+                return None;
+            }
+            *cell = true;
+        }
+        let mut outward = [0.0; 3];
+        *outward.get_mut(axis)? = side;
+        Some(outward)
     })
 }
 
