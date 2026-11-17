@@ -414,6 +414,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Fillets and chamfers that blend only their listed edges (`tangent_chain: false`).
+    BlendListedEdges,
 }
 
 impl VersionGate {
@@ -422,6 +424,7 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::BlendListedEdges => SolidCraftVersion::V0_40_0,
         }
     }
 
@@ -438,6 +441,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SketchProfileCoil,
         VersionGate::MirrorChain,
         VersionGate::ConePrimitive,
+        VersionGate::BlendListedEdges,
     ]
     .into_iter()
     .any(|gate| {
@@ -488,6 +492,9 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// First release whose fillets and chamfers can blend only their picked edges.
+    pub const V0_40_0: Self = Self([0, 40, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
