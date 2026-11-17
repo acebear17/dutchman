@@ -2959,10 +2959,11 @@ fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
     assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
 }
 
-/// `holed_cube` with its extruded block replaced by a box feature of `height` standing on the
-/// origin with a 10 x 10 footprint.
+/// `historical_hole` (a hole placed on a face of the earlier body, so the face must be proven)
+/// with its extruded block replaced by a box feature of `height` standing on the origin with a
+/// 10 x 10 footprint.
 fn holed_box(height: f64) -> Model {
-    let mut model = holed_cube(4.0, |_| {});
+    let mut model = historical_hole(false, directed([5.0, 5.0, 10.0], [0.0, 0.0, -1.0]));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let identity = [
         [1.0, 0.0, 0.0, 0.0],
@@ -2976,33 +2977,16 @@ fn holed_box(height: f64) -> Model {
 
 #[test]
 fn a_hole_on_the_face_of_a_box_primitive_maps() {
-    let (document, report) = convert(
-        &holed_box(10.0),
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
-    assert!(
-        history_line(&report).starts_with("4 of 4 features rebuilt"),
-        "{}",
-        history_line(&report)
-    );
-    assert_eq!(document["features"][1]["type"], "box");
-    let hole = &document["features"][3];
-    assert_eq!(hole["type"], "hole");
+    let hole = mapped_hole(&holed_box(10.0)).unwrap();
     assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+    assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
 }
 
 #[test]
 fn a_hole_on_a_face_the_box_primitive_lacks_still_refuses() {
     // The box stops at z = 8, so the face at z = 10 is not one of its faces.
-    let (_, report) = convert(
-        &holed_box(8.0),
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
-    assert!(
-        history_line(&report).contains("its face is not proven to exist before the hole"),
-        "{}",
-        history_line(&report)
-    );
+    let why = mapped_hole(&holed_box(8.0)).unwrap_err();
+    assert!(why.contains("not proven to exist before the hole"), "{why}");
 }
 
 #[test]
