@@ -414,6 +414,12 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// A tapped hole's thread length and left hand (`thread_depth`, `hand`). SolidCraft has
+    /// stored a thread length since 0.22.1; the gate starts at the oldest release of the
+    /// support window, and older targets keep the full-length label and report the loss.
+    HoleThreadDepth,
+    /// A tapped hole's tolerance class (`thread_class`), first stored by SolidCraft 0.43.0.
+    HoleThreadClass,
 }
 
 impl VersionGate {
@@ -422,6 +428,8 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::HoleThreadDepth => SolidCraftVersion::V0_40_0,
+            Self::HoleThreadClass => SolidCraftVersion::V0_43_0,
         }
     }
 
@@ -488,6 +496,12 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// First release that names a tapped hole's thread `hand` (earlier: `handedness`).
+    pub const V0_40_0: Self = Self([0, 40, 0]);
+
+    /// First release that stores a tapped hole's `thread_class`.
+    pub const V0_43_0: Self = Self([0, 43, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
@@ -3267,6 +3281,10 @@ mod version_tests {
         assert!(!target_loses_history(after));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
+        assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));
+        assert!(VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_40_0));
+        assert!(!VersionGate::HoleThreadClass.supported("0.42.0".parse().unwrap()));
+        assert!(VersionGate::HoleThreadClass.supported(SolidCraftVersion::V0_43_0));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());
         assert!("0.18.2".parse::<SolidCraftVersion>().is_ok());
         assert_ne!(

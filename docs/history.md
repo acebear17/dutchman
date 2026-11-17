@@ -193,8 +193,11 @@ Those edges must belong to one hidden result of an earlier dependency, and still
 same replay proof. A resolved selection without that proven earlier result is refused.
 
 Hole history includes chamfered entries and tapped holes: the hole keeps its bore and an ISO
-metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
-across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry
+metric thread label such as `M6x1`. For SolidCraft 0.40 and newer a left-hand thread keeps
+its hand, and a blind hole without an entry recess keeps its thread length; SolidCraft 0.43
+and newer also keep an ISO tolerance class such as `6H`. What doesn't carry across (a thread
+length in a through or recessed hole, or any of these on an older target) is listed in the
+report as Degraded. Taper, exit treatments, modeled threads, and entry
 recesses combined with drill points are not supported yet, and the report names the option.
 A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
 0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only
