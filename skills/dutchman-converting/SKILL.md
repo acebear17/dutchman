@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES and Creo), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
 ---
 
 # Converting CAD files with Dutchman
@@ -176,9 +176,10 @@ workers, reduced for dense parts or a large retained preparation queue.
 Call `formats` for the installed build's formats, status `words` and `converts`.
 Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none is
 published; reader status still determines whether conversion can be attempted.
-Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS and STEP
+Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, NX, Creo View, Rhino, ACIS and STEP
 can convert geometry. Creo and NX parts are identified by contents
-(they share `.prt`) and currently open without geometry, so conversion is refused. SolidWorks
+(they share `.prt`); NX parts convert their geometry, without feature history, and Creo
+parts currently open without geometry, so their conversion is refused. SolidWorks
 assemblies are recognised without a reader. `input.words` appears on
 conversion successes and failures. Reader status describes capability; the actual
 history and verification report says what the file kept. CLI `--quiet` hides the volunteer
@@ -205,7 +206,7 @@ For anything else, don't try workarounds such as renaming the file. Tell the use
   and unreadable occurrences are left out and reported. Unavailable referenced configurations
   fall back to the saved active configuration with a Degraded loss. Suppressed and mirrored
   components follow cadmpeg's loss notes.
-- **Creo and NX**: reading geometry is not supported yet.
+- **Creo**: reading geometry is not supported yet.
   Suggest exporting STEP from the program that made the design and converting that.
 - **Inventor assemblies (`.iam`)** convert, but need their part files next to the assembly
   (or at the paths it stores). If parts are missing, the report lists them as `Dropped`.
