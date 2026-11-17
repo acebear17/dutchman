@@ -149,6 +149,8 @@ pub struct App {
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     solidcraft_open: bool,
+    /// Keep an explicit UI preview independent of the installed CLI.
+    solidcraft_preview: bool,
     /// Where the search for `solidcraft-cli` looked, when it found none.
     search_note: String,
     /// Where the header ends, so its windows open below its controls.
@@ -444,6 +446,7 @@ impl App {
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
+            solidcraft_preview: false,
             search_note,
             header_bottom: 72.0,
             solidcraft_cli_error: None,
@@ -492,7 +495,9 @@ impl App {
     }
 
     /// Supplies an installed release without requiring SolidCraft for UI previews.
+    /// Opening the status panel keeps this preview until a real CLI is chosen or searched for.
     pub fn preview_solidcraft(&mut self, found: Option<&str>) {
+        self.solidcraft_preview = true;
         self.found_version = found.map(str::to_owned);
         self.detected_version = found.and_then(|v| v.parse().ok()).unwrap_or_default();
         self.detected_version = self.detected_version.min(Default::default());
@@ -525,6 +530,7 @@ impl App {
     /// Checks histories with the `solidcraft-cli` a person chose, or searches for one again.
     /// A target left on Automatic follows the release this finds.
     pub fn set_solidcraft_cli(&mut self, cli: Option<PathBuf>) {
+        self.solidcraft_preview = false;
         let automatic = self.options.solidcraft_version == Some(self.detected_version);
         let checking = checking_with(cli.as_ref());
         self.options.solidcraft = cli;
@@ -1915,7 +1921,7 @@ impl App {
             .clicked()
         {
             self.solidcraft_open = !self.solidcraft_open;
-            if self.solidcraft_open && self.found_version.is_none() {
+            if self.solidcraft_open && self.found_version.is_none() && !self.solidcraft_preview {
                 // Search again: SolidCraft may have been installed, or been slow to start.
                 self.set_solidcraft_cli(self.options.solidcraft.clone());
             }
@@ -3459,6 +3465,37 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_missing_cli_status_retries_discovery_outside_previews() {
+        use egui_kittest::kittest::Queryable;
+        use std::os::unix::fs::PermissionsExt;
+
+        let folder = tempfile::tempdir().unwrap();
+        let cli = folder.path().join("solidcraft-cli");
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1120.0, 680.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                // Simulate a chosen CLI that was not installed when Dutchman started.
+                app.set_solidcraft_cli(Some(cli.clone()));
+                app
+            });
+        h.run_steps(8);
+        h.get_by_label("SolidCraft not found");
+        std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.43.0'\n").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        h.get_by_label("SolidCraft not found").click_accesskit();
+        h.run_steps(8);
+        h.get_by_label("SolidCraft 0.43 is installed.");
+        assert_eq!(h.state().found_version.as_deref(), Some("0.43.0"));
+
+        h.state_mut().preview_solidcraft(None);
+        h.state_mut().set_solidcraft_cli(Some(cli));
+        assert_eq!(h.state().found_version.as_deref(), Some("0.43.0"));
+        assert!(!h.state().solidcraft_preview);
+    }
 
     #[test]
     fn results_scroll_to_the_last_private_send_option() {

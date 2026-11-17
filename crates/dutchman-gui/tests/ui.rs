@@ -961,6 +961,53 @@ fn isolate_missing_cli_preview(test: &str) -> bool {
 }
 
 #[test]
+fn solidcraft_and_onshape_panels_keep_their_own_state() {
+    for width in [760.0, 1120.0] {
+        for connected in [false, true] {
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(width, 900.0))
+                .build_eframe(|cc| test_app(cc));
+            h.state_mut().preview_solidcraft(None);
+            h.state_mut().preview_solidcraft_app(false);
+            h.state_mut()
+                .preview_onshape(connected.then_some("Test designer"));
+            h.state_mut()
+                .set_clipboard_for_test(|| (vec![], String::new()));
+            h.run_steps(8);
+            let status = if width < 920.0 {
+                "not found"
+            } else {
+                "SolidCraft not found"
+            };
+            h.get_by_label(status).click_accesskit();
+            h.run_steps(8);
+            h.get_by_label_contains("SolidCraft not found. Install SolidCraft");
+            assert!(h.query_by_label("Your Onshape API keys").is_none());
+            h.get_by_label(status).click_accesskit();
+            h.run_steps(8);
+            assert!(h.query_by_label("SolidCraft version").is_none());
+
+            h.get_by_label(if connected {
+                "Onshape connected ✓"
+            } else {
+                "Connect Onshape"
+            })
+            .click_accesskit();
+            h.run_steps(8);
+            if connected {
+                h.get_by_label("Connected to Onshape as Test designer");
+            } else {
+                h.get_by_label("Your Onshape API keys");
+            }
+            assert!(h.query_by_label("SolidCraft version").is_none());
+            h.get_by_label(status).click();
+            h.run_steps(8);
+            h.get_by_label_contains("SolidCraft not found. Install SolidCraft");
+        }
+    }
+}
+
+#[test]
 fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     if isolate_missing_cli_preview(
         "solidcraft_status_panel_waits_for_a_click_and_shares_version_notices",
