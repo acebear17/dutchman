@@ -1,2 +1,0 @@
-Dutchman 0.2.10 is taking a long time with my file (2 min 59 s elapsed).
-What's happening: 
