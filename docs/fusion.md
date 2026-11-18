@@ -42,6 +42,19 @@ Historical body centres use bounded samples along curved edges as well as vertic
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
 only bodies certified as exact have exact bounding-box centres.
 
+## Public Fusion shares
+
+The desktop app accepts pasted `a360.co` and `*.autodesk360.com` links and dropped
+`.url`/`.webloc` shortcuts (or URL text where the desktop delivers it);
+`dutchman convert <url>` accepts them too. The share page must expose a public file
+download URL or download link reachable without login. Dutchman downloads that native
+file and runs the existing local conversion; conversion coverage is unchanged.
+
+When a share needs login, has expired, disables downloads, or exposes no public download,
+Dutchman asks you to download the design in Fusion and drop the file into the app.
+Downloads stay on allowlisted Autodesk HTTPS hosts, with a 200 MB cap and two-minute
+timeout. See [Public share links](guide.md#public-share-links) for limits and cleanup.
+
 ## Mesh bodies
 
 When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies

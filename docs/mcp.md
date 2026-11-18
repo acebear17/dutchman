@@ -12,6 +12,19 @@ native profile selection can't be resolved, Dutchman tries the selected curves a
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
+## Public share links in the app and CLI
+
+The desktop app's **Add link**, paste, and shortcut/URI drop flows and `dutchman convert <url>` accept
+public Fusion and Google Drive file links. Downloads are bounded to 200 MB and two minutes,
+follow only provider HTTPS hosts, and use temporary files that are cleaned up. Drive's
+virus-scan confirmation is handled; Fusion needs a download exposed without login.
+Private, expired, or login-only shares ask for a manual download. See
+[Public share links](guide.md#public-share-links).
+
+MCP tools continue to take local paths. Download the public file locally before calling
+`inspect` or `convert`; do not pass URLs to an MCP path argument. Reports keep their
+existing schemas and contain local input paths, never the original share link.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent

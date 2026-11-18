@@ -7,6 +7,46 @@ If a reader supplies only CADIR v11 design history, the final geometry is kept a
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
 
+## Public share links
+
+Paste a public Fusion or Google Drive **file** share link into the desktop app's link
+field and choose **Add link**, paste it when no text field is focused, or drop a saved
+`.url` or `.webloc` link shortcut into the window. The file downloads in the background,
+then joins the same queue as local files. Choose an output folder and convert as usual.
+URI text drops also work when delivered by a desktop integration. Some desktop/browser combinations do not deliver
+raw URL drops through the window toolkit; paste the link in that case.
+
+The CLI accepts the same links:
+
+```sh
+dutchman convert 'https://drive.google.com/file/d/FILE_ID/view' -o design.sc
+```
+
+Quote links in a shell. With no output path, the CLI writes in the current folder using
+the downloaded file's name; an existing default output still requires `--force`.
+Project ZIP links use the existing bounded project extraction and batch conversion.
+
+Only public files needing no login work. Google Drive file links use
+`https://drive.google.com/uc?export=download&id=FILE_ID`, including Drive's virus-scan
+confirmation page. Drive folders and Google Docs documents are not file downloads.
+Fusion links from `a360.co` or `*.autodesk360.com` work when the share page exposes a
+public download URL or download link. If downloads are disabled or require login,
+Dutchman asks you to download the design yourself and drop the file into the app.
+Private and expired links get the same plain explanation.
+
+Downloads use HTTPS, a 200 MB cap matching the web app's default upload limit, a two-minute
+total timeout, and at most twelve requests. Every redirect and confirmation action is
+checked before contacting its host. Drive downloads stay on `drive.google.com`,
+`drive.usercontent.google.com`, or `googleusercontent.com` and its subdomains; Fusion
+stays on `a360.co`, `autodesk360.com` and its subdomains, or `autodesk.com` and its subdomains. Other download hosts require a manual download.
+
+The original share link is never included in reports or sent to another service as a
+referrer. Dutchman uses no browser login or credentials and does not load the page's
+scripts, images, or other resources. Downloaded files live in a private temporary folder;
+failed downloads are removed immediately. The CLI removes its download after conversion;
+the app retains downloads while queued files or result cards need them, then removes
+them when cleared or when the app closes. Converted outputs stay in your output folder.
+
 ## Ask your assistant about a saved desktop result
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a
