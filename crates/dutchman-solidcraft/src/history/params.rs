@@ -953,7 +953,7 @@ mod map_tests {
     #[test]
     fn other_unknown_tokens_still_refuse() {
         assert_eq!(
-            validate("5 #", &names(&[])).unwrap_err(),
+            validate("5 #", &std::collections::BTreeSet::new()).unwrap_err(),
             "unsupported expression token #"
         );
     }
