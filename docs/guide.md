@@ -588,8 +588,12 @@ Report summaries identify the authoring app from the native format, such as Fusi
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
-The desktop keeps its page scrollbars visible, so the report panel and every result can be reached.
-Copied-report notices use the success colour and clear on the next action.
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
+The desktop scrollbars let you reach the report panel and every result.
+Each reporting step shows its own copied-message notice beside the action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
 
 `dutchman diagnose part.f3d --bundle --out diagnosis` cuts a private reproduction

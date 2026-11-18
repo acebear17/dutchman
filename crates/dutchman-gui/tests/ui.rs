@@ -944,11 +944,12 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
 /// Opening a missing-CLI preview retries discovery. Isolate its environment without
 /// changing the process-wide environment of the other, concurrently running tests.
 fn isolate_missing_cli_preview(test: &str) -> bool {
-    if std::env::var_os("SOLIDCRAFT_CLI").is_none() {
+    if std::env::var_os("DUTCHMAN_MISSING_CLI_PREVIEW").is_some() {
         return false;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
+        .env("DUTCHMAN_MISSING_CLI_PREVIEW", "1")
         .env_remove("SOLIDCRAFT_CLI")
         .env("PATH", "")
         .output()
@@ -1619,9 +1620,10 @@ mod consent_e2e {
         harness.get_by_label("Diagnose this file").scroll_to_me();
         harness.run_steps(8);
         let diagnose = harness.get_by_label("Diagnose this file").rect();
+        let footer = harness.get_by_label("Convert").rect().top();
         assert!(
-            diagnose.top() > 70.0 && diagnose.bottom() < 730.0,
-            "{diagnose:?}"
+            diagnose.top() > 70.0 && diagnose.bottom() <= footer,
+            "{diagnose:?} runs under the footer at {footer}"
         );
         let show = harness.get_by_label("Show this run's log").rect();
         assert!(
@@ -2448,6 +2450,38 @@ fn every_result_has_the_report_panel_and_a_button_for_it() {
     harness.get_by_label("Ask your AI about this file");
 }
 
+/// The report panel shares the left column's scroll at short desktop sizes. The header
+/// must bring its actions into view even when output settings initially push them below it.
+#[test]
+fn the_header_reveals_report_steps_in_a_short_window() {
+    for width in [1100.0, 760.0, 520.0] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(width, 680.0))
+            .build_eframe(|cc| test_app(cc));
+        h.run_steps(8);
+        h.get_by_label("Report a problem").click_accesskit();
+        h.run_steps(12);
+        let heading = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
+        let dm = h.get_by_label("Copy and open DM").rect();
+        for rect in [heading, dm] {
+            assert!(
+                rect.left() >= 0.0 && rect.right() <= width,
+                "{width}: {rect:?}"
+            );
+            assert!(
+                rect.top() >= 80.0 && rect.bottom() < 620.0,
+                "{width}: {rect:?}"
+            );
+        }
+        assert!(h
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .all(|command| { !matches!(command, egui::OutputCommand::OpenUrl(_)) }));
+    }
+}
+
 #[test]
 fn ask_ai_prompt_fits_a_narrow_window() {
     let (mut harness, _work) = ai_result_card_at(ThemePreference::Light, 520.0);
@@ -2980,8 +3014,8 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
                 && question.right() < results.left(),
             "{monitor:?}: the question {question:?} is not under the choices"
         );
-        // With the Ask-your-AI prompt open under More, nothing else moves: the prompt keeps to
-        // a few lines, scrolls inside the panel, and is brought into view.
+        // Opening the AI prompt scrolls the left column to its controls. Results stay put,
+        // and the prompt keeps its own text to a few visible lines.
         let mut h = h;
         open_more(&mut h);
         h.get_by_label("Ask your AI about this file")
@@ -2991,7 +3025,6 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             !h.state().page_scrolls(),
             "{monitor:?}: the open prompt makes the page scroll at {size:?}"
         );
-        assert_main_screen_in_view(&h, size);
         let heading = h.get_by_label("RESULTS").rect();
         let top = h.get_by_label("Open in SolidCraft").rect();
         assert!(
@@ -3682,6 +3715,9 @@ fn report_flow_case_screenshots() {
     let work = tempfile::tempdir().unwrap();
     let size = egui::vec2(1600.0, 1000.0);
     let mut index = String::from("# Report flow, five cases\n\n");
+    let mut measurements = String::from(
+        "# Report flow measurements\n\nSaved walkthrough reports, rendered at 1600 × 1000; running progress is replayed, not a conversion timing.\n\n| Case | Question top (px) | DM bottom (px) | DM right (px) |\n|---|---:|---:|---:|\n",
+    );
     let harness = || {
         let mut h = Harness::builder()
             .with_size(size)
@@ -3791,7 +3827,9 @@ fn report_flow_case_screenshots() {
                 "day",
                 "Three minutes into reading.",
             );
-            click_first(&mut h, &["Stop"]);
+            assert!(click_first(&mut h, &["Stop"]));
+            h.get_by_label(dutchman_gui::report_panel::STOPPING_BUTTON);
+            h.get_by_label(dutchman_gui::report_panel::STOPPING);
             shot(
                 &mut h,
                 &dir,
@@ -3829,6 +3867,25 @@ fn report_flow_case_screenshots() {
                 size: size_bytes,
             });
         h.run_steps(12);
+        let question = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
+        let dm = h.get_by_label("Copy and open DM").rect();
+        assert!(
+            question.top() >= 80.0 && dm.bottom() < 940.0,
+            "{}: {question:?}, {dm:?}",
+            case.shot
+        );
+        assert!(
+            dm.left() >= 0.0 && dm.right() < 850.0,
+            "{}: {dm:?}",
+            case.shot
+        );
+        measurements.push_str(&format!(
+            "| {} | {:.1} | {:.1} | {:.1} |\n",
+            case.shot,
+            question.top(),
+            dm.bottom(),
+            dm.right()
+        ));
         shot(
             &mut h,
             &dir,
@@ -3837,14 +3894,7 @@ fn report_flow_case_screenshots() {
             "day",
             "The result as it first shows.",
         );
-        click_first(
-            &mut h,
-            &[
-                "Report this file…",
-                dutchman::present::SEND_FOLD,
-                dutchman::present::REPORT_CONVERTED,
-            ],
-        );
+        assert!(click_first(&mut h, &[dutchman_gui::app::REPORT_THIS_FILE]));
         let dm = match h.query_all_by_label("Copy and open DM").next() {
             Some(node) => {
                 node.scroll_to_me();
@@ -3863,7 +3913,13 @@ fn report_flow_case_screenshots() {
             "day",
             "Its way to report a problem.",
         );
-        if let Some(text) = press_dm_for_shot(&mut h) {
+        let text = press_dm_for_shot(&mut h).expect("Every result offers a DM");
+        assert!(text.ends_with(if ok {
+            "What's wrong or missing: "
+        } else {
+            "Anything else we should know: "
+        }));
+        {
             std::fs::write(dir.join(format!("{}-dm.txt", case.shot)), text).unwrap();
             h.run_steps(8);
             shot(
@@ -3886,5 +3942,6 @@ fn report_flow_case_screenshots() {
             );
         }
     }
+    std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
     std::fs::write(dir.join("INDEX.md"), index).unwrap();
 }

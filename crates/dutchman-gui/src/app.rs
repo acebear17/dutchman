@@ -373,7 +373,6 @@ const FIT_FRAMES: u8 = 30;
 /// The most of the Designs list shown before it scrolls, in a wide window.
 const INPUT_LIST_HEIGHT: f32 = 140.0;
 
-
 /// What to scroll into view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Reveal {
@@ -701,8 +700,17 @@ impl App {
             None => dutchman::anon::Salt::random()?,
         };
         let out_dir = self.out_dir.clone().unwrap_or_default();
+        let solidcraft = report
+            .pointer("/solidcraft/found")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let run = dutchman::anon::Run {
-            verify: !self.options.no_verify,
+            verify: solidcraft.is_some()
+                && report
+                    .pointer("/verification/status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status != "none"),
+            solidcraft,
             import_only: self.options.import_only,
             jobs: 1,
             ..dutchman::anon::Run::default()
@@ -3257,6 +3265,36 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn anonymous_versions_describe_the_conversion_instead_of_current_settings() {
+        let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
+            let mut app = App::new(cc);
+            app.options.no_verify = true;
+            app.found_version = Some("0.45.2".into());
+            app.rows.push(Row {
+                input: PathBuf::from("synthetic.f3d"),
+                output: Some(PathBuf::from("synthetic.sc")),
+                status: Status::Converted,
+                progress: None,
+                job: None,
+                size: Some(100),
+                report: Some(json!({
+                    "ok": true,
+                    "solidcraft": {"found": "0.44.1"},
+                    "verification": {"status": "verified"}
+                })),
+            });
+            app
+        });
+        let (anonymous, _, _) = harness.state().anonymous(0).unwrap().unwrap();
+        assert_eq!(anonymous["versions"]["solidcraft"], "0.44.1");
+        assert_eq!(anonymous["run"]["verify"], true);
+        harness.state_mut().rows[0].report = Some(json!({"ok": false}));
+        let (anonymous, _, _) = harness.state().anonymous(0).unwrap().unwrap();
+        assert!(anonymous["versions"]["solidcraft"].is_null());
+        assert_eq!(anonymous["run"]["verify"], false);
+    }
 
     #[test]
     fn a_card_brings_the_report_panel_to_its_file() {

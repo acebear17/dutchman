@@ -289,6 +289,10 @@ stay private. The issue goes on Dutchman even when the report says
 post it yourself. Own design files never leave the user's machine in this flow; only a
 synthetic reproduction rebuilt from scratch can be proposed for public sharing.
 
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
 Before drafting any issue, run `dutchman --version` and `solidcraft-cli --version` if
 installed, using its full path or `SOLIDCRAFT_CLI` when needed. Record "none" only when no
 SolidCraft was installed. Copy the anonymous report's `versions` block verbatim, keeping

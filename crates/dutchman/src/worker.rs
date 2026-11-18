@@ -526,7 +526,11 @@ fn convert_isolated_inner(
     let mut copies: Vec<tempfile::TempDir> = Vec::new();
     let mut current = job.clone();
     while let Some(Some(design)) = stuck.take() {
-        if !is_archive(&job.input) || left_out.len() >= MAX_LEFT_OUT || left_out.contains(&design) {
+        if shutdown.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+            || !is_archive(&job.input)
+            || left_out.len() >= MAX_LEFT_OUT
+            || left_out.contains(&design)
+        {
             break;
         }
         let Some((dir, input)) = archive_without(&current.input, &design) else {

@@ -846,6 +846,10 @@ Report summaries identify the authoring app from the native format, such as Fusi
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
 The desktop report review selects the anonymous summary when no bundle is available.
 Its **Send** button becomes **Retry** after a delivery failure.
 

@@ -8,6 +8,10 @@ output folder. Watch mode uses the same names and schema. These are the same per
 reports as CLI `convert --json`, including local paths, names and detailed losses; keep
 them local. They are not anonymous reports.
 
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
 MCP `read_report` reads a saved report without opening or decoding its source or design.
 It preserves every saved field and adds optional `loss_groups` to `dutchman.convert/1`:
 

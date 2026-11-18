@@ -1206,6 +1206,11 @@ pub fn convert_isolated_job_with_progress(
             json!(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
         );
     }
+    // Stop applies to the whole job, including its optional STEP recovery. Starting that
+    // recovery now would give a second child another shutdown grace period.
+    if stop.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return report;
+    }
     with_fallback(job, report, |fallback| {
         convert_isolated_job_with_progress(program, fallback, options, limits, stop, on_progress)
     })
@@ -1227,6 +1232,83 @@ fn make_folder(job: &Job) -> Option<Value> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    /// Stop must reach the already-running child as well as preventing the next job.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_an_isolated_batch_ends_the_current_file_after_the_grace_period() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("slow-worker");
+        std::fs::write(&program, "#!/bin/sh\nexec sleep 120\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let input = dir.path().join("synthetic.f3d");
+        std::fs::write(&input, []).unwrap();
+        let fallback = input.with_extension("step");
+        std::fs::write(&fallback, []).unwrap();
+        let jobs: Vec<_> = (0..2)
+            .map(|index| Job {
+                project_files: None,
+                fallback: Some(fallback.clone()),
+                input: input.clone(),
+                output: dir.path().join(format!("synthetic-{index}.sc")),
+                replace: true,
+                search: PartSearch::default(),
+            })
+            .collect();
+        let stop = AtomicBool::new(false);
+        let events = Mutex::new(Vec::new());
+        let started = Instant::now();
+        run_isolated(
+            &jobs,
+            &ConvertOptions {
+                no_verify: true,
+                ..Default::default()
+            },
+            &program,
+            1,
+            &stop,
+            |event| {
+                if matches!(event, Event::Started(0)) {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                events.lock().unwrap().push(event);
+            },
+        );
+        let elapsed = started.elapsed();
+        eprintln!("Stopped isolated batch after {elapsed:?}");
+        let events = events.into_inner().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Started(_)))
+                .count(),
+            1
+        );
+        let finished: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Finished(index, report) => Some((index, report)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(finished.len(), 1);
+        assert_eq!(*finished[0].0, 0);
+        assert!(
+            finished[0].1.get("native_failure").is_none(),
+            "Stop started a STEP fallback"
+        );
+        assert!(
+            finished[0].1["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(worker::SHUTDOWN_STOPPED),
+            "{:?}",
+            finished[0].1
+        );
+        assert!(elapsed >= std::time::Duration::from_secs(30));
+        assert!(elapsed < std::time::Duration::from_secs(90), "{elapsed:?}");
+    }
 
     fn project_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
