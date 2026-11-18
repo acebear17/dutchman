@@ -650,3 +650,14 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It implements SolidCraft's
+`craft:plugin` importer interface; see that page for the build. To install it, see
+[Dutchman in SolidCraft](solidcraft-plugin.md).
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).
