@@ -72,6 +72,9 @@ const HISTORY: &str = "history";
 /// The report subject of what SolidCraft shows of the written geometry.
 const GEOMETRY: &str = "geometry";
 
+/// What the report says turned history off, unless a front end names its own choice.
+const IMPORT_ONLY_REASON: &str = "--import-only";
+
 /// Writes `.sc` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
@@ -82,6 +85,7 @@ pub struct SolidCraftWriter {
     #[cfg(test)]
     prepare_available: Option<u64>,
     import_only: bool,
+    import_only_reason: String,
     sketches: bool,
     joints: bool,
     target_version: Option<SolidCraftVersion>,
@@ -104,6 +108,7 @@ impl Default for SolidCraftWriter {
             #[cfg(test)]
             prepare_available: None,
             import_only: false,
+            import_only_reason: IMPORT_ONLY_REASON.to_owned(),
             sketches: true,
             joints: true,
             target_version: None,
@@ -198,6 +203,13 @@ impl SolidCraftWriter {
     /// Always write the geometry as one import, never the history.
     pub fn import_only(mut self, import_only: bool) -> Self {
         self.import_only = import_only;
+        self
+    }
+
+    /// How the report names the choice that turned history off, in the words of the front
+    /// end that offers it: `--import-only` (the command line's flag) by default.
+    pub fn import_only_reason(mut self, reason: impl Into<String>) -> Self {
+        self.import_only_reason = reason.into();
         self
     }
 
@@ -325,7 +337,7 @@ impl SolidCraftWriter {
         if self.import_only {
             return Outcome {
                 mode: Mode::Import,
-                check: Check::NotApplicable("--import-only".to_owned()),
+                check: Check::NotApplicable(self.import_only_reason.clone()),
                 features: Vec::new(),
             };
         }
@@ -545,7 +557,7 @@ impl SolidCraftWriter {
                     Some(dutchman_core::progress_words::blend_limit()),
                 )
             });
-            let started = std::time::Instant::now();
+            let started = dutchman_core::time::Instant::now();
             let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
             remaining = remaining.saturating_sub(started.elapsed());
             replayed
@@ -623,7 +635,7 @@ impl SolidCraftWriter {
             }
         }
         let cli = self.selected_evaluator(&self.verification);
-        let started = std::time::Instant::now();
+        let started = dutchman_core::time::Instant::now();
         let _checking = progress.map(|p| {
             p.step(
                 dutchman_core::StepKind::CheckingPrefix,
@@ -1249,10 +1261,14 @@ impl Writer for SolidCraftWriter {
             None => step::restate(model, report)?,
         };
         let (bytes, outcome) = if self.import_only {
-            report.push(Severity::Info, HISTORY, "not written (--import-only)");
+            report.push(
+                Severity::Info,
+                HISTORY,
+                format!("not written ({})", self.import_only_reason),
+            );
             let outcome = Outcome {
                 mode: Mode::Import,
-                check: Check::NotApplicable("--import-only".to_owned()),
+                check: Check::NotApplicable(self.import_only_reason.clone()),
                 features: Vec::new(),
             };
             let references = self.sketches.then(|| history::sketches(model, report).0);
