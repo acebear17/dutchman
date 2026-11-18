@@ -396,10 +396,11 @@ sketch, and keeps the feature only when SolidCraft's body check confirms it; the
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
 For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
-selected body scope when the reader names modified bodies and the source body
-check confirms the scoped replay. The Info note `history/body-scope-confirmed`
-records this confirmation. Without confirmation the previous mapping applies;
-older targets keep their existing output.
+selected body scope at the final body-building feature when the reader names
+modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
+records this confirmation. Intermediate body centres cannot confirm body scope,
+so intermediate features keep the previous mapping. Without confirmation the
+previous mapping applies; older targets keep their existing output.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source

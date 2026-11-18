@@ -13253,6 +13253,121 @@ fn scoped_extrude(operation: &str) -> Model {
     }
 }
 
+/// A source join consumes the coincident second cube, leaving only the first identity.
+/// A later independent cube makes the join intermediate, with an exact stored centre.
+fn intermediate_coincident_join() -> Model {
+    let mut model = scoped_extrude("join");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // The saved second cube belongs to the later extrusion. The consumed body's
+    // identity is available only from its producer, not the final topology.
+    wire["model"]["features"][2]["outputs"] = json!(["synthetic:consumed:body#0"]);
+    wire["model"]["features"][3]["source_properties"] = json!({
+        "body_centers": "cube:5,5,5", "body_centers_exact": "cube"
+    });
+    let mut later = wire["model"]["features"][2].clone();
+    later["id"] = json!("synthetic:later:feature#1");
+    later["ordinal"] = json!(4);
+    later["name"] = json!("Later extrusion");
+    later["outputs"] = json!(["synthetic:other:body#0"]);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(later);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+/// Recorded cube evaluations preserve the count difference that the anonymous
+/// intermediate centre comparison permits: a scoped join leaves two coincident cubes.
+#[derive(Debug, Default)]
+struct CoincidentJoinEvaluator {
+    scoped_join_seen: std::sync::atomic::AtomicBool,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for CoincidentJoinEvaluator {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let mut count = 0;
+        for feature in document["features"].as_array().unwrap() {
+            if feature["suppressed"] == true {
+                continue;
+            }
+            match feature["type"].as_str() {
+                Some("import") => count += 2,
+                Some("extrude") if feature["operation"] == "new_body" => count += 1,
+                Some("extrude") if feature["name"] == "Scoped extrusion" => {
+                    if feature.get("targets").is_some() {
+                        self.scoped_join_seen
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                    } else {
+                        count -= 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut result = dutchman_solidcraft::SolidCraftEvaluator::evaluate(
+            &RecordedEvaluator::default(),
+            design,
+            timeout,
+            label,
+        )?;
+        let body = result["bodies"][0].clone();
+        result["bodies"] = json!(vec![body; count]);
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        _design: &[u8],
+        _commands: &[Value],
+        _timeout: std::time::Duration,
+        _label: &str,
+    ) -> Result<Vec<Value>, String> {
+        Err("The coincident join fixture needs only body evaluations".to_owned())
+    }
+}
+
+#[test]
+fn intermediate_coincident_join_does_not_confirm_scope_from_centres() {
+    let host = std::sync::Arc::new(CoincidentJoinEvaluator::default());
+    let (document, report) = convert(
+        &intermediate_coincident_join(),
+        &SolidCraftWriter::new()
+            .evaluator(host.clone())
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    let join = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["name"] == "Scoped extrusion")
+        .unwrap();
+    assert!(join.get("targets").is_none(), "{report:?}");
+    assert!(!host
+        .scoped_join_seen
+        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/body-scope-confirmed")),
+        "{report:?}"
+    );
+    assert_eq!(
+        report.outcome().unwrap().check,
+        Check::Verified,
+        "{report:?}"
+    );
+}
+
 #[test]
 fn scoped_extrudes_keep_older_target_bytes() {
     let cli = solidcraft();
