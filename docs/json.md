@@ -124,7 +124,7 @@ A nested check replaces preparation on that worker until it finishes. Its fields
 | `measured` | `true` while SolidCraft checks this feature by measurement against the original, which takes longer than building it. |
 
 Feature changes alone emit at most four events a second; a change not emitted at once
-follows within a quarter second while a conversion runs, so a fast timeline does not print
+follows on a rate-limited timer update while a conversion runs, so a fast timeline does not print
 a line per feature. For example, `"feature":{"index":29,"total":37,"name":"Extrude 1","measured":false}`.
 
 For example, `"running":{"kind":"checking","name":"Bracket","elapsed_ms":12000,

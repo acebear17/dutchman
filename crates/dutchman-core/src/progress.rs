@@ -214,25 +214,8 @@ impl FeatureGuard<'_, '_> {
                 active.feature.measured = false;
             }
         }
-        let now = Instant::now();
-        let due = self
-            .progress
-            .feature_emitted
-            .lock()
-            .map(|mut last| {
-                let due = last.is_none_or(|at| now.duration_since(at) >= FEATURE_INTERVAL);
-                if due {
-                    *last = Some(now);
-                }
-                due
-            })
-            .unwrap_or(true);
-        if due {
-            self.progress.pending.store(false, Ordering::Relaxed);
-            self.progress.emit(None, false, false);
-        } else {
-            self.progress.pending.store(true, Ordering::Relaxed);
-        }
+        self.progress.pending.store(true, Ordering::Relaxed);
+        self.progress.flush_feature();
     }
 }
 impl Drop for FeatureGuard<'_, '_> {
@@ -498,6 +481,29 @@ impl<'a> Progress<'a> {
         MeasureGuard { progress: self, id }
     }
 
+    /// Use one clock for immediate updates and timer flushes, so a flushed update cannot
+    /// be followed immediately by another feature-only event.
+    fn flush_feature(&self) {
+        let due = self
+            .feature_emitted
+            .lock()
+            .map(|mut last| {
+                let now = Instant::now();
+                if last.is_none_or(|at| now.duration_since(at) >= FEATURE_INTERVAL)
+                    && self.pending.swap(false, Ordering::Relaxed)
+                {
+                    *last = Some(now);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or_else(|_| self.pending.swap(false, Ordering::Relaxed));
+        if due {
+            self.emit(None, false, false);
+        }
+    }
+
     fn set_measured(&self, id: u64, measured: bool) {
         if let Ok(mut features) = self.features.lock() {
             if let Some(active) = features.iter_mut().find(|f| f.id == id) {
@@ -601,7 +607,7 @@ impl<'a> Progress<'a> {
         self.run_every(Duration::from_secs(5), work)
     }
 
-    /// Also shows, within a quarter second, a feature change that was not emitted at once.
+    /// Periodically flushes feature changes that were not emitted at once.
     #[cfg(not(target_family = "wasm"))]
     fn run_every<T>(&self, interval: Duration, work: impl FnOnce() -> T) -> T {
         std::thread::scope(|scope| {
@@ -616,8 +622,8 @@ impl<'a> Progress<'a> {
                         beat = Instant::now();
                         self.pending.store(false, Ordering::Relaxed);
                         self.heartbeat();
-                    } else if self.pending.swap(false, Ordering::Relaxed) {
-                        self.emit(None, false, false);
+                    } else {
+                        self.flush_feature();
                     }
                 }
             });
@@ -810,6 +816,25 @@ mod running_tests {
                 .kind,
             StepKind::Preparing
         );
+    }
+
+    #[test]
+    fn timer_flush_and_immediate_features_share_the_rate_limit() {
+        let events = Mutex::new(Vec::new());
+        let callback = |event: ProgressEvent| events.lock().unwrap().push(event);
+        let progress = Progress::new(&callback);
+        let _step = progress.step(StepKind::Preparing, None, None, None);
+        let timeline = progress.features(3);
+        timeline.at(1, Some("Sketch"));
+        timeline.at(2, Some("Extrude"));
+        let before = events.lock().unwrap().len();
+        // Make the timer flush due without waiting for wall-clock time.
+        *progress.feature_emitted.lock().unwrap() = Some(Instant::now() - FEATURE_INTERVAL);
+        progress.flush_feature();
+        assert_eq!(events.lock().unwrap().len(), before + 1);
+        timeline.at(3, Some("Fillet"));
+        assert_eq!(events.lock().unwrap().len(), before + 1);
+        assert!(progress.pending.load(Ordering::Relaxed));
     }
 
     #[test]

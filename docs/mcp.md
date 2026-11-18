@@ -12,6 +12,11 @@ native profile selection can't be resolved, Dutchman tries the selected curves a
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
+Local CLI and desktop progress can name the current timeline feature, such as
+“Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
+These updates use `dutchman.progress/1`; MCP final conversion reports stay unchanged.
+Feature names are private local text and are excluded from anonymous diagnostics.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent
