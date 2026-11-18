@@ -45,6 +45,12 @@ sketch maps as a start offset along the sketch normal. Tilted plane ends and nat
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
+On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
+from resolved modified-body outputs, and retain names for consumed Combine tools
+whose earlier producers supply output identities. The pinned Inventor reader
+still leaves native body references unresolved; those remain blockers. Dutchman
+does not interpret the native references to infer participants.
+
 ## Upstream gaps, in the order they block history
 
 1. **Native features.** Most Inventor features still come from the codec in native form, so

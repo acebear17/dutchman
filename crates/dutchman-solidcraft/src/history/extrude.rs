@@ -481,10 +481,18 @@ pub(super) fn body_names(
     if outputs.is_empty() {
         return None;
     }
-    let rows: Vec<&Value> = outputs
+    let rows: Vec<Option<&Value>> = outputs
         .iter()
-        .map(|id| ctx.row("bodies", id.as_str()?))
+        .map(|id| Some(ctx.row("bodies", id.as_str()?)))
         .collect::<Option<_>>()?;
+    // Consumed bodies need not have topology in the final model. Their producing feature
+    // still supplies an identity; name it so a later combine can select its replayed body.
+    // Older targets retain the original all-or-nothing naming.
+    if rows.iter().any(Option::is_none)
+        && !crate::VersionGate::ScopedBodies.supported(ctx.target_version)
+    {
+        return None;
+    }
     let mut taken: std::collections::BTreeSet<String> = ctx
         .named_bodies
         .iter()
@@ -493,7 +501,7 @@ pub(super) fn body_names(
     let given: Vec<Option<String>> = rows
         .iter()
         .map(|row| {
-            row.get("name")
+            row.and_then(|row| row.get("name"))
                 .and_then(Value::as_str)
                 .filter(|name| !name.trim().is_empty())
                 .map(str::to_owned)
@@ -513,11 +521,11 @@ pub(super) fn body_names(
             })
         })
         .collect();
-    for (row, name) in rows.iter().zip(&names) {
-        if let Some(look) = row.get("color").and_then(look) {
+    for ((row, output), name) in rows.iter().zip(outputs).zip(&names) {
+        if let Some(look) = row.and_then(|row| row.get("color")).and_then(look) {
             ctx.looks.insert(name.clone(), look);
         }
-        if let Some(id) = row.get("id").and_then(Value::as_str) {
+        if let Some(id) = output.as_str() {
             ctx.named_bodies.push((id.to_owned(), name.clone()));
         }
     }

@@ -17,6 +17,12 @@ Local CLI and desktop progress can name the current timeline feature, such as
 These updates use `dutchman.progress/1`; MCP final conversion reports stay unchanged.
 Feature names are private local text and are excluded from anonymous diagnostics.
 
+For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
+selected body scope when the reader names modified bodies and the source body
+check confirms the scoped replay. The Info note `history/body-scope-confirmed`
+records this confirmation. Without confirmation the previous mapping applies;
+older targets keep their existing output.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent

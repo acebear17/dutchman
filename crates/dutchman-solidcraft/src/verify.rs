@@ -426,6 +426,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Scoped extrude booleans and identities for consumed body results.
+    ScopedBodies,
 }
 
 impl VersionGate {
@@ -434,6 +436,7 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::ScopedBodies => SolidCraftVersion::V0_44_0,
         }
     }
 
@@ -445,6 +448,11 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if VersionGate::ScopedBodies.supported(SolidCraftVersion::default())
+        && !VersionGate::ScopedBodies.supported(target)
+    {
+        return true;
+    }
     [
         VersionGate::EntryRecessTip,
         VersionGate::SketchProfileCoil,
@@ -489,6 +497,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// First release with explicit extrude boolean body targets.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
+
     /// First release that applies a drill-point angle on counterbores and countersinks.
     pub const V0_22_1: Self = Self([0, 22, 1]);
 

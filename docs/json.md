@@ -315,6 +315,11 @@ the source body check`. Trimmed regions select interior points from their direct
 intervals; an unclosed or ambiguous boundary blocks with `its trimmed profile boundary does not
 close unambiguously or has no unambiguous interior point`. These add no report fields.
 
+`history/body-scope-confirmed` has level `Info`, names the extrude in `subject`,
+and says that the source body check confirmed its selected target bodies. It is
+emitted only for SolidCraft targets from 0.44. Report fields and schema versions
+are unchanged.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body
