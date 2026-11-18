@@ -108,11 +108,6 @@ SolidCraft version gates apply unchanged. Fillets and chamfers need a usable
 SolidCraft CLI (or host evaluator) for their input-edge proof. An absent evaluator,
 failed proof or differing replay is reported and preserves the final geometry.
 
-With several final bodies, a new-body extrude or
-revolve is tied to a STEP body only through the one part it adds at its own
-rollback: that part must still exist at the last rollback, and its name must
-match exactly one final STEP body. Otherwise the feature names no output body.
-
 Synthetic offline coverage includes the generic deterministic plane and region
 query shapes returned by the REST API. Feature-library parameter drift and rollback
 semantics still require validation on owner-created data. Opaque external constraint
