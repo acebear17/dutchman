@@ -3367,8 +3367,9 @@ mod tests {
             harness.run_steps(8);
             assert!(harness.query_by_label("Diagnose this file").is_none());
             let review = harness.get_by_label("Review and send report").rect();
-            assert!(join.top() <= dm.top());
-            assert!(join.bottom() < review.top());
+            // Discord first: the invite's card stands left of the DM's, both above More.
+            assert!(join.right() <= dm.left());
+            assert!(join.bottom() < review.top() && dm.bottom() < review.top());
             for rect in [review, join, dm] {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
@@ -4000,10 +4001,11 @@ mod tests {
             "Losses: 1 Degraded",
             "Losses: 1 Dropped",
             "cannot read this design: no geometry could be read",
-            REPORT_THIS_FILE,
         ] {
             assert!(harness.query_by_label(label).is_some(), "missing {label}");
         }
+        // Every finished card, clean or not, has the way to report it.
+        assert_eq!(harness.query_all_by_label(REPORT_THIS_FILE).count(), 4);
         use egui_kittest::kittest::NodeT;
         let labels = harness
             .query_all_by(|node| node.label().is_some())
