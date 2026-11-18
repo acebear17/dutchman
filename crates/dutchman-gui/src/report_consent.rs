@@ -232,12 +232,13 @@ impl Consent {
             card.status = crate::report_panel::UPDATES_COPIED.into();
         }
         if ui
-            .button("Open GitHub with anonymous summary only")
+            .button(dutchman::present::REPORT_BUTTON)
+            .on_hover_text(dutchman::present::REPORT_HELP)
             .clicked()
         {
             private = Some(Action::Github(card.row));
         }
-        ui.label("GitHub is public. Share only the anonymous summary there, never the bundle.");
+
         if private.is_some() {
             open = false;
         }

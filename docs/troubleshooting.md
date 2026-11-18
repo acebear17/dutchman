@@ -10,7 +10,7 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-In the desktop app, **Report anonymously on GitHub** in **Is there a problem? Is something missing?**
+In the desktop app, **GitHub issue** in **Is there a problem? Is something missing?**
 does this for you. Review
 `report-anon.json`, then paste it into the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
@@ -124,7 +124,8 @@ left; **Report this file…** on a card chooses that file):
 Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
 on request.
 
-To send no file, use **Report anonymously on GitHub** instead: no file, no names.
+The secondary pills are **Anonymous report** (review before direct cloud upload) and
+**GitHub issue** (a public issue under your GitHub username).
 
 ## When you can't share the file
 

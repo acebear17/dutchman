@@ -31,8 +31,6 @@ pub const DM_DONE_LINK: &str =
     "Copied. Paste it into the DM and say what's wrong; Dutchy replies with an upload link.";
 /// Shown on the DM card once its message is copied, with no file to send.
 pub const DM_DONE: &str = "Copied. Paste it into the DM and say what's wrong.";
-/// Before the GitHub link, which is the backup route.
-pub const GITHUB_LEAD: &str = "No Discord?";
 /// Shown under the GitHub link once the blank form opened.
 pub const GITHUB_OPENED: &str = "The GitHub form opened in your browser. Never attach the design.";
 /// The folded section with the anonymous summary, the AI prompt and Diagnose.
@@ -41,8 +39,7 @@ pub const MORE: &str = "More";
 pub const UPDATES_COPIED: &str = "A claim code is copied. Join our Discord server (step 1) if you \
      haven't, then paste the code on its own in Dutchy's DM to get updates on this report.";
 /// The bottom bar's line after Stop.
-pub const STOPPING: &str =
-    "Stopping: no other file starts, and the file converting now ends within 30 seconds.";
+pub const STOPPING: &str = "Stopping the converter and its children. No other file starts.";
 /// The Stop button once pressed.
 pub const STOPPING_BUTTON: &str = "Stopping…";
 

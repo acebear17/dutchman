@@ -545,9 +545,14 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 <a id="report-consent"></a>
-Report consent is per report. In the desktop app, **Review and send report** is under
-**More** in the **Is there a problem? Is something missing?** panel, for the file chosen
-there. It opens a review in that panel with bundle or summary. A bundle is selected when available; otherwise
+After a conversion, **Output folder** folds into a summary so the reporting steps stay
+in view. Click its folder path or **Change…** to reopen all output settings. **Clear**
+removes the designs and results and restores the expanded settings.
+
+Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
+pills sit directly below the three steps in **Is there a problem? Is something missing?**,
+and also appear under **More**. **Anonymous report** opens a review for the chosen file
+with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
 reuse a prior failure bundle. The review displays the exact metadata and sharing choices.
@@ -558,8 +563,9 @@ Nothing is sent before clicking Send. A report is sent only when a matching rece
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-GitHub accepts the anonymous summary only; never attach a geometry bundle there. For a
-converted result the form asks what differs from the original, without claiming conversion failed.
+**Anonymous report** sends to the cloud inbox after review. **GitHub issue** opens the
+prefilled public issue form under your GitHub username. Never attach a geometry bundle
+there. For a converted result the form asks what differs from the original, without claiming conversion failed.
 
 For the CLI, first make a local preview (always printed as JSON):
 

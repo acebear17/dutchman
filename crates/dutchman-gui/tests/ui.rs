@@ -265,7 +265,9 @@ fn a_file_that_cannot_convert_says_why() {
     harness.get_by_label(dutchman_gui::report_panel::QUESTION);
     harness.get_by_label("Copy and open DM");
     harness
-        .get_by_label("Report anonymously on GitHub")
+        .query_all_by_label("GitHub issue")
+        .next()
+        .unwrap()
         .click_accesskit();
     harness.step();
     let opened = harness
@@ -1634,7 +1636,9 @@ mod consent_e2e {
             walkthrough(&mut harness, "01-failed-card");
         }
         harness
-            .get_by_label("Review and send report")
+            .query_all_by_label("Anonymous report")
+            .next()
+            .unwrap()
             .click_accesskit();
         harness.run_steps(8);
         harness
@@ -1650,7 +1654,9 @@ mod consent_e2e {
             walkthrough(&mut harness, "02-private-send-card");
         }
         harness
-            .get_by_label("Review and send report")
+            .query_all_by_label("Anonymous report")
+            .next()
+            .unwrap()
             .click_accesskit();
         harness.run_steps(8);
         assert!(harness.query_by_label("Send a problem report").is_some());
@@ -1756,7 +1762,9 @@ mod consent_e2e {
         harness.run_steps(8);
         open_more(&mut harness);
         harness
-            .get_by_label("Review and send report")
+            .query_all_by_label("Anonymous report")
+            .next()
+            .unwrap()
             .click_accesskit();
         harness.run_steps(8);
         harness
@@ -1867,9 +1875,7 @@ mod consent_e2e {
             assert!(harness
                 .query_by_label("Send the whole file privately")
                 .is_some());
-            assert!(harness
-                .query_by_label("Open GitHub with anonymous summary only")
-                .is_some());
+            assert!(harness.query_all_by_label("GitHub issue").next().is_some());
         }
         snapshot(&mut harness, &format!("consent-{status}-after"));
         stub.thread.join().unwrap();
@@ -1883,7 +1889,9 @@ mod consent_e2e {
 
     fn walkthrough_extras(harness: &mut Harness<'static, App>, report: &Value) {
         harness
-            .get_by_label("Open GitHub with anonymous summary only")
+            .query_all_by_label("GitHub issue")
+            .next()
+            .unwrap()
             .click_accesskit();
         harness.step();
         let url = harness
@@ -2130,7 +2138,9 @@ fn run_log_buttons_share_the_batch_log_and_review_names_it() {
     assert!(log.is_file()); // Explicit paths remain exactly as supplied, even result-like names.
     open_more(&mut harness);
     harness
-        .get_by_label("Review and send report")
+        .query_all_by_label("Anonymous report")
+        .next()
+        .unwrap()
         .click_accesskit();
     harness.run_steps(8);
     // The review, in the panel, names the same log as the two cards.
@@ -2185,7 +2195,9 @@ fn run_log_screenshots() {
         convert(&mut harness);
         assert_eq!(harness.state().rows()[0].status, Status::Failed);
         harness
-            .get_by_label(dutchman::present::REPORT_BUTTON)
+            .query_all_by_label(dutchman::present::REPORT_BUTTON)
+            .next()
+            .unwrap()
             .scroll_to_me();
         harness.run_steps(8);
         for label in [
@@ -2410,8 +2422,8 @@ fn every_result_has_the_report_panel_and_a_button_for_it() {
         assert!(ask.left() >= 0.0 && ask.right() <= width, "{ask:?}");
         harness.get_by_label(REPORT_THIS_FILE).click_accesskit();
         harness.run_steps(8);
-        for label in ["Copy and open DM", "Review and send report"] {
-            let rect = harness.get_by_label(label).rect();
+        for label in ["Copy and open DM", "Anonymous report"] {
+            let rect = harness.query_all_by_label(label).next().unwrap().rect();
             assert!(
                 rect.left() >= 0.0 && rect.right() <= width,
                 "{label}: {rect:?}"
@@ -2448,6 +2460,148 @@ fn every_result_has_the_report_panel_and_a_button_for_it() {
         .is_none());
     open_more(&mut harness);
     harness.get_by_label("Ask your AI about this file");
+}
+
+/// The backup pill opens the local review without starting any network request.
+#[cfg(feature = "test-support")]
+#[test]
+fn anonymous_report_only_opens_review_and_sends_nothing() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let (mut h, dir) = failed_card("private-review.f3d", 100, 1600.0);
+    h.state_mut().set_report_transport_for_test(
+        format!("http://{}/api/reports", listener.local_addr().unwrap()),
+        None,
+    );
+    let anonymous = h.get_by_label("Anonymous report").rect();
+    let github = h.get_by_label("GitHub issue").rect();
+    assert!(anonymous.right() < github.left());
+    assert!((anonymous.top() - github.top()).abs() < 1.0);
+    assert!((anonymous.height() - github.height()).abs() < 1.0);
+    assert!(h.query_by_label("No Discord?").is_none());
+    h.get_by_label("Anonymous report").click_accesskit();
+    h.run_steps(12);
+    h.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
+    h.get_by_label("Send");
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    assert!(!h.state().running());
+    assert!(!dir.path().join("submission.json").exists());
+    assert!(h.query_by_label("Sent. The report was received.").is_none());
+}
+
+/// The Stop button reaches production Run supervision and kills a converter's child too.
+#[cfg(all(feature = "test-support", target_os = "linux"))]
+#[test]
+fn gui_stop_terminates_the_isolated_converter_and_its_children_promptly() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("sleeping-converter");
+    let pids = dir.path().join("pids");
+    // The stub receives the production worker arguments; its own child inherits the pipes.
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nsleep 120 &\necho \"$$ $!\" > '{}'\nwait\n",
+            pids.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| test_app(cc));
+    h.state_mut()
+        .add_inputs([fixture("generated_unit_cube.f3d")]);
+    h.state_mut().set_out_dir(dir.path().join("converted"));
+    h.state_mut().set_verify(false);
+    let ctx = h.ctx.clone();
+    h.state_mut().start_isolated_for_test(program, &ctx);
+    let started = Instant::now();
+    while !pids.is_file() && started.elapsed() < Duration::from_secs(10) {
+        h.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pids = std::fs::read_to_string(&pids).unwrap();
+    h.run_steps(8);
+    let stopped = Instant::now();
+    h.get_by_label("Stop").click_accesskit();
+    h.step();
+    while h.state().running() && stopped.elapsed() < Duration::from_secs(2) {
+        h.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let elapsed = stopped.elapsed();
+    eprintln!("GUI Stop ended isolated converter and child after {elapsed:?}");
+    assert!(!h.state().running(), "Stop took {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    assert_eq!(h.state().rows()[0].status, Status::NotStarted);
+    for pid in pids.split_whitespace() {
+        if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+            assert!(
+                status
+                    .lines()
+                    .any(|line| line.starts_with("State:") && line.contains("Z (zombie)")),
+                "process {pid} survived Stop: {status}"
+            );
+        }
+    }
+}
+
+/// Finishing a run makes room for reporting; both summary actions restore every setting.
+#[test]
+fn output_settings_collapse_after_conversion_and_reopen() {
+    for size in [[1280.0, 800.0], [1600.0, 1000.0]] {
+        let work = tempfile::tempdir().unwrap();
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(size[0], size[1]))
+            .build_eframe(|cc| test_app(cc));
+        h.state_mut()
+            .add_inputs([fixture("generated_unit_cube.f3d")]);
+        let out = work.path().join("converted");
+        h.state_mut().set_out_dir(out.clone());
+        h.state_mut().set_verify(false);
+        h.run_steps(8);
+        h.get_by_label("Output format");
+        convert(&mut h);
+        assert!(h.query_by_label("Output format").is_none());
+        let footer = h.get_by_label("Convert").rect().top();
+        for label in [
+            dutchman_gui::report_panel::QUESTION,
+            "Join our Discord server",
+            dutchman::present::SEND_JOIN_BUTTON,
+            dutchman::present::SEND_JOIN_NOTE,
+        ] {
+            let rect = h.get_by_label(label).rect();
+            assert!(
+                rect.top() >= 80.0 && rect.bottom() < footer,
+                "{size:?}: {label}: {rect:?}, footer {footer}"
+            );
+        }
+        if size[1] == 1000.0 {
+            assert!(h.get_by_label("More").rect().bottom() < footer);
+        }
+        h.get_by_label("Change…").click_accesskit();
+        h.run_steps(8);
+        h.get_by_label("Output format");
+        h.get_by_label("Choose…");
+        h.get_by_label("Open diagnostics folder");
+        h.get_by_label("Clear").click_accesskit();
+        h.run_steps(8);
+        assert!(h.state().rows().is_empty());
+        h.get_by_label("Output format");
+        assert!(h.query_by_label("Change…").is_none());
+        h.state_mut()
+            .add_inputs([fixture("generated_unit_cube.f3d")]);
+        h.run_steps(8);
+        convert(&mut h);
+        assert!(h.query_by_label("Output format").is_none());
+        h.get_by_label(&out.display().to_string()).click_accesskit();
+        h.run_steps(8);
+        h.get_by_label("Output format");
+    }
 }
 
 /// The report panel shares the left column's scroll at short desktop sizes. The header
@@ -2641,7 +2795,9 @@ fn converted_report_screenshots() {
             );
             h.get_by_label("Report this file…").click_accesskit();
             h.run_steps(8);
-            h.get_by_label(dutchman::present::REPORT_BUTTON)
+            h.query_all_by_label(dutchman::present::REPORT_BUTTON)
+                .next()
+                .unwrap()
                 .scroll_to_me();
             h.run_steps(8);
             h.get_by_label(dutchman::present::SEND_DM_BUTTON);
@@ -2650,7 +2806,9 @@ fn converted_report_screenshots() {
             assert_eq!(h.query_all_by_label_contains("/home/").count(), 0);
             assert!(h.get_by_label("Converted").rect().top() > 70.0);
             assert!(
-                h.get_by_label(dutchman::present::REPORT_BUTTON)
+                h.query_all_by_label(dutchman::present::REPORT_BUTTON)
+                    .next()
+                    .unwrap()
                     .rect()
                     .bottom()
                     < 1030.0
@@ -2940,6 +3098,8 @@ fn fit_harness_for(
     harness.get_by_label("Advanced").click_accesskit();
     harness.run_steps(8);
     convert(&mut harness);
+    harness.get_by_label("Change…").click_accesskit();
+    harness.run_steps(8);
     harness
 }
 
@@ -3104,6 +3264,8 @@ fn many_results_scroll_in_their_own_column_and_not_the_page() {
     h.run_steps(8);
     convert(&mut h);
     assert_eq!(h.state().rows().len(), 3);
+    h.get_by_label("Change…").click_accesskit();
+    h.run_steps(8);
     assert!(!h.state().page_scrolls());
     let convert_row = h.get_by_label("Convert").rect().top();
     assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert_row);
@@ -3713,10 +3875,13 @@ fn report_flow_case_screenshots() {
     std::fs::create_dir_all(&dir).unwrap();
     let reports = cases.join("1-full-FHCS (SolidCraft)");
     let work = tempfile::tempdir().unwrap();
-    let size = egui::vec2(1600.0, 1000.0);
+    let size = match std::env::var("DUTCHMAN_REPORT_FLOW_SIZE").as_deref() {
+        Ok("1280x800") => egui::vec2(1280.0, 800.0),
+        _ => egui::vec2(1600.0, 1000.0),
+    };
     let mut index = String::from("# Report flow, five cases\n\n");
-    let mut measurements = String::from(
-        "# Report flow measurements\n\nSaved walkthrough reports, rendered at 1600 × 1000; running progress is replayed, not a conversion timing.\n\n| Case | Question top (px) | DM bottom (px) | DM right (px) |\n|---|---:|---:|---:|\n",
+    let mut measurements = format!(
+        "# Report flow measurements\n\nSaved walkthrough reports, rendered at {} × {}; running progress is replayed, not a conversion timing.\n\n| Case | Question top (px) | DM bottom (px) | DM right (px) | Step 1 bottom (px) | More bottom (px) | Footer top (px) |\n|---|---:|---:|---:|---:|---:|---:|\n", size.x, size.y,
     );
     let harness = || {
         let mut h = Harness::builder()
@@ -3776,7 +3941,11 @@ fn report_flow_case_screenshots() {
             report: "5-slow-Voron.report.json",
         },
     ];
+    let only = std::env::var("DUTCHMAN_REPORT_FLOW_CASE").ok();
     for case in flow {
+        if only.as_deref().is_some_and(|wanted| wanted != case.shot) {
+            continue;
+        }
         let input = cases.join(case.input);
         let mut report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(reports.join(case.report)).unwrap()).unwrap();
@@ -3870,7 +4039,7 @@ fn report_flow_case_screenshots() {
         let question = h.get_by_label(dutchman_gui::report_panel::QUESTION).rect();
         let dm = h.get_by_label("Copy and open DM").rect();
         assert!(
-            question.top() >= 80.0 && dm.bottom() < 940.0,
+            question.top() >= 80.0 && dm.bottom() < size.y - 60.0,
             "{}: {question:?}, {dm:?}",
             case.shot
         );
@@ -3879,12 +4048,38 @@ fn report_flow_case_screenshots() {
             "{}: {dm:?}",
             case.shot
         );
+        let bottom = h.get_by_label("Convert").rect().top();
+        for label in [
+            "Join our Discord server",
+            dutchman::present::SEND_JOIN_BUTTON,
+            dutchman::present::SEND_JOIN_NOTE,
+        ] {
+            let rect = h.get_by_label(label).rect();
+            assert!(
+                rect.top() >= question.bottom() && rect.bottom() < bottom,
+                "{}: {label}: {rect:?}, footer {bottom}",
+                case.shot
+            );
+        }
+        if size.y == 1000.0 {
+            let more = h.get_by_label("More").rect();
+            assert!(
+                more.bottom() < bottom,
+                "{}: More {more:?}, footer {bottom}",
+                case.shot
+            );
+        }
         measurements.push_str(&format!(
-            "| {} | {:.1} | {:.1} | {:.1} |\n",
+            "| {} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} |\n",
             case.shot,
             question.top(),
             dm.bottom(),
-            dm.right()
+            dm.right(),
+            h.get_by_label(dutchman::present::SEND_JOIN_NOTE)
+                .rect()
+                .bottom(),
+            h.get_by_label("More").rect().bottom(),
+            bottom
         ));
         shot(
             &mut h,
@@ -3942,6 +4137,10 @@ fn report_flow_case_screenshots() {
             );
         }
     }
-    std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
-    std::fs::write(dir.join("INDEX.md"), index).unwrap();
+    if only.is_some() {
+        std::fs::write(dir.join("C2-MEASUREMENTS.md"), measurements).unwrap();
+    } else {
+        std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
+        std::fs::write(dir.join("INDEX.md"), index).unwrap();
+    }
 }

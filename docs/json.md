@@ -1304,3 +1304,6 @@ Appearance bindings scoped to one placed instance or an evaluation state use
 source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
+
+The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
+and **GitHub issue** (a public issue under the user’s GitHub name).

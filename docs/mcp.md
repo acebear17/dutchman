@@ -906,3 +906,6 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
+and **GitHub issue** (a public issue under the user’s GitHub name).

@@ -101,12 +101,20 @@ impl Row {
     }
 }
 
+/// The selected attachment, measured once when it is chosen for private sharing.
+#[derive(Clone)]
+struct PrivateAttachment {
+    path: PathBuf,
+    size: Option<u64>,
+    bundle: bool,
+}
+
 /// Dutchman Convert's window.
 pub struct App {
     consent: crate::report_consent::Consent,
     /// The row whose file the DM step sends privately, and the saved bundle to send instead of
     /// the original, once "Send the whole file privately" was chosen in the review.
-    private_send: Option<(usize, Option<PathBuf>)>,
+    private_send: Option<(usize, PrivateAttachment)>,
     /// The row the "Is there a problem?" panel is about, once chosen; else the first that needs
     /// attention.
     report_row: Option<usize>,
@@ -131,6 +139,8 @@ pub struct App {
     available: Option<u64>,
     pending: Option<PendingRun>,
     out_dir: Option<PathBuf>,
+    /// Reopen output settings after a result has collapsed them.
+    output_expanded: bool,
     options: ConvertOptions,
     diagnostic_path: Option<PathBuf>,
     diagnostic_stopped: bool,
@@ -435,6 +445,7 @@ impl App {
             available: None,
             pending: None,
             out_dir: None,
+            output_expanded: false,
             options,
             diagnosis: None,
             diagnostic_path: None,
@@ -621,6 +632,22 @@ impl App {
     #[cfg(feature = "test-support")]
     pub fn preview_result_for_test(&mut self, row: Row) {
         self.rows = vec![row];
+    }
+
+    /// Starts a real isolated worker executable for cancellation tests.
+    #[cfg(feature = "test-support")]
+    pub fn start_isolated_for_test(&mut self, program: PathBuf, ctx: &egui::Context) {
+        let Some(out_dir) = self.out_dir.clone() else {
+            return;
+        };
+        self.run = Some(Run::start_isolated_for_test(
+            self.inputs.clone(),
+            out_dir,
+            &self.options,
+            self.sender.clone(),
+            ctx.clone(),
+            program,
+        ));
     }
 
     /// Supplies a held conversion through the normal card renderer, without a worker.
@@ -844,31 +871,35 @@ impl App {
     /// Copies the message about the file of the row at `index` and opens Dutchy's
     /// DM. A file small enough to drag in has its folder shown too.
     pub fn dm_dutchy(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
-        let file = self
-            .private_send
-            .as_ref()
-            .filter(|(row, _)| *row == index)
-            .and_then(|(_, file)| file.clone());
-        self.dm_private(index, file.as_deref(), ctx)
+        let Some(attachment) = self.private_attachment(index) else {
+            return Ok(());
+        };
+        self.dm_private(index, &attachment, ctx)
+    }
+
+    fn private_attachment(&self, index: usize) -> Option<PrivateAttachment> {
+        if let Some((_, attachment)) = self.private_send.as_ref().filter(|(row, _)| *row == index) {
+            return Some(attachment.clone());
+        }
+        let row = self.rows.get(index)?;
+        Some(PrivateAttachment {
+            path: row.input.clone(),
+            size: row.size,
+            bundle: false,
+        })
     }
 
     fn dm_private(
         &mut self,
         index: usize,
-        file: Option<&Path>,
+        attachment: &PrivateAttachment,
         ctx: &egui::Context,
     ) -> Result<(), String> {
         let Some((_, id, report)) = self.anonymous(index)? else {
             return self.dm_general(Some(index), ctx);
         };
-        let Some(row) = self.rows.get(index) else {
-            return Ok(());
-        };
         let policy = self.report_policy.policy();
-        let size = file
-            .and_then(|p| std::fs::metadata(p).ok())
-            .map(|m| m.len())
-            .or(row.size);
+        let size = attachment.size;
         let steps = present::SendSteps::new(policy, size, report, present::Surface::Desktop);
         let facts = MessageFacts {
             code: present::error_code(report),
@@ -887,7 +918,7 @@ impl App {
         ctx.copy_text(message);
         ctx.open_url(egui::OpenUrl::new_tab(policy.dm_url()));
         let shown = if steps.drag {
-            (self.file_manager)(file.unwrap_or(&row.input))
+            (self.file_manager)(&attachment.path)
         } else {
             Ok(())
         };
@@ -1214,6 +1245,7 @@ impl App {
                             .and_then(Value::as_str)
                             .is_some_and(|message| {
                                 message.contains(dutchman::worker::SHUTDOWN_STOPPED)
+                                    || message.contains(dutchman::worker::CANCELLED)
                             });
                     if let Some(row) = self.rows.get_mut(self.offset + index) {
                         if stopped {
@@ -1873,6 +1905,12 @@ impl App {
                         }
                         if !self.inputs.is_empty() && ui.button("Clear").clicked() {
                             self.inputs.clear();
+                            self.rows.clear();
+                            self.report_row = None;
+                            self.report_done = None;
+                            self.private_send = None;
+                            self.consent.card = None;
+                            self.output_expanded = false;
                         }
                     },
                 );
@@ -1962,6 +2000,44 @@ impl App {
         let p = *theme::palette(ui);
         let wide = is_wide(ui);
         section_label(ui, &p, "Output folder");
+        let has_results = self.rows.iter().any(|row| row.report.is_some());
+        if !has_results {
+            self.output_expanded = false;
+        }
+        if has_results && !self.output_expanded {
+            panel(ui, &p, false, |ui| {
+                let path = self
+                    .out_dir
+                    .as_deref()
+                    .map(display)
+                    .unwrap_or_else(|| "Not chosen yet".to_owned());
+                let mut path_clicked = false;
+                let mut change_clicked = false;
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new(&path).monospace())
+                                    .frame(false)
+                                    .truncate(),
+                            )
+                            .on_hover_text(&path)
+                            .clicked()
+                        {
+                            path_clicked = true;
+                        }
+                    },
+                    |ui| {
+                        if ui.button("Change…").clicked() {
+                            change_clicked = true;
+                        }
+                    },
+                );
+                self.output_expanded = path_clicked || change_clicked;
+            });
+            return;
+        }
         panel(ui, &p, false, |ui| {
             let running = self.running();
             let sender = self.sender.clone();
@@ -2317,7 +2393,24 @@ impl App {
             }
             Action::Private(index, file) => {
                 // Back to the steps: the DM step now sends this file, or its saved bundle.
-                self.private_send = Some((index, file));
+                let attachment = match file {
+                    Some(path) => PrivateAttachment {
+                        size: std::fs::metadata(&path).ok().map(|meta| meta.len()),
+                        path,
+                        bundle: true,
+                    },
+                    None => {
+                        let Some(row) = self.rows.get(index) else {
+                            return Ok(());
+                        };
+                        PrivateAttachment {
+                            path: row.input.clone(),
+                            size: row.size,
+                            bundle: false,
+                        }
+                    }
+                };
+                self.private_send = Some((index, attachment));
                 self.report_row = Some(index);
                 self.report_done = None;
                 self.reveal_report = true;
@@ -2378,6 +2471,7 @@ impl App {
     fn report_panel(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
         let p = *theme::palette(ui);
         let selected = self.report_index(view);
+        let attachment = selected.and_then(|index| self.private_attachment(index));
         let heading = ui.label(RichText::new(report_panel::QUESTION).heading().color(p.ink));
         if std::mem::take(&mut self.reveal_report) {
             heading.scroll_to_me(Some(Align::Min));
@@ -2419,13 +2513,23 @@ impl App {
                     );
                 }
             }
+            if let Some(attachment) = attachment.as_ref().filter(|file| file.bundle) {
+                ui.label(
+                    RichText::new(format!(
+                        "Private attachment: {} (bundle)",
+                        file_name(&attachment.path)
+                    ))
+                    .small()
+                    .color(p.tide),
+                );
+            }
             let policy = self.report_policy.policy();
             let report = row.and_then(|(_, row)| row.report.as_ref());
             let steps = row.and_then(|(_, row)| {
                 let report = row.report.as_ref()?;
                 Some(present::SendSteps::new(
                     policy,
-                    row.size,
+                    attachment.as_ref().and_then(|file| file.size),
                     report,
                     present::Surface::Desktop,
                 ))
@@ -2479,21 +2583,19 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
-            ui.label(
-                RichText::new(present::SEND_SMALL_PRINT)
-                    .small()
-                    .color(p.tide),
-            );
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(report_panel::GITHUB_LEAD)
-                        .small()
-                        .color(p.tide),
-                );
-                if report_panel::link(ui, &p, present::REPORT_BUTTON)
-                    .on_hover_text(present::REPORT_HELP)
+                if ui
+                    .add_enabled(
+                        !busy && report.is_some(),
+                        egui::Button::new("Anonymous report"),
+                    )
                     .clicked()
                 {
+                    if let Some(index) = selected {
+                        action = Some(Action::Consent(index));
+                    }
+                }
+                if ui.button(present::REPORT_BUTTON).clicked() {
                     action = Some(Action::Report(selected.filter(|_| report.is_some())));
                 }
             });
@@ -2507,10 +2609,13 @@ impl App {
                         .show(ui, |ui| {
                             if file.can_report
                                 && ui
-                                    .add_enabled(!busy, egui::Button::new("Review and send report"))
+                                    .add_enabled(!busy, egui::Button::new("Anonymous report"))
                                     .clicked()
                             {
                                 action = Some(Action::Consent(index));
+                            }
+                            if ui.button(present::REPORT_BUTTON).clicked() {
+                                action = Some(Action::Report(Some(index)));
                             }
                             if row.output.is_some() {
                                 if let Some(chosen) =
@@ -3396,13 +3501,17 @@ mod tests {
             harness.run_steps(8);
             // The question and its steps show at once; the anonymous review is under More.
             harness.get_by_label(report_panel::QUESTION);
-            assert!(harness.query_by_label("Review and send report").is_none());
+            harness.get_by_label("Anonymous report");
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
             harness.get_by_label(report_panel::MORE).click_accesskit();
             harness.run_steps(8);
             assert!(harness.query_by_label("Diagnose this file").is_none());
-            let review = harness.get_by_label("Review and send report").rect();
+            let review = harness
+                .query_all_by_label("Anonymous report")
+                .last()
+                .unwrap()
+                .rect();
             // Discord first: the invite's card stands left of the DM's, both above More.
             assert!(join.right() <= dm.left());
             assert!(join.bottom() < review.top() && dm.bottom() < review.top());
@@ -3410,7 +3519,9 @@ mod tests {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
             harness
-                .get_by_label("Review and send report")
+                .query_all_by_label("Anonymous report")
+                .next()
+                .unwrap()
                 .click_accesskit();
             harness.run_steps(8);
             harness.get_by_label("This file converted, but the result is wrong.");
@@ -3432,6 +3543,100 @@ mod tests {
             assert!(!text.contains("claim_secret"));
             assert!(metadata.get("description").is_none());
             assert!(!card.folder.join("submission.json").exists());
+        }
+    }
+
+    #[test]
+    fn private_attachment_drives_the_panel_and_dm_on_both_sides_of_the_limit() {
+        use egui_kittest::kittest::Queryable;
+        static SHOWN: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+        for (original_mb, bundle_mb) in [(60, 2), (2, 60)] {
+            let dir = tempfile::tempdir().unwrap();
+            let original = dir.path().join("original.f3d");
+            let bundle = dir.path().join("selected-bundle.zip");
+            std::fs::File::create(&original)
+                .unwrap()
+                .set_len(original_mb << 20)
+                .unwrap();
+            std::fs::File::create(&bundle)
+                .unwrap()
+                .set_len(bundle_mb << 20)
+                .unwrap();
+            let shown = &SHOWN;
+            let mut h = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(1600.0, 1000.0))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.file_manager = |path| {
+                        SHOWN.lock().unwrap().push(path.to_path_buf());
+                        Ok(())
+                    };
+                    app.rows.push(Row {
+                        input: original.clone(),
+                        output: None,
+                        status: Status::Failed,
+                        progress: None,
+                        report: Some(json!({"ok": false,
+                        "input": {"path": original, "format": "fusion_archive"},
+                        "error": {"stage": "decode", "kind": "decode"}})),
+                        job: None,
+                        size: Some(original_mb << 20),
+                    });
+                    app
+                });
+            for file in [None, Some(bundle.clone())] {
+                let ctx = h.ctx.clone();
+                h.state_mut()
+                    .act(Action::Private(0, file.clone()), &ctx)
+                    .unwrap();
+                h.run_steps(12);
+                let mb = if file.is_some() {
+                    bundle_mb
+                } else {
+                    original_mb
+                };
+                let path = file.as_ref().unwrap_or(&original);
+                let steps = present::SendSteps::new(
+                    h.state().report_policy.policy(),
+                    Some(mb << 20),
+                    h.state().rows[0].report.as_ref().unwrap(),
+                    present::Surface::Desktop,
+                );
+                h.get_by_label(&steps.dm_text);
+                if file.is_some() {
+                    h.get_by_label("Private attachment: selected-bundle.zip (bundle)");
+                } else {
+                    assert!(h.query_by_label_contains("Private attachment:").is_none());
+                }
+                shown.lock().unwrap().clear();
+                h.get_by_label(present::SEND_DM_BUTTON).click_accesskit();
+                h.step();
+                let text = h
+                    .output()
+                    .platform_output
+                    .commands
+                    .iter()
+                    .find_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(text.contains(&format!("Size: {mb} MB.")), "{text}");
+                assert_eq!(
+                    *shown.lock().unwrap(),
+                    if steps.drag {
+                        vec![path.clone()]
+                    } else {
+                        vec![]
+                    }
+                );
+                h.run_steps(8);
+                h.get_by_label(if steps.drag {
+                    report_panel::DM_DONE_DRAG
+                } else {
+                    report_panel::DM_DONE_LINK
+                });
+            }
         }
     }
 

@@ -138,7 +138,7 @@ file row and box comes from the file's size and can be far off either way, so it
 refuses or delays a conversion. Dutchman measures memory while it converts and stops with a
 clear message if the computer really runs out. When the estimate was above free memory, the
 result card's **memory** Info note says so. **Stop** starts no further file and ends the
-file converting within 30 seconds; it reads **Stopping…** until then, and that file shows
+isolated converter and its children promptly; it reads **Stopping…** until then, and that file shows
 **Not started**. Preset descriptions appear on hover or keyboard
 focus in the preset selector. The **Convert and check history even if memory is low** control
 in Advanced stays.
@@ -264,8 +264,9 @@ file's message is that details line, with its error code, then "Anything else we
 Before any file has finished, or while one is still converting, the message names only the
 version and how long it has been running.
 
-**Report anonymously on GitHub**, after "No Discord?", is the backup. It sends no file and no
-names. It opens the
+**Anonymous report** and **GitHub issue** are secondary buttons directly below the three steps.
+**Anonymous report** opens the review for a direct upload to the cloud inbox; nothing is sent
+until you review it and click Send. **GitHub issue** is the public backup. It opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form in your browser with Dutchman's version, your system and the error's stage, upstream and
 code filled in, and copies the file's anonymous report, which names no file and no folder.
@@ -275,11 +276,12 @@ under 2,000 characters so GitHub opens it while you are signed in. For converted
 form says that the result is wrong and asks what differs from the original. With no finished
 file, it opens the empty form.
 
-**More** holds the rarer tools for the chosen file: **Review and send report**, **Ask your AI
+**More** also offers **Anonymous report** and **GitHub issue**, plus **Ask your AI
 about this file**, and, for a failed file, **Diagnose this file**. The review opens in the panel,
 under its steps, not in another window. **Send the whole file privately** in it goes back to the
 steps; with a saved bundle, **Send this bundle privately** makes the DM step show the bundle's
-folder instead of the original's. **Get updates on Discord** copies a claim code to paste on its
+folder instead of the original's. The panel names the selected bundle and uses its size
+for the same drag-or-upload-link route that the copied DM uses. **Get updates on Discord** copies a claim code to paste on its
 own in Dutchy's DM, after joining the server.
 
 Each result card shows its run's log path as a small "Run log:" line (hover it for the whole path),
@@ -294,7 +296,7 @@ Log names include UTC date and time, Dutchman version and result, for example
 completed runs use `converted`, `failed` or `stopped`. **Open diagnostics folder** opens the
 folder containing the newest 50 logs, including older time-only names.
 
-**Review and send report** names this run's log automatically and lets you show or copy it.
+**Anonymous report** names this run's log automatically and lets you show or copy it.
 The log contains no names or contents from the design. Send uploads only the summary or
 bundle described in that review; the log stays local. The copied Discord DM names the same
 log so you can attach it without guessing which file belongs to the run. An older log's
@@ -492,7 +494,7 @@ source and matching STEP or converted geometry side by side. These are whole-des
 views. On a file check, click **Target part N** to save the report target. Comparison
 body numbers still need local resolution to the correct assembly part.
 
-**Review and send report**, under **More** in **Is there a problem? Is something missing?**,
+**Anonymous report**, under **More** in **Is there a problem? Is something missing?**,
 reviews the part roles and exact sizes; bundles contain geometry. The public-test permission is
 separate and unticked. Extraction is not supported yet: choose anonymous summary, or send the
 whole file privately with the panel's Discord steps. Send/retry always requires a click. If the endpoint does

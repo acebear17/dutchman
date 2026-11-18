@@ -659,7 +659,7 @@ Use this when a conversion fails and the original file must stay private.
    source program/version, asking once if missing. Use only anonymous.json for the other
    technical facts: format, stage, category, finding codes/counts, kinds and anonymous
    narrowing path. Remove source names, paths, entity ids and geometry/parameter values.
-   If rebuilding has not reproduced, draft an anonymous-facts-only issue and state that limit.
+   If rebuilding has not reproduced, draft an issue containing only the report facts and state that limit.
 6. List anonymous.json and the synthetic rebuilt file with its STEP export and a public
    licence such as CC0 as proposed attachments. Include the design only if it reproduces
    and the user is free to share it. Never attach the original file or local-key.json.
@@ -753,15 +753,18 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 `dutchman report --folder FOLDER --send-summary --yes`. No free-text description is
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
 form without private names or paths. The desktop offers these actions in its always-open
-**Is there a problem? Is something missing?** panel, review under **More**. Failure narrowing is for failed files.
+**Is there a problem? Is something missing?** panel. The **Anonymous report** and **GitHub issue**
+pills sit directly below the three steps and also appear under **More**. Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call
 `report_submit` with `explicit_yes: true` only after the user's explicit yes to that
 report, its bundle/summary choice and separate public-test permission. The public-test
 box defaults false. Whole-file sending uses the private Discord steps. On delivery failure
-keep the local report; retry later only when the user asks. GitHub gets the anonymous
-summary only, never a geometry bundle. The desktop app selects summary when no bundle is available;
+keep the local report; retry later only when the user asks. **Anonymous report** opens
+the review for a direct cloud-inbox upload; opening it sends nothing. **GitHub issue**
+opens the public issue form under the user’s GitHub name. Share only the report contents
+there, never a geometry bundle. The desktop app selects summary when no bundle is available;
 Send becomes Retry only after delivery fails. Optional Discord claims are copied locally and pasted by the user.
 
 Report summaries identify the authoring app from the native format, such as Fusion or

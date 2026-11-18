@@ -926,7 +926,7 @@ pub fn run_each(
 
 /// [`run_each`] with each file in its own process started from `program`, so a stop for low
 /// memory or a crash ends that file and not the program running the batch. Setting `stop`
-/// starts no further file and ends those converting within 30 seconds.
+/// starts no further file and immediately terminates those converting.
 pub fn run_isolated(
     work: &[Job],
     options: &ConvertOptions,
@@ -946,13 +946,13 @@ pub fn run_isolated(
         stop,
         |job, index| {
             let callback = |event| on_event(Event::Progress(index, event));
-            // Stop also ends the files converting, after their grace period.
-            convert_isolated_job_with_progress(
+            // Explicit Stop ends the process tree without waiting for application shutdown.
+            convert_isolated_job_with_stop(
                 program,
                 job,
                 options,
                 &limits,
-                Some(stop),
+                Some(worker::StopSignal::Cancel(stop)),
                 &callback,
             )
         },
@@ -1195,9 +1195,27 @@ pub fn convert_isolated_job_with_progress(
     stop: Option<&AtomicBool>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
+    convert_isolated_job_with_stop(
+        program,
+        job,
+        options,
+        limits,
+        stop.map(worker::StopSignal::Shutdown),
+        on_progress,
+    )
+}
+
+fn convert_isolated_job_with_stop(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    stop: Option<worker::StopSignal<'_>>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
     let started = Instant::now();
     let mut report = make_folder(job).unwrap_or_else(|| {
-        worker::convert_isolated_with_progress(program, job, options, limits, stop, on_progress)
+        worker::convert_isolated_with_stop(program, job, options, limits, stop, on_progress)
     });
     report::conversion_choices(&mut report, &job.input, options);
     if let Some(fields) = report.as_object_mut() {
@@ -1207,12 +1225,12 @@ pub fn convert_isolated_job_with_progress(
         );
     }
     // Stop applies to the whole job, including its optional STEP recovery. Starting that
-    // recovery now would give a second child another shutdown grace period.
-    if stop.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+    // recovery now would restart work the user has cancelled.
+    if stop.is_some_and(worker::StopSignal::requested) {
         return report;
     }
     with_fallback(job, report, |fallback| {
-        convert_isolated_job_with_progress(program, fallback, options, limits, stop, on_progress)
+        convert_isolated_job_with_stop(program, fallback, options, limits, stop, on_progress)
     })
 }
 
@@ -1236,7 +1254,7 @@ mod tests {
     /// Stop must reach the already-running child as well as preventing the next job.
     #[cfg(unix)]
     #[test]
-    fn stopping_an_isolated_batch_ends_the_current_file_after_the_grace_period() {
+    fn stopping_an_isolated_batch_ends_the_current_file_promptly() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("slow-worker");
@@ -1302,12 +1320,11 @@ mod tests {
             finished[0].1["error"]["message"]
                 .as_str()
                 .unwrap()
-                .starts_with(worker::SHUTDOWN_STOPPED),
+                .starts_with(worker::CANCELLED),
             "{:?}",
             finished[0].1
         );
-        assert!(elapsed >= std::time::Duration::from_secs(30));
-        assert!(elapsed < std::time::Duration::from_secs(90), "{elapsed:?}");
+        assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
     }
 
     fn project_zip(path: &Path, entries: &[(&str, &[u8])]) {
