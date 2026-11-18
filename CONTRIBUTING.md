@@ -57,7 +57,7 @@ Pull requests run the fast checks: path filtering, formatting, Linux Clippy and 
 (or the focused docs tests for a docs-only change), release notes, changelog and version gates.
 The merge queue runs the full matrix once per group of up to five entries: Windows, macOS,
 ARM64, Rust 1.88, WebAssembly, Docker, SolidCraft round trips (including 0.18.2), all placements
-and full release builds. ARM CI links test programs with mold and records link durations
+and full release builds. ARM CI links test programs with LLD and records link durations
 in the job summary. The required `ci-result` checks the fast jobs on a PR and the full
 set in the queue; an unexpected skip fails it. Candidate and stable tags also run the full
 matrix. To run everything on a PR branch before queueing, use

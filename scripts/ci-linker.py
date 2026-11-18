@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Link ARM CI tests with mold and record individual link durations."""
+"""Link ARM CI tests with LLD and record individual link durations."""
 import json
 import os
 from pathlib import Path
@@ -18,11 +18,11 @@ def main():
     args = sys.argv[1:]
     output = next((args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-o"), "unknown")
     started = time.monotonic()
-    result = subprocess.run(["cc", *args, "-fuse-ld=mold"], check=False)
+    result = subprocess.run(["cc", *args, "-fuse-ld=lld"], check=False)
     folder = Path(os.environ["DUTCHMAN_LINK_TIMES"])
     folder.mkdir(parents=True, exist_ok=True)
     (folder / f"{os.getpid()}.json").write_text(json.dumps({
-        "output": output, "seconds": time.monotonic() - started, "status": result.returncode,
+        "linker": "lld", "output": output, "seconds": time.monotonic() - started, "status": result.returncode,
     }))
     return result.returncode
 

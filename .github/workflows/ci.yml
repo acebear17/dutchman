@@ -224,10 +224,10 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
-      - name: Install mold
+      - name: Install LLD
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mold
+          sudo apt-get install -y --no-install-recommends lld
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -286,10 +286,10 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
-      - name: Install mold
+      - name: Install LLD
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mold
+          sudo apt-get install -y --no-install-recommends lld
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
