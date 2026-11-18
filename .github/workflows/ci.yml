@@ -216,12 +216,18 @@ jobs:
       # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
       # core it is shut down while compiling the desktop app and web crates.
       CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/scripts/ci-linker.py
+      DUTCHMAN_LINK_TIMES: ${{ github.workspace }}/link-times
     steps:
       - name: Free disk space
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
+      - name: Install mold
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mold
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -230,6 +236,16 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked --features dutchman-gui/test-support
+      - name: Record link durations
+        if: always()
+        run: python3 scripts/ci-linker.py --summary "$DUTCHMAN_LINK_TIMES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: arm-link-times-${{ github.job }}
+          path: ${{ github.workspace }}/link-times
+          if-no-files-found: ignore
+          retention-days: 7
 
   # A second try of test-arm, only when its runner was shut down; a real failure is not retried.
   test-arm-again:
@@ -247,6 +263,8 @@ jobs:
       # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
       # core it is shut down while compiling the desktop app and web crates.
       CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/scripts/ci-linker.py
+      DUTCHMAN_LINK_TIMES: ${{ github.workspace }}/link-times
     steps:
       - name: Retry only after a runner shutdown
         env:
@@ -268,6 +286,10 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
+      - name: Install mold
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mold
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -275,6 +297,16 @@ jobs:
           shared-key: test-ubuntu-24.04-arm-debug
           save-if: false
       - run: cargo test --workspace --locked --features dutchman-gui/test-support
+      - name: Record link durations
+        if: always()
+        run: python3 scripts/ci-linker.py --summary "$DUTCHMAN_LINK_TIMES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: arm-link-times-${{ github.job }}
+          path: ${{ github.workspace }}/link-times
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Docs-only changes skip the build jobs above; the tests that read README.md and docs/formats.md
   # still check them against the program.
