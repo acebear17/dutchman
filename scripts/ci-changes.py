@@ -74,7 +74,7 @@ def referenced_inputs(root=ROOT, extra=()):
                 if target in candidates:
                     inputs.add(target)
                 inputs.update(directories.get(target, ()))
-                if any(char in target for char in '*?['):
+                if '.md' in target and any(char in target for char in '*?['):
                     inputs.update(path for path in candidates if fnmatch.fnmatchcase(path, target))
     return inputs
 

@@ -141,6 +141,8 @@ class ReferenceScanTests(unittest.TestCase):
                 'build.rs': 'read("build-guide.md");',
                 'build-guide.md': 'Build input',
                 'CONTRIBUTING.md': 'Unconsumed guidance',
+                'changelog.d/new.md': 'Unconsumed changelog',
+                'crates/example/src/math.rs': 'let expressions = ["c*", "*/*"];',
             }
             for name, content in files.items():
                 path = root / name
@@ -152,6 +154,7 @@ class ReferenceScanTests(unittest.TestCase):
             for name in ('guide.md', 'docs/json.md', 'docs/new-guide.md', 'skills/new/SKILL.md', 'build-guide.md'):
                 self.assertIn(name, inputs)
             self.assertNotIn('CONTRIBUTING.md', inputs)
+            self.assertNotIn('changelog.d/new.md', inputs)
             # A newly added reference removes an otherwise allowed Markdown file.
             (root / 'tests/new.rs').write_text('read_to_string("CONTRIBUTING.md");')
             subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
