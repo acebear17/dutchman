@@ -1308,3 +1308,7 @@ structured projection of the core report under `details`: stage counts, coded lo
 per-feature mapping results, assembly completeness, and verification.
 See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
 CLI and MCP `dutchman.convert/1` reports are unchanged.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

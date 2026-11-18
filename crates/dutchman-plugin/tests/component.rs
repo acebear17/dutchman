@@ -13,14 +13,20 @@ mod limits;
 #[path = "../src/report.rs"]
 #[allow(dead_code)]
 mod loss_report;
+#[path = "../src/stand_up.rs"]
+mod stand_up;
 use adapter::host::{
     add_to_linker, clock, control, design, evaluate, import_file, log, source, types,
     ImporterPlugin,
 };
 use dutchman_core::{Format, PartSearch, Report, Writer};
-use dutchman_solidcraft::{SolidCraftVersion, SolidCraftWriter, Verification};
+use dutchman_solidcraft::{
+    CliEvaluator, SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification,
+};
+use limits::MAX_REPORT_BYTES;
+use serde_json::{json, Value};
 use std::{
-    io::{Cursor, Read},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -66,6 +72,12 @@ struct Host {
     read: usize,
     calls: usize,
     progress: Vec<f32>,
+    fault: Option<Fault>,
+    input_failed: bool,
+    good_member_read: bool,
+    staged: Vec<u8>,
+    commands: Vec<Value>,
+    evaluator: Option<CliEvaluator>,
 }
 fn failed(reason: impl ToString) -> PluginError {
     PluginError::CommandFailed(types::CommandFailure {
@@ -77,17 +89,80 @@ impl types::Host for Host {}
 /// How the plugin words a check this harness's evaluate refused.
 const NO_HOST_EVALUATION: &str =
     "Host evaluation: PluginError::PermissionDenied(\"evaluate: the test host has no SolidCraft\")";
-// No SolidCraft here: every check is unverified, as the CLI's output this is compared with.
+// Ordinary fixture comparisons refuse evaluation; the placement regression uses
+// a real CLI in private archives and replays the accumulated session commands.
 impl evaluate::Host for Host {
-    fn stage(&mut self, _bytes: Vec<u8>) -> Result<(), PluginError> {
+    fn stage(&mut self, bytes: Vec<u8>) -> Result<(), PluginError> {
+        self.staged.extend(bytes);
         Ok(())
     }
-    fn run(&mut self, _command: String, _args: String) -> Result<String, PluginError> {
-        Err(PluginError::PermissionDenied(
-            "evaluate: the test host has no SolidCraft".into(),
-        ))
+    fn run(&mut self, command: String, args: String) -> Result<String, PluginError> {
+        let Some(evaluator) = &self.evaluator else {
+            return Err(PluginError::PermissionDenied(
+                "evaluate: the test host has no SolidCraft".into(),
+            ));
+        };
+        self.commands.push(
+            json!({"command":command,"params":serde_json::from_str::<Value>(&args).unwrap()}),
+        );
+        let mut results = evaluator
+            .run(
+                &self.staged,
+                &self.commands,
+                std::time::Duration::from_secs(120),
+                "component-session",
+            )
+            .map_err(failed)?;
+        Ok(serde_json::to_string(&results.pop().unwrap()).unwrap())
     }
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.staged.clear();
+        self.commands.clear();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Fault {
+    ReadDenied,
+    ReadLimit,
+    SizeDenied,
+    SizeLimit,
+    ResolveDenied,
+    ResolveLimit,
+    Aggregate,
+    Oversize,
+}
+impl Host {
+    fn input(&mut self, operation: &str, path: &str) -> Result<(), PluginError> {
+        assert!(
+            !self.input_failed,
+            "input work continued after a fatal failure"
+        );
+        if !path.ends_with("P02a.FCStd") {
+            return Ok(());
+        }
+        let fail = match self.fault {
+            Some(Fault::ReadDenied | Fault::ReadLimit) => operation == "read",
+            Some(Fault::SizeDenied | Fault::SizeLimit) => operation == "size",
+            Some(Fault::ResolveDenied | Fault::ResolveLimit) => operation == "resolve",
+            _ => false,
+        };
+        if fail {
+            assert!(
+                self.good_member_read,
+                "the good member must have converted first"
+            );
+            self.input_failed = true;
+            let message = format!("Original source.{operation} failure");
+            return Err(match self.fault {
+                Some(Fault::ReadLimit | Fault::SizeLimit | Fault::ResolveLimit) => {
+                    PluginError::LimitExceeded(message)
+                }
+                _ => PluginError::PermissionDenied(message),
+            });
+        }
+        Ok(())
+    }
 }
 impl log::Host for Host {
     fn log(&mut self, level: log::Level, message: String) {
@@ -111,6 +186,7 @@ impl clock::Host for Host {
 }
 impl source::Host for Host {
     fn resolve(&mut self, path: String) -> Result<Option<String>, PluginError> {
+        self.input("resolve", &path)?;
         if path.is_empty() {
             return Ok(Some(path));
         }
@@ -147,6 +223,16 @@ impl source::Host for Host {
         Ok(folder.is_file().then(|| names.join("/")))
     }
     fn size(&mut self, path: String) -> Result<Option<u64>, PluginError> {
+        self.input("size", &path)?;
+        if path.ends_with("P02a.FCStd") {
+            if let Some(Fault::Aggregate | Fault::Oversize) = self.fault {
+                assert!(self.good_member_read);
+                self.input_failed = true;
+                return Ok(Some(
+                    (1 << 30) + u64::from(matches!(self.fault, Some(Fault::Oversize))),
+                ));
+            }
+        }
         if path.is_empty() {
             return Ok(Some(self.main.len() as u64));
         }
@@ -162,19 +248,23 @@ impl source::Host for Host {
             .map(|m| m.len()))
     }
     fn read(&mut self, path: String, offset: u64, len: u32) -> Result<Vec<u8>, PluginError> {
+        self.input("read", &path)?;
         assert!(len as usize <= limits::CHUNK_BYTES);
         let member;
         let bytes = if path.is_empty() {
             &self.main
         } else {
             assert!(safe(&path));
-            member = std::fs::read(self.root.join(path)).map_err(failed)?;
+            member = std::fs::read(self.root.join(&path)).map_err(failed)?;
             &member
         };
         let start =
             usize::try_from(offset).map_err(|e| PluginError::LimitExceeded(e.to_string()))?;
         let end = start.saturating_add(len as usize).min(bytes.len());
         let chunk = bytes.get(start..end).unwrap_or_default().to_vec();
+        if path.ends_with("P01a.FCStd") && end == bytes.len() {
+            self.good_member_read = true;
+        }
         self.calls += 1;
         self.read += chunk.len();
         assert!(self.read <= 1 << 30);
@@ -209,6 +299,12 @@ fn host(root: &Path, main: Vec<u8>) -> Host {
         read: 0,
         calls: 0,
         progress: Vec::new(),
+        fault: None,
+        input_failed: false,
+        good_member_read: false,
+        staged: Vec::new(),
+        commands: Vec::new(),
+        evaluator: None,
     }
 }
 fn contents(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
@@ -330,6 +426,9 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     assert!(store.data().output.is_empty());
     drop(store);
 
+    fatal_member_failures(&engine, &component, &linker, &root)?;
+    stand_up_replays(&engine, &component, &linker, &root)?;
+    hidden_repeated_bodies(&engine, &component, &linker, &root)?;
     let mut fixtures = Vec::new();
     collect_fixtures(&root, &mut fixtures)?;
     fixtures.sort();
@@ -469,5 +568,297 @@ fn collect_fixtures(folder: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<
             files.push(entry.path());
         }
     }
+    Ok(())
+}
+
+fn fatal_member_failures(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let root = root.join("freecad-1.1.4-A01");
+    let main = std::fs::read(root.join("A01a.FCStd"))?;
+    for fault in [
+        Fault::ReadDenied,
+        Fault::ReadLimit,
+        Fault::SizeDenied,
+        Fault::SizeLimit,
+        Fault::ResolveDenied,
+        Fault::ResolveLimit,
+        Fault::Aggregate,
+        Fault::Oversize,
+    ] {
+        let mut host = host(&root, main.clone());
+        host.fault = Some(fault);
+        let mut store = Store::new(engine, host);
+        store.limiter(|host| &mut host.limits);
+        store.set_fuel(50_000_000_000)?;
+        let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+        let result = import_file(
+            &instance,
+            &mut store,
+            "convert",
+            &source::FileInfo {
+                name: "A01a.FCStd".into(),
+                size: main.len() as u64,
+            },
+            "{}",
+        )?;
+        let expected = match fault {
+            Fault::ReadDenied => PluginError::PermissionDenied("Original source.read failure".into()),
+            Fault::ReadLimit => PluginError::LimitExceeded("Original source.read failure".into()),
+            Fault::SizeDenied => PluginError::PermissionDenied("Original source.size failure".into()),
+            Fault::SizeLimit => PluginError::LimitExceeded("Original source.size failure".into()),
+            Fault::ResolveDenied => PluginError::PermissionDenied("Original source.resolve failure".into()),
+            Fault::ResolveLimit => PluginError::LimitExceeded("Original source.resolve failure".into()),
+            Fault::Aggregate => PluginError::LimitExceeded("Input exceeds the 1 GiB conversion limit; choose a smaller CAD file".into()),
+            Fault::Oversize => PluginError::LimitExceeded("P02a.FCStd: input exceeds the 1073741824-byte file limit; choose a smaller CAD file".into()),
+        };
+        assert_eq!(
+            format!("{:?}", result.unwrap_err()),
+            format!("{expected:?}"),
+            "{fault:?}"
+        );
+        assert!(store.data().good_member_read);
+        assert!(
+            store.data().output.is_empty(),
+            "{fault:?}: partial output was written"
+        );
+        eprintln!("fatal_member_failure={fault:?}: original error, no output");
+    }
+    Ok(())
+}
+
+fn document(bytes: &[u8]) -> Value {
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    serde_json::from_reader(zip.by_name("document.json").unwrap()).unwrap()
+}
+fn component_parents(doc: &Value) {
+    for occurrence in doc["occurrences"].as_array().unwrap() {
+        let parent = occurrence["parent"].as_u64().unwrap();
+        assert!(
+            parent == 0
+                || doc["components"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["id"] == parent),
+            "occurrence has no component parent: {occurrence}"
+        );
+    }
+}
+fn stand_up_replays(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cli = dutchman_solidcraft::find_cli(&Verification::Auto)?;
+    let evaluator = CliEvaluator::new(cli);
+    let main = std::fs::read(root.join("freecad-1.1.4-P04/P04a.FCStd"))?;
+    let mut host = host(root, main.clone());
+    host.evaluator = Some(evaluator.clone());
+    let mut store = Store::new(engine, host);
+    store.limiter(|host| &mut host.limits);
+    store.set_fuel(50_000_000_000)?;
+    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    let report = import_file(
+        &instance,
+        &mut store,
+        "convert",
+        &source::FileInfo {
+            name: "P04a.FCStd".into(),
+            size: main.len() as u64,
+        },
+        r#"{"up_axis":"stand_up"}"#,
+    )?
+    .map_err(|e| format!("{e:?}"))?;
+    let report: Value = serde_json::from_str(&report)?;
+    let doc = document(&store.data().output);
+    component_parents(&doc);
+    assert!(
+        doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "fillet"),
+        "{report}"
+    );
+    let verified = report["details"]["outcome"]["verification"]["status"] == "verified"
+        || report["details"]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["verification"]["status"] == "verified");
+    assert!(verified, "fillet conversion was not verified: {report}");
+    for feature in doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "fillet")
+    {
+        assert_ne!(
+            feature["suppressed"], true,
+            "mapped fillet was suppressed: {feature}"
+        );
+    }
+    let replay = evaluator.evaluate(
+        &store.data().output,
+        std::time::Duration::from_secs(120),
+        "stood-fillet",
+    )?;
+    assert!(
+        replay["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|body| body["volume_mm3"].as_f64().unwrap() > 0.0),
+        "{replay}"
+    );
+    for row in replay["timeline"].as_array().unwrap() {
+        assert!(row["error"].is_null() || row["error"] == "", "{replay}");
+    }
+    let mut native_report = Report::default();
+    let model = dutchman_core::read(
+        Format::FreeCadDocument,
+        &root.join("freecad-1.1.4-P04/P04a.FCStd"),
+        &mut native_report,
+    )?;
+    let mut untransformed = Vec::new();
+    SolidCraftWriter::new()
+        .threads(1)
+        .target_version(Some(SolidCraftVersion::default()))
+        .evaluator(std::sync::Arc::new(evaluator.clone()))
+        .hide_unverified_history(true)
+        .write(&model, &mut untransformed, &mut native_report)?;
+    let baseline = evaluator.evaluate(
+        &untransformed,
+        std::time::Duration::from_secs(120),
+        "fillet-baseline",
+    )?;
+    let body = &baseline["bodies"][0];
+    let stood_body = &replay["bodies"][0];
+    for field in ["volume_mm3", "area_mm2"] {
+        let expected = body[field].as_f64().unwrap();
+        assert!(
+            (stood_body[field].as_f64().unwrap() - expected).abs() < 1e-6 * expected.abs().max(1.0),
+            "{field}: {replay} / {baseline}"
+        );
+    }
+    for (side, other) in [("min", "max"), ("max", "min")] {
+        let expected = [
+            body["bbox"][side][0].as_f64().unwrap(),
+            -body["bbox"][other][2].as_f64().unwrap(),
+            body["bbox"][side][1].as_f64().unwrap(),
+        ];
+        for (axis, expected) in expected.into_iter().enumerate() {
+            assert!(
+                (stood_body["bbox"][side][axis].as_f64().unwrap() - expected).abs() < 1e-6,
+                "Stand up bounds: {replay} / {baseline}"
+            );
+        }
+    }
+    eprintln!(
+        "stand_up_fillet: mapped, verified, and replayed with rotated bounds: {}",
+        report["summary"]
+    );
+    Ok(())
+}
+
+fn hidden_repeated_bodies(
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<Host>,
+    root: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Use the writer's actual repeated-part assembly layout, including its
+    // component ownership and occurrence paths.
+    let main = std::fs::read(root.join("placed_cubes.sldasm"))?;
+    let mut store = Store::new(engine, host(root, main.clone()));
+    store.limiter(|host| &mut host.limits);
+    store.set_fuel(50_000_000_000)?;
+    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
+    import_file(
+        &instance,
+        &mut store,
+        "convert",
+        &source::FileInfo {
+            name: "placed_cubes.sldasm".into(),
+            size: main.len() as u64,
+        },
+        r#"{"editable_history":false}"#,
+    )?
+    .map_err(|e| format!("{e:?}"))?;
+    let evaluator = CliEvaluator::new(dutchman_solidcraft::find_cli(&Verification::Auto)?);
+    let original = &store.data().output;
+    let measured = evaluator.evaluate(
+        original,
+        std::time::Duration::from_secs(120),
+        "repeated-names",
+    )?;
+    let bodies = measured["bodies"].as_array().unwrap();
+    assert_eq!(bodies.len(), 2, "repeated assembly baseline: {measured}");
+    let names: Vec<_> = bodies
+        .iter()
+        .map(|body| body["name"].as_str().unwrap().to_owned())
+        .collect();
+    let base = names.iter().find(|name| !name.ends_with(')')).unwrap();
+    let qualified = names.iter().find(|name| *name != base).unwrap();
+    assert!(qualified.starts_with(&format!("{base} (")), "{names:?}");
+    let expected_qualified =
+        qualified.replacen(&format!("{base} ("), &format!("{base} (Stand up:1/"), 1);
+    let mut doc = document(original);
+    doc["visibility"]["hidden_bodies"] = json!([base, qualified]);
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, data) in contents(original) {
+        archive.start_file(&path, zip::write::SimpleFileOptions::default())?;
+        archive.write_all(&if path == "document.json" {
+            serde_json::to_vec(&doc)?
+        } else {
+            data
+        })?;
+    }
+    let repeated = archive.finish()?.into_inner();
+    let stood = stand_up::apply(&repeated)?;
+    let doc = document(&stood);
+    component_parents(&doc);
+    let replay = evaluator.evaluate(
+        &stood,
+        std::time::Duration::from_secs(120),
+        "hidden-repeated",
+    )?;
+    let names: Vec<_> = replay["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|body| body["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), 2, "{replay}");
+    let hidden = doc["visibility"]["hidden_bodies"].as_array().unwrap();
+    assert_eq!(hidden, &vec![json!(base), json!(expected_qualified)]);
+    for hidden in hidden {
+        assert!(
+            names.contains(&hidden.as_str().unwrap()),
+            "hidden body has no evaluated world name: {hidden}: {replay}"
+        );
+    }
+    let inspected = evaluator.run(
+        &stood,
+        &[json!({"command":"document.inspect", "params":{}})],
+        std::time::Duration::from_secs(120),
+        "hidden-visibility",
+    )?;
+    let bodies = inspected[0]["bodies"].as_array().unwrap();
+    // document.inspect lists the shared component's local definition once;
+    // eval above supplies the two occurrence-qualified world names.
+    assert_eq!(bodies.len(), 1, "{inspected:?}");
+    assert_eq!(
+        bodies[0]["visible"], false,
+        "hidden definition was displayed: {inspected:?}"
+    );
+    eprintln!(
+        "stand_up_hidden_bodies: first and repeated placement names and visibility match SolidCraft evaluation"
+    );
     Ok(())
 }

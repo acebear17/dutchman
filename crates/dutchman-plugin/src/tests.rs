@@ -38,6 +38,18 @@ fn native_options_and_structured_report() {
         stood["components"].as_array().unwrap().len(),
         original["components"].as_array().unwrap().len() + 1
     );
+    for occurrence in stood["occurrences"].as_array().unwrap() {
+        let parent = occurrence["parent"].as_u64().unwrap();
+        assert!(
+            parent == 0
+                || stood["components"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["id"] == parent),
+            "occurrence parent must resolve to a component: {occurrence}"
+        );
+    }
     assert!(serde_json::from_str::<Options>(r#"{"up_axis":"other"}"#).is_err());
     assert!(serde_json::from_str::<Options>(r#"{"extra":true}"#).is_err());
 }
@@ -120,4 +132,38 @@ fn history_off_keeps_the_command_line_wording_elsewhere() {
         report.outcome().unwrap().check,
         Check::NotApplicable("--import-only".to_owned())
     );
+}
+
+#[test]
+fn every_stood_up_assembly_occurrence_has_a_component_parent() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/freecad-1.1.4-A01");
+    let (design, _) = convert(
+        "A01a.FCStd",
+        Options {
+            editable_history: false,
+            up_axis: crate::UpAxis::StandUp,
+            ..Options::default()
+        },
+        &|path, _| {
+            std::fs::read(root.join(path)).map_err(|e| dutchman_core::Error::Decode(e.to_string()))
+        },
+        &|stored, folder| resolve(stored, folder, &|path| root.join(path).is_file()),
+        None,
+    )
+    .unwrap();
+    let doc = document(&design);
+    assert!(doc["occurrences"].as_array().unwrap().len() > 2);
+    for occurrence in doc["occurrences"].as_array().unwrap() {
+        let parent = occurrence["parent"].as_u64().unwrap();
+        assert!(
+            parent == 0
+                || doc["components"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["id"] == parent),
+            "occurrence parent must resolve to a component: {occurrence}"
+        );
+    }
 }

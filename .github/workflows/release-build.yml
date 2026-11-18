@@ -278,7 +278,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Install wasm-tools
-        run: cargo install --locked wasm-tools
+        run: |
+          cargo install --locked wasm-tools --version '=1.263.0'
+          test "$(wasm-tools --version)" = 'wasm-tools 1.263.0'
       - name: Build the component
         run: cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
       - name: Package
@@ -300,6 +302,15 @@ jobs:
           assert len(z.read("dutchman.wasm")) <= 64 * 1024 * 1024
           PY
           echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Fetch SolidCraft for plugin replay regressions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          policy=$(scripts/solidcraft-window.sh --print)
+          minor=$(printf '%s\n' "$policy" | sed -n 's/^Newest: \([0-9]*\.[0-9]*\)\.[0-9]* .*/\1/p')
+          [[ $minor =~ ^[0-9]+\.[0-9]+$ ]] || { echo "Newest SolidCraft release not found" >&2; exit 1; }
+          version=$(scripts/solidcraft-window.sh --fetch "$minor")
+          echo "SOLIDCRAFT_CLI=$PWD/solidcraft-${version}-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
       # The packaged component, run in Wasmtime on the public fixtures: each must convert as
       # the command line does, and the log shows the guest's peak memory per file (the
       # `peak_guest_memory` lines), which the manifest's memory request has to cover.

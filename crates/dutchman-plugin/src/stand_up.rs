@@ -62,7 +62,7 @@ fn wrap(doc: &mut Value) -> Result<(), Error> {
     {
         if o.get("parent").and_then(Value::as_u64) == Some(0) {
             if let Some(fields) = o.as_object_mut() {
-                fields.insert("parent".into(), json!(occurrence));
+                fields.insert("parent".into(), json!(component));
             }
         }
     }
@@ -78,6 +78,52 @@ fn wrap(doc: &mut Value) -> Result<(), Error> {
             }
         }
     }
+    let mut placements = std::collections::BTreeMap::<u64, Vec<(String, u64)>>::new();
+    for row in root
+        .get("occurrences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let (Some(parent), Some(name), Some(child)) = (
+            row.get("parent").and_then(Value::as_u64),
+            row.get("name").and_then(Value::as_str),
+            row.get("component").and_then(Value::as_u64),
+        ) {
+            placements
+                .entry(parent)
+                .or_default()
+                .push((name.to_owned(), child));
+        }
+    }
+    // The first placement keeps its local body name. Later placements use a
+    // qualified world name; the writer hides the base name as well as those names.
+    if let Some(names) = root
+        .get_mut("visibility")
+        .and_then(|v| v.get_mut("hidden_bodies"))
+        .and_then(Value::as_array_mut)
+    {
+        let originals: std::collections::BTreeSet<String> = names
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        for name in names {
+            let replacement = name.as_str().and_then(|name| {
+                let name = name.strip_suffix(')')?;
+                name.rmatch_indices(" (").find_map(|(index, _)| {
+                    let body = name.get(..index)?;
+                    let path = name.get(index + 2..)?;
+                    (originals.contains(body) && occurrence_path(path, component, &placements))
+                        .then(|| format!("{body} (Stand up:1/{path})"))
+                })
+            });
+            if let Some(replacement) = replacement {
+                *name = json!(replacement);
+            }
+        }
+    }
+
     // Occurrence visibility is addressed by paths from the root occurrence.
     if let Some(paths) = root
         .get_mut("visibility")
@@ -122,6 +168,35 @@ fn wrap(doc: &mut Value) -> Result<(), Error> {
     Ok(())
 }
 
+/// Match actual occurrence paths, including labels containing slashes or parentheses.
+fn occurrence_path(
+    path: &str,
+    root: u64,
+    placements: &std::collections::BTreeMap<u64, Vec<(String, u64)>>,
+) -> bool {
+    let mut pending = vec![(root, path)];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some((parent, tail)) = pending.pop() {
+        if !seen.insert((parent, tail)) {
+            continue;
+        }
+        for (name, component) in placements.get(&parent).into_iter().flatten() {
+            if tail == name {
+                return true;
+            }
+            if !name.is_empty() {
+                if let Some(rest) = tail
+                    .strip_prefix(name.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                {
+                    pending.push((*component, rest));
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,15 +204,25 @@ mod tests {
     fn placement_preserves_local_fillet_and_hidden_history_paths() {
         let fillet = json!({"id":7,"kind":"fillet","component":2,"edges":[{"point":[1,2,3]}],"radius":"2 mm"});
         let mut doc = json!({"next_id":8,"components":[{"id":2,"parent":0}],
-            "occurrences":[{"id":3,"parent":0,"component":2}],"features":[fillet.clone()],
-            "visibility":{"hidden_occurrences":[[3]],"hidden_sketches":[1]},"params":{"r":"2 mm"},
+            "occurrences":[{"id":3,"parent":0,"component":2,"name":"Part:1"}, {"id":4,"parent":0,"component":2,"name":"Part:2"}, {"id":5,"parent":0,"component":2,"name":"Part (copy)/two"}],"features":[fillet.clone()],
+            "visibility":{"hidden_occurrences":[[3]],"hidden_sketches":[1],"hidden_bodies":["Body", "Body (Part:2)", "Body (Part (copy)/two)", "Body (name)", "Local (name)"]},"params":{"r":"2 mm"},
             "assembly":{"joints":[{"a":{"occurrence":[3],"snap":{"origin":[1,2,3]}},"b":{"occurrence":[]}}]}});
         wrap(&mut doc).unwrap();
         assert_eq!(doc["features"][0], fillet);
         assert_eq!(doc["visibility"]["hidden_occurrences"], json!([[9, 3]]));
-        assert_eq!(doc["occurrences"][0]["parent"], 9);
+        assert_eq!(doc["occurrences"][0]["parent"], 8);
         assert_eq!(doc["components"][0]["parent"], 8);
         assert_eq!(doc["params"]["r"], "2 mm");
+        assert_eq!(
+            doc["visibility"]["hidden_bodies"],
+            json!([
+                "Body",
+                "Body (Stand up:1/Part:2)",
+                "Body (Stand up:1/Part (copy)/two)",
+                "Body (name)",
+                "Local (name)"
+            ])
+        );
         assert_eq!(
             doc["assembly"]["joints"][0]["a"]["occurrence"],
             json!([9, 3])

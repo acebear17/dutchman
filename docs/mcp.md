@@ -904,5 +904,9 @@ Designs with both B-rep and mesh bodies still convert their B-rep bodies and rep
 losses for meshes it could not decode.
 
 The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
-It does not add or change MCP tools. Its future evaluator will use the host's existing
-command surface through `run`, subject to host permissions.
+It does not add or change MCP tools. Its evaluator uses the host's existing
+command surface through the `evaluate` import, subject to host permissions.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

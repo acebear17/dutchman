@@ -132,6 +132,11 @@ mod guest {
                 dutchman_core::Error::Decode(message)
             };
             let reader = |path: &Path, limit: u64| {
+                if host_error.borrow().is_some() {
+                    return Err(dutchman_core::Error::Decode(
+                        "Host input stopped after an earlier failure".into(),
+                    ));
+                }
                 if path == Path::new(&file.name) {
                     return main_bytes.borrow_mut().take().ok_or_else(|| {
                         dutchman_core::Error::Decode("Main file requested more than once".into())
@@ -147,11 +152,9 @@ mod guest {
                     ))
                 })?;
                 if size > limit {
-                    return Err(dutchman_core::Error::TooLarge {
-                        path: path.into(),
-                        bytes: size,
-                        limit,
-                    });
+                    return Err(keep(PluginError::LimitExceeded(format!(
+                        "{host_path}: input exceeds the {limit}-byte file limit; choose a smaller CAD file"
+                    ))));
                 }
                 files.set(files.get() + 1);
                 if files.get() > 4096 {
@@ -162,15 +165,24 @@ mod guest {
                 read(&host_path, size, &budget).map_err(keep)
             };
             let resolve = |stored: &str, folder: &Path| {
-                let requested = crate::resolve(stored, folder, &|path| {
-                    source::resolve(&path.to_string_lossy())
-                        .ok()
-                        .flatten()
-                        .is_some()
+                let canonical = RefCell::new(None);
+                crate::resolve(stored, folder, &|path| {
+                    if host_error.borrow().is_some() {
+                        return false;
+                    }
+                    match source::resolve(&path.to_string_lossy()) {
+                        Ok(Some(name)) => {
+                            *canonical.borrow_mut() = Some(name);
+                            true
+                        }
+                        Ok(None) => false,
+                        Err(e) => {
+                            keep(e);
+                            false
+                        }
+                    }
                 })?;
-                let canonical = source::resolve(&requested.to_string_lossy())
-                    .ok()
-                    .flatten()?;
+                let canonical = canonical.into_inner()?;
                 // Validate host metadata as a bounded relative name too. Retain its
                 // actual case: SolidWorks body names derive from the member's name.
                 crate::resolve(&canonical, Path::new(""), &|path| {
@@ -179,10 +191,12 @@ mod guest {
             };
             let evaluator = std::sync::Arc::new(crate::evaluator::HostEvaluator(HostSessions));
             let converted = crate::convert(&file.name, options, &reader, &resolve, Some(evaluator));
-            let (design, report) = converted.map_err(|e| match host_error.take() {
-                Some(host) => host,
-                None => error(e),
-            })?;
+            // Assembly salvage may have succeeded. A fatal capability failure still
+            // aborts the whole import, before any design bytes reach the host.
+            if let Some(host) = host_error.take() {
+                return Err(host);
+            }
+            let (design, report) = converted.map_err(error)?;
             if control::cancelled() {
                 return Err(PluginError::Cancelled);
             }

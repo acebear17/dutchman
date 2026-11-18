@@ -657,3 +657,7 @@ The [plugin front end](plugin.md) converts files through the same core and Solid
 with host-drawn conversion options and a structured loss report. It implements SolidCraft's
 `craft:plugin` importer interface; see that page for the build. To install it, see
 [Dutchman in SolidCraft](solidcraft-plugin.md).
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

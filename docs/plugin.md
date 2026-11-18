@@ -53,8 +53,11 @@ buildq run dutchman ~/builds/worktrees/dm-dutchman-plugin -- \
 scripts/package-plugin.sh <target>/wasm32-unknown-unknown/release/dutchman_plugin.wasm <folder>
 ```
 
-Install the `wasm32-unknown-unknown` Rust target and `wasm-tools` first (`WASM_TOOLS`
-names another binary). The script writes `dutchman.wasm` (the manifest's `runtime.module`),
+Install the `wasm32-unknown-unknown` Rust target and the reviewed packager with
+`cargo install --locked wasm-tools --version '=1.263.0'` first (`WASM_TOOLS`
+names another binary). Release builds pin that exact version; update it deliberately and
+check the `wasm-tools print` import parsing in `scripts/package-plugin.sh` when upgrading.
+The script writes `dutchman.wasm` (the manifest's `runtime.module`),
 `plugin.json` and `dutchman-plugin.zip` with both files at its top, and fails unless the
 component imports `craft:plugin` interfaces only.
 
@@ -112,7 +115,9 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
 - The result is the loss report below. Errors: an unsupported, corrupt or truncated file
   is `invalid-input` with field `file` (`options` and `entry` for bad options or entry
   names); size budgets are `limit-exceeded`; an error returned by a host import is passed
-  back unchanged.
+  back unchanged. A member read, size, or resolution failure aborts the whole conversion,
+  even when other members are readable; no further input calls or output writes follow it.
+  A missing member (`source.resolve` returns none) remains an ordinary assembly loss.
 
 The browser needs the same WIT through jco or another component host; browser execution
 has not been validated here.
@@ -146,9 +151,12 @@ unchecked history verified. A command that fails in the host is an answer
 Parsing, tolerances and source-coordinate comparisons stay in the writer, and stand-up
 is applied after the checks.
 
-The wasmtime harness has no SolidCraft, so its `evaluate.run` refuses every command and
-every check there is unverified, which keeps it comparable with the CLI run without
-verification.
+The Wasmtime harness refuses evaluation for ordinary fixture comparisons, keeping them
+comparable with the CLI without verification. Its Stand up regressions require a real
+`solidcraft-cli` (discovered normally or selected with `SOLIDCRAFT_CLI`): they map and
+replay the public FreeCAD fillet fixture and evaluate repeated hidden-body world names.
+Each staged evaluation uses a private CLI archive; earlier session commands are replayed
+before the next command, preserving timeline state.
 
 Sandbox audit:
 
@@ -179,8 +187,17 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 | Field | Shape and meaning |
 |---|---|
 | `summary` | One line, at most 240 bytes, such as `Editable history: 12 of 14 features mapped; 3 losses` |
-| `items` | At most 4096 rows, one per Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Parts of the file kept as-is" or "Sketches carried over with changes"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
-| `details` | The full `dutchman.plugin.loss/1` report below. When the whole result would reach 1 MiB, its `losses` array is left out (the items carry them). |
+| `items` | At most 4096 rows, with dropped losses first, then degraded losses, then informational losses (source order within each severity). One per retained Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Parts of the file kept as-is" or "Sketches carried over with changes"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
+| `details` | The `dutchman.plugin.loss/1` report below. When the whole result exceeds 1 MiB, its `losses` array is left out; items are reduced further if needed, retaining the severity priority. Stage counts always describe all losses. |
+
+When losses exceed the item or byte limit, a reserved final item has code
+`dutchman.report.truncated`, title `Conversion report shortened`, severity `info`, and
+subject `report`. Its message says how many losses are omitted from items and whether
+full loss details were omitted. The notice counts toward the 4096-item limit. A
+`details.truncation` object records `omitted_items` (a nonnegative count) and
+`details_losses_omitted` (a boolean). This additive field is absent in complete reports.
+Loss text still has the per-field limits above; an oversized report that cannot fit even
+without loss rows fails before output is sent.
 
 ### `details`: `dutchman.plugin.loss/1`
 
@@ -200,6 +217,7 @@ This schema projects `dutchman_core::Report`; CLI and MCP keep their existing sh
 | `parts` | Assembly history rows: `name`, `verification`, `mapped`, `total`, `rebuilt`, `needing`, `reapplied` |
 | `completeness` | Nullable object: `placed`, `placed_empty`, `left_out` rows (`file`, `message`, `stage`, `count`) |
 | `joints` | Object mapping joint kind to count |
+| `truncation` | Present only when shortened: `omitted_items` count and `details_losses_omitted` boolean; see the omission notice above |
 
 Every `verification` is `{status, message}`. With Keep editable history off, the message is
 `Keep editable history is turned off`, the plugin's own option, where the CLI names `--import-only`. `status` is `verified`, `partial`, `differs`,
@@ -212,9 +230,13 @@ may be null. `profile_unverified`, `reapplied` and `final_body` are booleans.
 A host should show feature blockers together with the relevant stage losses rather than
 inventing a code from a feature name.
 
-The placement regression test preserves a serialized fillet's local edge picks and radius
-and fixes hidden occurrence and joint endpoint paths when adding the wrapper. A full fillet mapping/replay
-assertion with Stand up waits for the host evaluator; it cannot pass with verification off.
+Placement regressions check component parents, hidden occurrence and joint endpoint
+paths, and hidden-body world names when adding the wrapper. The component harness also
+converts `freecad-1.1.4-P04/P04a.FCStd` with Stand up through the real host evaluator, requires a
+mapped fillet, and replays the resulting placed design in SolidCraft. Fatal member read,
+size and resolve errors (permission and limit errors), the aggregate input limit, and
+oversized member metadata are tested after a good member; each must return the original
+error without writing a partial design.
 
 For a cold Linux build measurement without buildq's shared compiler cache, run:
 
@@ -258,13 +280,16 @@ The Wasmtime values come from the optimized native harness, with a fresh Engine 
 no compiled-code cache, fuel enabled, a 16 MiB Wasm stack and an 18 MiB async-stack
 budget. The RSS figure is the whole test process, which also runs the native pipeline.
 
-Targeted validation passed: nine plugin unit tests, Clippy with warnings denied for
-the plugin, core and writer (with the optional host harness) and for the plugin on
-`wasm32-unknown-unknown`, and the Wasmtime component test. All 18 successfully converted
-public fixtures matched the CLI pipeline's unpacked document and exact STEP payloads,
-including all three SolidWorks assemblies and the FreeCAD assembly with sibling parts.
-Six remaining public fixtures were refused by both pipelines. Verification status and
-reason matched the CLI, every loss report fit SolidCraft's shape, and the harness also
-checked malformed options, an unknown entry, truncated and oversized inputs, and a
-multi-chunk stream. The public fixtures include no `.f3z`. Browser execution remains
-unvalidated.
+Targeted validation passed: eleven plugin library tests, four core source tests, and three
+component tests. Clippy passed with warnings denied for the plugin, core, and writer
+(including the optional host harness), and for the plugin on `wasm32-unknown-unknown`.
+All 19 successfully converted public fixtures matched the CLI pipeline's
+unpacked document and exact STEP payloads, including the three SolidWorks assemblies and
+the FreeCAD assembly with sibling parts. Six remaining fixtures were refused by both
+pipelines. Verification status and reason matched the CLI, every loss report fit SolidCraft's
+shape, and the harness checked malformed options, an unknown entry, truncated and oversized
+inputs, and a multi-chunk stream. Eight fatal member-input scenarios returned the original
+error with no output after a good member. The real CLI verified and replayed P04a's fillet
+with Stand up, preserving its geometry and rotating its bounds, and evaluated both hidden
+world names of a repeated part. The public fixtures include no `.f3z`. Browser execution
+remains unvalidated.
