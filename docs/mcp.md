@@ -371,6 +371,13 @@ Hole history keeps chamfered entries and tapped holes (the bore and an ISO metri
 label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
+Planar historical hole-entry faces may have circular arcs or circles in their boundaries.
+The source boundary establishes the plane, and SolidCraft replay must confirm the complete
+face before drilling, including existing holes. Unproven faces, placements outside the
+filled face, and outward drilling use the existing blocked feature reason; the original
+geometry remains available.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 Entry recesses with drill points report "SolidCraft holes take a drill point only on a
 plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases.

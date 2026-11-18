@@ -271,6 +271,15 @@ profiles and sweep paths select the whole chain. Constraints that cannot apply t
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
 
+A hole on a planar face can retain its history even when that face has a rounded corner or
+an earlier circular hole. Dutchman checks the source boundary and asks SolidCraft to prove
+that face exists before drilling. A placement inside an existing hole, outside the face,
+or facing out of it stays blocked with a specific reason; conversion keeps the original
+shape. This proof needs SolidCraft replay; when replay is unavailable or disabled, the
+original shape stays visible.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:

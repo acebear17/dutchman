@@ -1559,6 +1559,8 @@ enum Proven {
     Bodies(usize),
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
+    /// A hole axis signed to enter the proven face.
+    Hole(sketch::V3),
 }
 
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
@@ -1621,7 +1623,9 @@ pub(crate) fn prove_blends(
                             Ok(Proven::Bodies(added))
                         }),
                         Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
-                            if mirrored {
+                            if let Some(direction) = face.entry_direction(mirrored)? {
+                                Ok(Proven::Hole(direction))
+                            } else if mirrored {
                                 face.sketch(true)
                                     .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
                             } else {
@@ -1676,6 +1680,30 @@ pub(crate) fn prove_blends(
                     if index.saturating_add(1) < blends.len() {
                         // The extrude now runs the other way, so later proofs need a replay
                         // of the history as it will be written, not the one before the flip.
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|p| p.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
+                }
+            }
+            Ok(Proven::Hole(direction)) => {
+                let target = history
+                    .features
+                    .get_mut(pending.feature.saturating_add(inserted));
+                let value = serde_json::json!(direction);
+                if let Some(fields) = target.and_then(Value::as_object_mut) {
+                    let changed = fields.get("direction") != Some(&value);
+                    fields.insert("direction".to_owned(), value);
+                    if changed && index.saturating_add(1) < blends.len() {
                         let remaining: Vec<u64> = after
                             .iter()
                             .skip(index.saturating_add(1))

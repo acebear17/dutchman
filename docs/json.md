@@ -403,6 +403,12 @@ For holes, a blocked feature's `reason` names the unsupported entry form, placem
 (for example, `a hole ending at the last encountered face is not mapped yet`). A tapped hole
 maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on
 that feature. The wording is text for people, not a stable code.
+Planar historical hole entries with circular boundaries report `mapped` only after their
+source boundary and SolidCraft replay prove the face before the hole. Existing holes are
+excluded from valid placement locations. Missing replay, an unproven boundary, or outward
+drilling reports `blocked` with its specific `reason`. This adds no report fields.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 Counterbores, countersinks, and chamfered entries with drill points map for SolidCraft 0.22.1
 and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores

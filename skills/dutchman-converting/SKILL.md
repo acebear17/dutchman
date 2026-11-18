@@ -234,6 +234,13 @@ threads, and entry recesses with drill points block history: explain the reporte
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
 
+Planar hole-entry faces can have rounded corners or existing circular holes. Their own
+source boundary and SolidCraft replay must prove the face before drilling; placements must
+stay inside the filled face and drill inward. A blocked boundary or replay reason means the
+original geometry is retained. Straight-cap holes keep their existing conversion path.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 Tell the user what to expect in one or two sentences before converting, for example: "This
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),
 so you'll get the solid shape without the feature history."

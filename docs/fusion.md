@@ -93,6 +93,19 @@ User-hidden bodies that still belong to a component are kept, with an Info note.
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
 
+Holes on planar historical entry faces can keep their editable history when the boundary
+includes circular arcs or whole circles, including a rounded corner or an earlier through
+hole. The source's own input-edge ends, midpoints, and tangents establish the circular
+centres, radii, and common plane. SolidCraft must then rebuild exactly that bounded face
+before the hole; matching the plane alone is insufficient. Placements must lie inside the
+filled face, clear of its curved boundary and existing holes, and drill inward. An unsigned
+axis takes its drilling side from the proven face. Non-planar faces other than the existing
+whole-cylinder radial-hole case remain refused with a specific reason. Without replay,
+conversion keeps the original geometry and reports why the hole history cannot map.
+Previously mapped straight-cap holes keep their existing output.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 When every active feature using a sketch selects explicit whole-loop regions, unused lines
 crossing selected whole circles are kept as construction geometry. This preserves
 layout lines through hole centres without splitting the circular holes during replay. If
