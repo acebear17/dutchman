@@ -9,9 +9,11 @@ Onshape bundles add the format identifier `onshape_bundle` and extension
 schemas and fields are unchanged. Reader losses use
 `onshape/history.not-supported` for a feature that stops history and
 `onshape/sketch.constraint-not-supported` for a dropped relation whose solved
-curves remain. Both are Degraded losses at stage `map`. The existing `history`
-rows and `verification` describe CADIR mapping and comparison with the bundle's
-STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-region
+curves remain. Constraint loss messages include the source constraint kind, including
+when its operands cannot be resolved. Both are Degraded losses at stage `map`.
+The existing `history` rows and `verification` describe CADIR mapping and comparison
+with the bundle's STEP export; see [Onshape](onshape.md). Compressed default-plane
+and sketch-region
 queries use these existing rows and codes too. Unresolved source boundaries report
 a specific reason under `onshape/history.not-supported`; no report field changes.
 The optional bundle manifest field `consistent` is input metadata, not a new
