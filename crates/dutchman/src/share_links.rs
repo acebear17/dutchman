@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
+mod network;
+
 /// Matches the web app's default upload cap.
 pub const MAX_DOWNLOAD_BYTES: u64 = 200 << 20;
 const MAX_PAGE_BYTES: u64 = 2 << 20;
@@ -16,7 +18,7 @@ const TIMEOUT: Duration = Duration::from_secs(120);
 const MANUAL: &str = "The Fusion link has no public file download available without login. Download the design in Fusion, then drop the file into Dutchman.";
 const PRIVATE: &str = "The share link is private, expired, or has no public file download. Enable public downloads, or download the file yourself and drop it into Dutchman.";
 const NETWORK: &str = "The shared file could not be downloaded within the time limit. Check your connection, or download it yourself and drop the file into Dutchman.";
-const UNSAFE: &str = "The share link leads outside its provider's allowed HTTPS download hosts. Download the file yourself and drop it into Dutchman.";
+const UNSAFE: &str = "The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.";
 
 /// A downloaded file. Dropping this owner removes its private folder, including partial downloads.
 #[derive(Debug)]
@@ -153,26 +155,26 @@ pub fn download_in(text: &str, parent: &Path) -> Result<Downloaded, String> {
 
 fn download_under(text: &str, parent: Option<&Path>) -> Result<Downloaded, String> {
     let (provider, url) = source(text)?;
-    let agent = ureq::AgentBuilder::new()
-        .redirects(0)
-        .try_proxy_from_env(false)
-        .build();
-    resolve_to(
+    download_using(provider, url, parent, TIMEOUT, network::fetch)
+}
+
+fn download_using(
+    provider: Provider,
+    url: Url,
+    parent: Option<&Path>,
+    timeout: Duration,
+    mut fetch: impl FnMut(&Url, Instant) -> Result<ureq::Response, String>,
+) -> Result<Downloaded, String> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| NETWORK.to_owned())?;
+    resolve_until(
         provider,
         url,
         MAX_DOWNLOAD_BYTES,
-        TIMEOUT,
+        deadline,
         scratch(parent)?,
-        |url, remaining| {
-            agent
-                .get(url.as_str())
-                .timeout(remaining)
-                .call()
-                .map_err(|err| match err {
-                    ureq::Error::Status(_, _) => PRIVATE.to_owned(),
-                    ureq::Error::Transport(_) => NETWORK.to_owned(),
-                })
-        },
+        |url, _| fetch(url, deadline),
     )
 }
 
@@ -197,15 +199,29 @@ fn resolve(
     resolve_to(provider, url, cap, timeout, scratch(None)?, fetch)
 }
 
+#[cfg(test)]
 fn resolve_to(
     provider: Provider,
-    mut url: Url,
+    url: Url,
     cap: u64,
     timeout: Duration,
     folder: tempfile::TempDir,
+    fetch: impl FnMut(&Url, Duration) -> Result<ureq::Response, String>,
+) -> Result<Downloaded, String> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| NETWORK.to_owned())?;
+    resolve_until(provider, url, cap, deadline, folder, fetch)
+}
+
+fn resolve_until(
+    provider: Provider,
+    mut url: Url,
+    cap: u64,
+    deadline: Instant,
+    folder: tempfile::TempDir,
     mut fetch: impl FnMut(&Url, Duration) -> Result<ureq::Response, String>,
 ) -> Result<Downloaded, String> {
-    let started = Instant::now();
     for _ in 0..MAX_REQUESTS {
         if clean_url(url.as_str()).is_ok() && provider.login(&url) {
             return Err(if provider == Provider::Fusion {
@@ -218,8 +234,8 @@ fn resolve_to(
         if !provider.allows(&url) {
             return Err(UNSAFE.into());
         }
-        let remaining = timeout
-            .checked_sub(started.elapsed())
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
             .ok_or_else(|| NETWORK.to_owned())?;
         let response = fetch(&url, remaining)?;
@@ -249,8 +265,7 @@ fn resolve_to(
         }
         if html {
             let mut page = String::new();
-            response
-                .into_reader()
+            network::reader(response.into_reader(), deadline)?
                 .take(limit + 1)
                 .read_to_string(&mut page)
                 .map_err(|_| NETWORK.to_owned())?;
@@ -280,12 +295,15 @@ fn resolve_to(
         let path = folder.path().join(filename);
         let mut file = File::create(&path)
             .map_err(|_| "Cannot save the shared file. Check free disk space.".to_owned())?;
-        let count = std::io::copy(&mut response.into_reader().take(cap + 1), &mut file)
-            .map_err(|_| NETWORK.to_owned())?;
+        let count = std::io::copy(
+            &mut network::reader(response.into_reader(), deadline)?.take(cap + 1),
+            &mut file,
+        )
+        .map_err(|_| NETWORK.to_owned())?;
         if count > cap {
             return Err(too_large(false));
         }
-        if started.elapsed() >= timeout {
+        if Instant::now() >= deadline {
             return Err(NETWORK.into());
         }
         return Ok(Downloaded { folder, path });

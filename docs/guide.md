@@ -35,16 +35,20 @@ Dutchman asks you to download the design yourself and drop the file into the app
 Private and expired links get the same plain explanation.
 
 Downloads use HTTPS, a 200 MB cap matching the web app's default upload limit, a two-minute
-total timeout, and at most twelve requests. Every redirect and confirmation action is
-checked before contacting its host. Drive downloads stay on `drive.google.com`,
+total timeout across DNS, connection, TLS and response streaming, and at most twelve
+requests. Every redirect and confirmation action is checked before contacting its host.
+Resolved addresses must be public unicast: local, private,
+link-local, CGNAT, reserved and cloud metadata destinations are refused, including
+IPv4-mapped IPv6 forms. Each connection uses the screened DNS answer without a second
+lookup. Drive downloads stay on `drive.google.com`,
 `drive.usercontent.google.com`, or `googleusercontent.com` and its subdomains; Fusion
 stays on `a360.co`, `autodesk360.com` and its subdomains, or `autodesk.com` and its subdomains. Other download hosts require a manual download.
 
 The original share link is never included in reports or sent to another service as a
 referrer. Dutchman uses no browser login or credentials and does not load the page's
 scripts, images, or other resources. Downloaded files live in a private temporary folder;
-failed downloads are removed immediately. The CLI removes its download after conversion;
-the app retains downloads while queued files or result cards need them, then removes
+failed downloads are removed immediately. The CLI removes its download after conversion,
+errors, Ctrl-C, and intentional exits (including a closed output pipe); the app retains downloads while queued files or result cards need them, then removes
 them when cleared or when the app closes. Converted outputs stay in your output folder.
 
 ## Ask your assistant about a saved desktop result

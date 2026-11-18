@@ -36,7 +36,10 @@ delivered by the desktop toolkit, paste it instead.
 Only public downloads needing no login work. Drive uses `uc?export=download` and handles
 its virus-scan confirmation; Fusion needs a public download exposed by its share page.
 Downloads are limited to 200 MB and two minutes, use only provider HTTPS hosts, and live
-in temporary folders that are cleaned up. Private/expired links or unavailable Fusion
+in temporary folders that are cleaned up, including on CLI cancellation or a closed
+output pipe. The deadline includes DNS, connection, TLS and body streaming; connections
+use screened public addresses and refuse local, private and cloud metadata destinations.
+Private/expired links or unavailable Fusion
 downloads ask for a manual download and file drop. Never ask for login credentials.
 MCP tools still require local paths; download the file locally before calling them.
 Reports describe temporary local inputs and never include the original share URL.

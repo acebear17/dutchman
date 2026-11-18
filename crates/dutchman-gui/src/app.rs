@@ -3269,7 +3269,7 @@ mod tests {
 
     #[test]
     fn share_links_queue_separately_from_local_files() {
-        let mut harness = egui_kittest::Harness::builder().build_eframe(App::new);
+        let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| App::new(cc));
         let app = harness.state_mut();
         app.add_inputs([
             PathBuf::from("https://a360.co/synthetic"),
@@ -3285,7 +3285,7 @@ mod tests {
     #[test]
     fn share_links_accept_pasted_and_dropped_uri_text_without_network() {
         for dropped in [false, true] {
-            let mut harness = egui_kittest::Harness::builder().build_eframe(App::new);
+            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| App::new(cc));
             let app = harness.state_mut();
             let ctx = egui::Context::default();
             let mut input = egui::RawInput::default();
@@ -3330,7 +3330,7 @@ mod tests {
         use egui_kittest::kittest::Queryable;
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1000.0, 1000.0))
-            .build_eframe(App::new);
+            .build_eframe(|cc| App::new(cc));
         harness.state_mut().share_link = "http://a360.co/synthetic".into();
         harness.run_steps(2);
         harness.get_by_label("Add link").click();

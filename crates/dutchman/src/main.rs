@@ -12,6 +12,8 @@ use dutchman::{anon, batch, formats, json, worker, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
 use serde_json::Value;
 
+mod share_scratch;
+
 /// Convert CAD files: dutchman part.f3d writes part.sc.
 #[derive(Parser)]
 #[command(
@@ -341,7 +343,10 @@ const READER_CLOSED: i32 = 141;
 
 /// Whether a panic message is the standard library's report that stdout's reader went away.
 fn is_closed_stdout(message: &str) -> bool {
-    message.contains("failed printing to stdout") && message.contains("Broken pipe")
+    message.contains("failed printing to stdout")
+        && (message.contains("Broken pipe")
+            || cfg!(windows)
+                && (message.contains("(os error 109)") || message.contains("(os error 232)")))
 }
 
 /// When whatever reads stdout stops early (`dutchman … | head`), end quietly with the usual
@@ -356,7 +361,7 @@ fn quiet_when_stdout_closes() {
             .or_else(|| payload.downcast_ref::<&str>().copied())
             .unwrap_or("");
         if is_closed_stdout(message) {
-            std::process::exit(READER_CLOSED);
+            share_scratch::exit(READER_CLOSED);
         }
         report(info);
     }));
@@ -738,22 +743,20 @@ fn main() -> ExitCode {
             json,
         } => {
             let explicit = output.or(output_flag);
-            // Keep the scratch owner alive through conversion, reports, and any early return.
-            let downloaded = if dutchman::share_links::is_url(&input.to_string_lossy()) {
-                match dutchman::share_links::download(&input.to_string_lossy()) {
+            // Register the parent before starting any network work. It remains owned through
+            // conversion and reporting, including errors and intentional process exits.
+            let scratch = if dutchman::share_links::is_url(&input.to_string_lossy()) {
+                match share_scratch::Scratch::new() {
+                    Ok(scratch) => Some(scratch),
+                    Err(message) => return share_failure(&message, json),
+                }
+            } else {
+                None
+            };
+            let downloaded = if let Some(scratch) = scratch.as_ref() {
+                match dutchman::share_links::download_in(&input.to_string_lossy(), scratch.path()) {
                     Ok(file) => Some(file),
-                    Err(message) => {
-                        if json {
-                            print_json(&json::failure(
-                                "dutchman.convert/1",
-                                json::input(Path::new("Shared file")),
-                                &message,
-                            ));
-                        } else {
-                            eprintln!("dutchman: {message}");
-                        }
-                        return ExitCode::FAILURE;
-                    }
+                    Err(message) => return share_failure(&message, json),
                 }
             } else {
                 None
@@ -1437,6 +1440,19 @@ struct Output {
     quiet: bool,
 }
 
+fn share_failure(message: &str, as_json: bool) -> ExitCode {
+    if as_json {
+        print_json(&json::failure(
+            "dutchman.convert/1",
+            json::input(Path::new("Shared file")),
+            message,
+        ));
+    } else {
+        eprintln!("dutchman: {message}");
+    }
+    ExitCode::FAILURE
+}
+
 fn convert(
     input: &Path,
     output: &Path,
@@ -1464,7 +1480,7 @@ fn convert(
             } else {
                 eprintln!("dutchman: {message}");
             }
-            std::process::exit(2);
+            share_scratch::exit(2);
         });
     }
     let report = dutchman::convert_options_with_progress(
@@ -1696,6 +1712,14 @@ mod output_tests {
             "failed printing to stderr: Broken pipe (os error 32)"
         ));
         assert!(!is_closed_stdout("index out of bounds"));
+        assert_eq!(
+            is_closed_stdout("failed printing to stdout: The pipe has been ended. (os error 109)"),
+            cfg!(windows)
+        );
+        assert_eq!(
+            is_closed_stdout("failed printing to stdout: The pipe is being closed. (os error 232)"),
+            cfg!(windows)
+        );
     }
 
     #[test]

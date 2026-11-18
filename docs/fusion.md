@@ -50,6 +50,10 @@ The desktop app accepts pasted `a360.co` and `*.autodesk360.com` links and dropp
 download URL or download link reachable without login. Dutchman downloads that native
 file and runs the existing local conversion; conversion coverage is unchanged.
 
+Public share downloads screen resolved addresses on every hop and connect only to the
+screened public destinations. DNS, connection, TLS and body streaming share the two-minute
+deadline. CLI cancellation and intentional exits remove the temporary source.
+
 When a share needs login, has expired, disables downloads, or exposes no public download,
 Dutchman asks you to download the design in Fusion and drop the file into the app.
 Downloads stay on allowlisted Autodesk HTTPS hosts, with a 200 MB cap and two-minute

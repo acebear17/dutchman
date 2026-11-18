@@ -10,7 +10,10 @@ when the app no longer needs the queued file or result; output paths remain usab
 
 A CLI download failure with `--json` returns `dutchman.convert/1`, `ok: false`,
 `error.stage: "input"`, and `input.path: "Shared file"`. Its message explains the download
-limit, private/expired link, disallowed host, or need for a manual download. No report
+limit, private/expired link, disallowed host or resolved network address, or need for a
+manual download.
+DNS, connection, TLS and body streaming share the total deadline. CLI cancellation and
+intentional exits also remove the temporary input; converted output paths remain usable. No report
 field is added for the original URL, file ID, or query tokens, and the provider's response body is never copied into reports.
 MCP input arguments remain local paths. There are no schema or field changes.
 
