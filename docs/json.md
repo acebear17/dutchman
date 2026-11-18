@@ -14,6 +14,13 @@ rows and `verification` describe CADIR mapping and comparison with the bundle's
 STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-region
 queries use these existing rows and codes too. Unresolved source boundaries report
 a specific reason under `onshape/history.not-supported`; no report field changes.
+`onshape/extrude.thin-not-supported` is a Degraded loss at stage `map`: the pinned
+neutral extrude cannot carry wall thickness and direction. The final STEP geometry
+remains. Two-offset and distance-and-angle chamfers retain their dimensions in
+CADIR; asymmetric forms report missing input reference-face ordering in the existing
+history feature reason. Ellipses and variable expressions add no report fields.
+Parameters retained alongside a STEP fallback are no longer counted as parameters
+carried only as a non-parametric body, even when no sketch maps.
 The optional bundle manifest field `consistent` is input metadata, not a new
 report field. `false` produces an ordinary decode failure explaining how to fetch
 a consistent snapshot; older v1 bundles lacking the field remain accepted.

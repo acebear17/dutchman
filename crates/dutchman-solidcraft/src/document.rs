@@ -129,7 +129,7 @@ pub(crate) fn original_looks(doc: &mut Value, looks: &History) {
 /// Appends mapped sketches to the import's component, hidden but editable. Parameters stay
 /// available to their dimensions; none of the body-building history is retained.
 pub(crate) fn keep_sketches(doc: &mut Value, references: &History) {
-    if references.features.is_empty() {
+    if references.features.is_empty() && references.params.is_empty() {
         return;
     }
     let mut references = references.clone();
@@ -340,11 +340,10 @@ pub(crate) fn report_unmapped(model: &Model, references: Option<&History>, repor
     } else {
         0
     };
-    let parameters = if references.is_some_and(|history| !history.features.is_empty()) {
-        0
-    } else {
-        m.parameters.len()
-    };
+    let parameters = m
+        .parameters
+        .len()
+        .saturating_sub(references.map_or(0, |history| history.params.len()));
     let flattened = [
         (m.features.len(), "feature history"),
         (sketches, "sketches"),

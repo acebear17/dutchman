@@ -91,11 +91,11 @@ fn definition(kind: &str, value: Value) -> Value {
     json!({"kind": "operation", "value": {"kind": kind, "value": value}})
 }
 
-fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool) {
+fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool, code: &str) {
     report.push_coded(
         Severity::Degraded,
         subject,
-        "onshape/history.not-supported",
+        code,
         format!(
             "{reason}; kept {}",
             if has_step {
@@ -321,7 +321,15 @@ pub(super) fn read(
                 model.ir.model.parameters.truncate(sizes.3);
                 model.ir.model.feature_input_topologies.truncate(sizes.4);
                 if !suppressed {
-                    loss(report, name, &reason, model.source_step.is_some());
+                    let code = if feature.get("featureType").and_then(Value::as_str)
+                        == Some("extrude")
+                        && features::value(feature, "bodyType") == Some("THIN")
+                    {
+                        "onshape/extrude.thin-not-supported"
+                    } else {
+                        "onshape/history.not-supported"
+                    };
+                    loss(report, name, &reason, model.source_step.is_some(), code);
                 }
                 definition(
                     "native",

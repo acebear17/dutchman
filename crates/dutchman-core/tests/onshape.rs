@@ -829,3 +829,259 @@ fn missing_step_does_not_bypass_body_history_validation() {
         .to_string()
         .contains("body-building features but no STEP"));
 }
+
+#[test]
+fn ellipses_and_elliptical_arcs_keep_axes_units_bounds_and_endpoint_loci() {
+    for clockwise in [false, true] {
+        let bytes = changed(&fixture("plate-fillet"), |path, value| {
+            if !path.ends_with("features.json") {
+                return;
+            }
+            let entities = value["features"][0]["entities"].as_array_mut().unwrap();
+            let ellipse = json!({"btType":"BTMSketchCurve-4", "entityId":"oval", "isConstruction":true,
+                "geometry":{"btType":"BTCurveGeometryEllipse-1189", "xCenter":0.03,"yCenter":0.04,
+                    "xDir":0.0,"yDir":1.0,"radius":0.006,"minorRadius":0.002,"clockwise":clockwise}});
+            entities.push(ellipse.clone());
+            let mut arc = ellipse;
+            arc["entityId"] = json!("oval-arc");
+            arc["btType"] = json!("BTMSketchCurveSegment-155");
+            arc["startParam"] = json!(0.2);
+            arc["endParam"] = json!(2.4);
+            arc["startPointId"] = json!("oval-arc.start");
+            arc["endPointId"] = json!("oval-arc.end");
+            entities.push(arc);
+            value["features"][0]["constraints"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({
+                "entityId":"oval-joint","constraintType":"COINCIDENT","parameters":[
+                    {"parameterId":"localFirst","value":"oval-arc.start"},
+                    {"parameterId":"localSecond","value":"line0.start"}]}));
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model),
+            ["sketch", "extrude", "fillet"],
+            "{:?}",
+            report.losses()
+        );
+        let wire = timeline(&model);
+        let entities = wire["model"]["sketch_entities"].as_array().unwrap();
+        let ellipses: Vec<_> = entities
+            .iter()
+            .filter(|e| e["geometry"]["kind"] == "ellipse")
+            .collect();
+        assert_eq!(ellipses.len(), 2);
+        let joint = wire["model"]["sketch_constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["definition"]["kind"] == "coincident_loci")
+            .unwrap();
+        assert_eq!(
+            joint["definition"]["loci"][0]["kind"],
+            if clockwise { "end" } else { "start" }
+        );
+        let whole = &ellipses[0]["geometry"];
+        assert_eq!(whole["center"], json!({"u":30.0,"v":40.0}));
+        assert_eq!(whole["major_radius"], 6.0);
+        assert_eq!(whole["minor_radius"], 2.0);
+        assert_eq!(whole["major_angle"], std::f64::consts::FRAC_PI_2);
+        assert!(whole.get("bounds").is_none());
+        assert_eq!(
+            ellipses[1]["geometry"]["bounds"],
+            if clockwise {
+                json!([-2.4, -0.2])
+            } else {
+                json!([0.2, 2.4])
+            }
+        );
+    }
+}
+
+#[test]
+fn thin_extrusions_report_the_neutral_wall_representation_gap() {
+    for midplane in [false, true] {
+        for flip in [false, true] {
+            let bytes = changed(&fixture("plate-fillet"), |path, value| {
+                if !path.ends_with("features.json") {
+                    return;
+                }
+                let params = value["features"][1]["parameters"].as_array_mut().unwrap();
+                params[0]["value"] = json!("THIN");
+                params.extend([
+                    json!({"parameterId":"midplane","value":midplane}),
+                    json!({"parameterId":"flipWall","value":flip}),
+                    json!({"parameterId":"thickness","expression":"0.3 mm"}),
+                    json!({"parameterId":"thickness1","expression":"0.1 mm"}),
+                    json!({"parameterId":"thickness2","expression":"0.2 mm"}),
+                ]);
+            });
+            let (model, report) = read(&bytes).unwrap();
+            assert_eq!(kinds(&model)[1], "native");
+            assert!(model.source_step.is_some());
+            assert!(report.losses().iter().any(|l| l.code.as_deref()
+                == Some("onshape/extrude.thin-not-supported")
+                && l.detail.contains("wall thickness and direction")));
+        }
+    }
+}
+
+#[test]
+fn chamfer_forms_keep_both_dimensions_and_direction() {
+    for (form, expected) in [
+        (
+            "TWO_OFFSETS",
+            json!({"kind":"two_distances","first":0.4,"second":0.8}),
+        ),
+        (
+            "DISTANCE_ANGLE",
+            json!({"kind":"distance_angle","distance":0.4,"angle":std::f64::consts::FRAC_PI_6}),
+        ),
+    ] {
+        let bytes = changed(&fixture("plate-fillet"), |path, value| {
+            if !path.ends_with("features.json") {
+                return;
+            }
+            let feature = &mut value["features"][2];
+            feature["featureType"] = json!("chamfer");
+            feature["parameters"].as_array_mut().unwrap().extend([
+                json!({"parameterId":"chamferType","value":form}),
+                json!({"parameterId":"width","expression":"0.4 mm"}),
+                json!({"parameterId":"width1","expression":"0.4 mm"}),
+                json!({"parameterId":"width2","expression":"0.8 mm"}),
+                json!({"parameterId":"angle","expression":"30 deg"}),
+                json!({"parameterId":"oppositeDirection","value":true}),
+            ]);
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model),
+            ["sketch", "extrude", "chamfer"],
+            "{:?}",
+            report.losses()
+        );
+        let wire = timeline(&model);
+        let chamfer = &wire["model"]["features"][2]["definition"]["value"]["value"];
+        let mut actual = chamfer["groups"][0]["spec"].clone();
+        let mut expected = expected;
+        if form == "DISTANCE_ANGLE" {
+            let angle = actual
+                .as_object_mut()
+                .unwrap()
+                .remove("angle")
+                .unwrap()
+                .as_f64()
+                .unwrap();
+            let expected_angle = expected
+                .as_object_mut()
+                .unwrap()
+                .remove("angle")
+                .unwrap()
+                .as_f64()
+                .unwrap();
+            assert!((angle - expected_angle).abs() <= f64::EPSILON);
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(chamfer["flip_direction"], true);
+    }
+}
+
+#[test]
+fn an_unused_ellipse_does_not_block_an_explicit_line_region() {
+    let bytes = changed(&fixture("default-plane-regions"), |path, value| {
+        if !path.ends_with("features.json") {
+            return;
+        }
+        value["features"][0]["entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+            "btType":"BTMSketchCurve-4","entityId":"separate-oval","isConstruction":false,
+            "geometry":{"btType":"BTCurveGeometryEllipse-1189","xCenter":0.04,"yCenter":0.04,
+                "xDir":1.0,"yDir":0.0,"radius":0.003,"minorRadius":0.001}}));
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude"],
+        "{:?}",
+        report.losses()
+    );
+    assert!(timeline(&model)["model"]["sketch_entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["geometry"]["kind"] == "ellipse" && e["construction"] == false));
+}
+
+#[test]
+fn inch_variable_arithmetic_keeps_canonical_values_and_source_units() {
+    let bytes = changed(&fixture("plate-fillet"), |path, value| {
+        if !path.ends_with("features.json") {
+            return;
+        }
+        let rows = value["features"].as_array_mut().unwrap();
+        rows.truncate(2);
+        for (at, name, expression) in [(0, "stock", "0.5 inch"), (1, "reach", "#stock + 1 cm")] {
+            rows.insert(
+                at,
+                json!({"featureId":name,"featureType":"assignVariable","parameters":[
+                {"parameterId":"name","value":name},{"parameterId":"variableType","value":"LENGTH"},
+                {"parameterId":"lengthValue","expression":expression}]}),
+            );
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["tree_node", "tree_node", "sketch", "extrude"],
+        "{:?}",
+        report.losses()
+    );
+    let wire = timeline(&model);
+    let parameters = wire["model"]["parameters"].as_array().unwrap();
+    let stock = parameters.iter().find(|p| p["name"] == "stock").unwrap();
+    assert_eq!(stock["expression"], "0.5 in");
+    assert_eq!(stock["value"]["value"], 12.7);
+    assert_eq!(stock["properties"]["display_unit"], "in");
+    let reach = parameters.iter().find(|p| p["name"] == "reach").unwrap();
+    assert_eq!(reach["value"]["value"], 22.7);
+    assert_eq!(reach["expression"], "(stock + 1 cm)");
+    assert_eq!(reach["dependencies"], json!([stock["id"]]));
+}
+
+#[test]
+fn elliptical_curves_with_unresolved_axes_or_bounds_leave_a_named_loss() {
+    for bad in ["axis", "radius", "backward", "multi-turn"] {
+        let bytes = changed(&fixture("plate-fillet"), |path, value| {
+            if !path.ends_with("features.json") {
+                return;
+            }
+            let mut curve = json!({"btType":"BTMSketchCurveSegment-155","entityId":"bad-oval",
+                "startParam":0.0,"endParam":1.0,
+                "geometry":{"btType":"BTCurveGeometryEllipse-1189","xDir":1.0,"radius":0.004,"minorRadius":0.002}});
+            match bad {
+                "axis" => curve["geometry"]["xDir"] = json!(0.0),
+                "radius" => curve["geometry"]["minorRadius"] = json!(-0.002),
+                "backward" => curve["endParam"] = json!(-1.0),
+                _ => curve["endParam"] = json!(7.0),
+            }
+            value["features"][0]["entities"]
+                .as_array_mut()
+                .unwrap()
+                .push(curve);
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(kinds(&model)[0], "native");
+        assert!(report
+            .losses()
+            .iter()
+            .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
+        assert!(timeline(&model)["model"]["sketch_entities"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(model.source_step.is_some());
+    }
+}

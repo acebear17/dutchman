@@ -32,17 +32,29 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Source construction | Reader mapping | Limits and named losses |
 |---|---|---|
 | Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, forward end caps of resolved blind extrusions whose source sketch supplies the frame, and planar model faces parallel to a built-in plane. Faces at other orientations and non-planar faces are not supported yet. |
-| Lines, circular arcs, circles, points | Exact sketch entities | Text, images, projected references without solved curves, and other curves are not supported yet. |
+| Lines, circular arcs, circles, ellipses, elliptical arcs, points | Exact sketch entities | Elliptical arcs retain their parameter interval and direction; the writer represents them as exact conics. Text, images, projected references without solved curves, and other curves are not supported yet. |
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points; the writer retains its own knot and degree limits. |
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
 | Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane. Multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
 | Fillet | Circular, constant radius, explicit input edges and resolvable tangent chains | Variable, partial, conic, curvature and overflow forms are not supported yet. Tangent propagation needs complete shared vertex IDs and endpoint tangents. The writer must prove every edge on replay. |
-| Chamfer | Equal offsets, explicit input edges | Unequal and angle forms are not supported yet. Tangent propagation has the same completeness requirement as fillets. Replay proof still applies. |
+| Chamfer | Equal offsets, two offsets, distance and angle in CADIR, with explicit input edges | The writer maps equal setbacks (including two equal offsets and a 45° distance-and-angle chamfer on perpendicular input faces). Asymmetric chamfers report missing input reference-face ordering; neither face nor direction is guessed. Tangent propagation has the same completeness requirement as fillets. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind to the shoulder with its drill point (118° when the feature leaves it out) or a flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A tapped hole keeps an ISO metric thread as a cosmetic label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
-| Assigned variables | Named length, angle and number parameters, with dependencies | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. |
+| Assigned variables | Named length, angle and number parameters, with dependencies; length and angle literals retain their units, including inches | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. |
 | Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+
+Assigned variables remain design parameters even if no sketch can be mapped and
+conversion falls back to the STEP body. Sketch dimensions and blind extrude depths
+that use `#name` retain the parameter dependency, including symmetric extrudes.
+The reader evaluates lengths in millimetres while keeping literal units in the
+written expression and a compatible display unit on design parameters.
+
+SolidCraft supports thin extrudes, but the pinned CADIR extrude has no wall
+thickness or wall-side representation. Onshape `bodyType: THIN` therefore reports
+`onshape/extrude.thin-not-supported` and preserves the final STEP geometry. This
+also applies to midplane and two-thickness walls. Supporting editable thin walls
+requires a neutral-model extension before the reader and writer can carry them.
 
 Face and edge queries use `deterministicIds`, looked up only in bodydetails at
 the feature's rollback index (before that feature). The reader rejects missing or
@@ -73,7 +85,8 @@ boundaries, including separate regions and holes. It does not infer region order
 from `deterministicIds` or expand a subset to the whole sketch. Missing source
 curves, repeated carriers without trimming intervals, tied boundary connections,
 and unsupported query encodings produce specific `onshape/history.not-supported`
-losses. Lines, circles and arcs have resolved boundary parameter ranges; other
+losses. Lines, circles, circular arcs, ellipses, and elliptical arcs have resolved boundary
+parameter ranges; other
 carriers still need their source trimming chart. The writer checks boundary
 closure, interior selection and replay against the original STEP geometry.
 

@@ -22,6 +22,11 @@ kept. Compressed REST queries can resolve built-in plane frames and explicit ske
 region boundaries. Do not treat a deterministic region ID as a whole-sketch pick;
 explain a refused boundary using its specific loss. The ordinary history/verification
 report still applies. See `docs/onshape.md`.
+Ellipses and elliptical arcs retain editable curves. Variables keep units and
+expressions, and remain design parameters alongside the STEP fallback even when no
+sketch maps. Explain `onshape/extrude.thin-not-supported` as a missing neutral wall
+representation; asymmetric chamfers need input reference-face ordering. Keep the
+final geometry and explain the named loss instead of guessing a wall or chamfer side.
 Sketch-only Part Studios can omit STEP and convert to sketches alone. The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,

@@ -21,6 +21,10 @@ one Part Studio, including sketch-only bundles without STEP. Supported history i
 resolved extrusion-cap sketches, tangent chains, construction-line revolve axes,
 counterbore/countersink holes, midpoint relations, assigned variables and symmetric
 blind extrudes. Unresolved selections and unsupported expressions retain named losses.
+Ellipses and elliptical arcs keep editable geometry. Variables keep their units and
+expressions, including when conversion falls back to STEP with no usable sketch.
+Thin walls report `onshape/extrude.thin-not-supported`; asymmetric chamfers explain
+the missing input reference-face ordering.
 See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.

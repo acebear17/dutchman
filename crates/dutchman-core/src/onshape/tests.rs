@@ -893,3 +893,73 @@ fn part_studio_parts_are_one_design_but_moved_parts_stay_placed() {
     assert_eq!(moved.ir.model.occurrences.len(), 2);
     assert!(crate::local_assembly(&moved).unwrap().is_some());
 }
+
+#[test]
+fn ellipse_regions_keep_exact_angular_boundaries_and_holes() {
+    let bytes = changed(|response| {
+        response["features"][0]["entities"] = json!([
+            {"btType":"BTMSketchCurve-4","entityId":"outer","geometry":{
+                "btType":"BTCurveGeometryEllipse-1189","xCenter":0.01,"yCenter":0.01,
+                "xDir":0.0,"yDir":1.0,"radius":0.009,"minorRadius":0.006}},
+            {"btType":"BTMSketchCurve-4","entityId":"inner","geometry":{
+                "btType":"BTCurveGeometryEllipse-1189","xCenter":0.01,"yCenter":0.01,
+                "xDir":0.0,"yDir":1.0,"radius":0.003,"minorRadius":0.002}}
+        ]);
+        let query = selected(response);
+        let mut value = query::resolved(query).unwrap();
+        let mut outer = value["disambiguationData"][0]["entities"][0].clone();
+        outer[0]["derivedFrom"]["sketchEntityId"] = json!("outer");
+        let mut inner = outer.clone();
+        inner[0]["derivedFrom"]["sketchEntityId"] = json!("inner");
+        value["disambiguationData"][0]["entities"] = json!([inner, outer]);
+        replace_query(query, &value);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+    let region = &wire["features"][1]["definition"]["value"]["value"]["profile"]["value"]["value"]
+        ["regions"][0];
+    assert_eq!(
+        region["outer_boundary"][0]["parameter_range"],
+        json!([0.0, std::f64::consts::TAU])
+    );
+    assert!(region["outer_boundary"][0]["entity"]
+        .as_str()
+        .unwrap()
+        .ends_with("outer"));
+    assert_eq!(region["hole_boundaries"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn elliptical_arc_regions_keep_the_source_interval_and_closing_chord() {
+    let span = 4.0_f64;
+    let bytes = changed(|response| {
+        let start = [0.006, 0.0];
+        let end = [0.006 * span.cos(), 0.002 * span.sin()];
+        let (dx, dy) = (start[0] - end[0], start[1] - end[1]);
+        let length = dx.hypot(dy);
+        response["features"][0]["entities"] = json!([
+            {"btType":"BTMSketchCurveSegment-155","entityId":"outer","startParam":0.0,"endParam":span,
+                "geometry":{"btType":"BTCurveGeometryEllipse-1189","xDir":1.0,"radius":0.006,"minorRadius":0.002}},
+            {"btType":"BTMSketchCurveSegment-155","entityId":"chord","startParam":0.0,"endParam":length,
+                "geometry":{"btType":"BTCurveGeometryLine-117","pntX":end[0],"pntY":end[1],"dirX":dx/length,"dirY":dy/length}}
+        ]);
+        let query = selected(response);
+        let mut value = query::resolved(query).unwrap();
+        let mut outer = value["disambiguationData"][0]["entities"][0].clone();
+        outer[0]["derivedFrom"]["sketchEntityId"] = json!("outer");
+        let mut chord = outer.clone();
+        chord[0]["derivedFrom"]["sketchEntityId"] = json!("chord");
+        value["disambiguationData"][0]["entities"] = json!([outer, chord]);
+        replace_query(query, &value);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+    let boundary = wire["features"][1]["definition"]["value"]["value"]["profile"]["value"]["value"]
+        ["regions"][0]["outer_boundary"]
+        .as_array()
+        .unwrap();
+    assert_eq!(boundary.len(), 2);
+    assert!(boundary
+        .iter()
+        .any(|b| b["parameter_range"] == json!([0.0, span])));
+}

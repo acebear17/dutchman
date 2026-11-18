@@ -360,10 +360,14 @@ pub(super) fn map(
                 .iter()
                 .filter(|p| p.owner.is_none())
                 .count();
+            let properties = evaluated
+                .display_unit
+                .as_ref()
+                .map_or_else(|| json!({}), |unit| json!({"display_unit": unit}));
             push(
                 &mut model.parameters,
                 json!({"id":id("parameter",text(feature,"featureId")?),"ordinal":ordinal,"name":name,
-                "expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value},"dependencies":evaluated.dependencies,"properties":{}}),
+                "expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value},"dependencies":evaluated.dependencies,"properties":properties}),
             )?;
             Ok(definition(
                 "tree_node",
@@ -371,6 +375,9 @@ pub(super) fn map(
             ))
         }
         "extrude" => {
+            if value(feature, "bodyType") == Some("THIN") {
+                return Err("thin extrudes are not supported yet: the neutral model cannot carry wall thickness and direction; use a solid extrude or keep the final STEP geometry".into());
+            }
             if value(feature, "bodyType") != Some("SOLID") {
                 return Err("non-solid extrudes are not supported yet".into());
             }
@@ -476,9 +483,6 @@ pub(super) fn map(
             {
                 return Err("only circular constant-radius edge fillets are supported yet".into());
             }
-            if kind == "chamfer" && value(feature, "chamferType") != Some("EQUAL_OFFSETS") {
-                return Err("only equal-distance chamfers are supported yet".into());
-            }
             let state = scoped
                 .map(Ok)
                 .unwrap_or_else(|| inputs.load(ordinal, feature))?;
@@ -496,7 +500,18 @@ pub(super) fn map(
             } else {
                 (
                     "spec",
-                    json!({"kind": "distance", "distance": length(feature, "width", model)?}),
+                    match value(feature, "chamferType") {
+                        Some("EQUAL_OFFSETS") => {
+                            json!({"kind": "distance", "distance": length(feature, "width", model)?})
+                        }
+                        Some("TWO_OFFSETS") => {
+                            json!({"kind": "two_distances", "first": length(feature, "width1", model)?, "second": length(feature, "width2", model)?})
+                        }
+                        Some("DISTANCE_ANGLE") => {
+                            json!({"kind": "distance_angle", "distance": length(feature, "width", model)?, "angle": quantity(parameter(feature, "angle")?, true, model)?})
+                        }
+                        _ => return Err("this chamfer type is not supported yet".into()),
+                    },
                 )
             };
             group
@@ -505,7 +520,7 @@ pub(super) fn map(
                 .insert(key.into(), spec);
             push(&mut model.feature_input_topologies, state.row)?;
             let operation = if kind == "chamfer" {
-                json!({"groups": [group], "flip_direction": false})
+                json!({"groups": [group], "flip_direction": enabled(feature, "oppositeDirection")})
             } else {
                 json!({"groups": [group]})
             };

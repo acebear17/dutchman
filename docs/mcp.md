@@ -28,6 +28,10 @@ input/output paths; these tools do not fetch documents or need credentials. One
 Part Studio converts with CADIR history and the existing writer/verification.
 Missing or unsupported feature selections produce named losses and preserve the
 bundle's STEP geometry. See [Onshape](onshape.md) for the supported subset.
+Ellipses and elliptical arcs map through the shared sketch writer. Variables retain
+units, expressions and sketch/extrude dependencies, also alongside a STEP fallback.
+`onshape/extrude.thin-not-supported` names the missing neutral wall representation;
+asymmetric chamfers report missing input reference-face ordering.
 An explicitly inconsistent bundle is refused with a request to fetch it again or
 use a version link. Legacy v1 bundles without consistency metadata remain readable.
 Default-plane frames and explicit sketch-region boundaries can be resolved from

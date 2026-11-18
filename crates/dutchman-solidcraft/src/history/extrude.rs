@@ -94,9 +94,7 @@ pub(crate) fn map(
         if let Some(expression) =
             first.and_then(|length| ctx.owned_parameter(feature, "AlongDistance", length))
         {
-            if extent.get("direction").and_then(Value::as_str) != Some("symmetric") {
-                extent.insert("distance".to_owned(), json!(expression));
-            }
+            extent.insert("distance".to_owned(), json!(expression));
         }
     }
     let mut start_height = 0.0;

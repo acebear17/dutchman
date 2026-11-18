@@ -166,6 +166,39 @@ impl Edge {
                 let area = cx * (by - ay) - cy * (bx - ax) + radius * radius * (to - from);
                 (a, b, [from, to], area, kind == "circle")
             }
+            "ellipse" => {
+                let [cx, cy] = point("center")?;
+                let major = super::number(geometry, "major_radius")?;
+                let minor = super::number(geometry, "minor_radius")?;
+                let angle = super::number(geometry, "major_angle")?;
+                let bounds = geometry.get("bounds").filter(|v| !v.is_null());
+                let (from, to) = if let Some(bounds) = bounds {
+                    let bounds = bounds.as_array().ok_or("ellipse bounds are missing")?;
+                    let from = bounds
+                        .first()
+                        .and_then(Value::as_f64)
+                        .ok_or("ellipse start is missing")?;
+                    let to = bounds
+                        .get(1)
+                        .and_then(Value::as_f64)
+                        .ok_or("ellipse end is missing")?;
+                    (from, to)
+                } else {
+                    (0.0, std::f64::consts::TAU)
+                };
+                let at = |t: f64| {
+                    [
+                        cx + major * angle.cos() * t.cos() - minor * angle.sin() * t.sin(),
+                        cy + major * angle.sin() * t.cos() + minor * angle.cos() * t.sin(),
+                    ]
+                };
+                let a = at(from);
+                let b = if bounds.is_none() { a } else { at(to) };
+                let [ax, ay] = a;
+                let [bx, by] = b;
+                let area = cx * (by - ay) - cy * (bx - ax) + major * minor * (to - from);
+                (a, b, [from, to], area, bounds.is_none())
+            }
             _ => {
                 return Err(
                     "the sketch-region source curve has no resolved boundary parameter range"
