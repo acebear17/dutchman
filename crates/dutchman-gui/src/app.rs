@@ -373,9 +373,6 @@ const FIT_FRAMES: u8 = 30;
 /// The most of the Designs list shown before it scrolls, in a wide window.
 const INPUT_LIST_HEIGHT: f32 = 140.0;
 
-/// The least height the report panel keeps under the left column in a wide window: its
-/// question at least, with the rest scrolling under it when the window is short.
-const REPORT_MIN_HEIGHT: f32 = 72.0;
 
 /// What to scroll into view.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1464,8 +1461,8 @@ impl App {
 
     /// A wide window: Designs and Output folder on the left, then "Is there a problem?" in the
     /// room left under them, and Results on the right. The page scrolls only if the window is
-    /// too short for Designs and Output folder; results, and the report panel, scroll in their
-    /// own areas.
+    /// too short for Designs and Output folder; the left column scrolls on to the report panel
+    /// when it does not fit, and results scroll in their own column.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
@@ -1477,21 +1474,22 @@ impl App {
         );
         let mut scrolls = false;
         ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            let mut choices = 0.0;
             let area = ScrollArea::vertical()
                 .id_salt("main-left")
-                .max_height((left.height() - REPORT_MIN_HEIGHT).max(0.0))
-                .auto_shrink([false, true])
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let top = ui.cursor().top();
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
+                    choices = ui.cursor().top() - top;
+                    ui.add_space(theme::SPACE_4);
+                    self.report_panel(ui, view);
                 });
-            scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
-            ui.add_space(theme::SPACE_4);
-            ScrollArea::vertical()
-                .id_salt("report-panel")
-                .auto_shrink([false, false])
-                .show(ui, |ui| self.report_panel(ui, view));
+            // The page "scrolls" when Designs and the output choices alone do not fit; the
+            // report panel under them takes the room that is left and scrolls into view.
+            scrolls = choices > area.inner_rect.height() + 1.0;
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
             self.unfinished_notice(ui);

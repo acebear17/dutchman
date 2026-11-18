@@ -3080,7 +3080,8 @@ fn many_results_scroll_in_their_own_column_and_not_the_page() {
 #[test]
 fn a_narrow_window_keeps_the_single_column() {
     let work = tempfile::tempdir().unwrap();
-    let size = [520.0, 1600.0];
+    // Tall enough for the whole page, report panel included, so nothing scrolls the headings away.
+    let size = [520.0, 2400.0];
     let h = fit_harness(size, ThemePreference::Light, work.path());
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
     let designs = h.get_by_label("DESIGNS").rect();

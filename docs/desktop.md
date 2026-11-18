@@ -217,8 +217,8 @@ With no saved size, the window opens centred at 1180 by 800 points, or 90% of th
 that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
 scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column, with
 **Is there a problem? Is something missing?** in the room under them, and **Results** in a right
-column. Results that do not fit scroll inside their own column, the report panel scrolls inside
-its own room when the window is short, and a long list of designs scrolls inside **Designs**;
+column. Results that do not fit scroll inside their own column, the left column scrolls on to
+the report panel when the window is short, and a long list of designs scrolls inside **Designs**;
 the rest of the screen stays in place. Below 1100 points the main screen is one column,
 **Designs**, **Output folder**, **Results**, then the report panel, and scrolls as one page
 (down to the 520 point minimum).
