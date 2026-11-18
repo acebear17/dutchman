@@ -226,15 +226,18 @@ other curves divide those loops (a line across a circle, a loop cadmpeg does not
 regions are the ones SolidCraft itself finds in the written sketch (`sketch.inspect`), each named
 by the centre of its area; a centre outside its own region names another region or none, which
 can only add a duplicate or a failed candidate, never a wrong match. At most 24 candidates and
-120 s of measuring per feature. Each candidate is mapped normally and replayed in
-SolidCraft: at the last body-building feature against the original final shape (body count, box,
-volume and area within the check's tolerances, and, for a one-body part, the largest distance
-between the two surfaces from `inspect.compare` with the source loaded beside the replay, within
-the box allowance of 0.01 mm or 2e-4 of the body's diagonal); earlier, against the centres of the
-bodies the source stores after the feature. Exactly one match is kept, with
+120 s of measuring per feature, shared across the source, replay and surface evaluations.
+Each candidate is mapped normally and replayed in
+SolidCraft against the original final shape: body count, box, volume and area within the check's
+tolerances, both face counts, and the largest distance between the two surfaces from
+`inspect.compare` with the source loaded beside the replay, within the box allowance of 0.01 mm
+or 2e-4 of the body's diagonal. New measured regions are tried only at the last body-building
+feature; stored body centres alone cannot prove an earlier region's shape. Exactly one match is kept, with
 `history/profile-region-measured`. Of several, the one alone with the source solid's face count is
 kept; otherwise it is a tie and the feature stays blocked, as it does when none matches or any
-candidate cannot be measured. A final shape that later differs from the source cuts the timeline
+candidate cannot be measured. New final-shape inferences require a one-body part and a successful
+surface comparison with both face counts; unavailable comparison commands or missing counts
+keep the refusal. A final shape that later differs from the source cuts the timeline
 before the first measured feature, so it never keeps fewer features than without measuring.
 
 The same applies to the last fillet or chamfer of a history when its input edges cannot be proven

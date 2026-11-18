@@ -13237,6 +13237,8 @@ struct MeasuringEvaluator {
     faces: bool,
     /// Lists the halves of a square split down the middle as its sketch's regions.
     halves: bool,
+    unavailable_comparison: bool,
+    missing_face_counts: bool,
 }
 
 impl MeasuringEvaluator {
@@ -13299,7 +13301,7 @@ impl dutchman_solidcraft::SolidCraftEvaluator for MeasuringEvaluator {
                 {"index": 1, "area_mm2": 50.0, "centroid_sketch": [7.5, 5.0]},
             ]})]);
         }
-        if !self.faces {
+        if self.unavailable_comparison {
             return Err("the host has no such command".to_owned());
         }
         let first = Self::swept(design) == Some(Some(true));
@@ -13309,8 +13311,8 @@ impl dutchman_solidcraft::SolidCraftEvaluator for MeasuringEvaluator {
                 Ok(match command["command"].as_str().unwrap() {
                     "timeline.suppress" => json!({"suppressed": false}),
                     "inspect.compare" => json!({
-                        "a": {"faces": if first { 6 } else { 7 }},
-                        "b": {"faces": 6, "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}},
+                        "a": {"faces": (!self.missing_face_counts).then_some(if self.faces && !first { 7 } else { 6 })},
+                        "b": {"faces": (!self.missing_face_counts).then_some(6), "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}},
                         "deviation": {"max_mm": 0.0001},
                     }),
                     other => return Err(format!("Unexpected command: {other}")),
@@ -13469,4 +13471,22 @@ fn solidcraft_regions_of_the_written_sketch_are_measured_when_cadmpeg_loops_do_n
         .unwrap()
         .iter()
         .any(|call| call == "sketch regions"));
+}
+
+#[test]
+fn measured_regions_require_complete_surface_comparisons_when_checking_the_final_shape() {
+    for missing_face_counts in [false, true] {
+        let host = std::sync::Arc::new(MeasuringEvaluator {
+            unavailable_comparison: !missing_face_counts,
+            missing_face_counts,
+            ..MeasuringEvaluator::default()
+        });
+        let (_, report) = convert(
+            &two_square_selection(),
+            &SolidCraftWriter::new().evaluator(host),
+        );
+        let extrude = &report.outcome().unwrap().features[1];
+        assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+        assert!(extrude.inferred.is_none());
+    }
 }

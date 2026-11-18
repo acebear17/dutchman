@@ -399,7 +399,10 @@ When neither confirms, Dutchman measures every region of the sketch the selectio
 the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
 proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
 Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
-the feature blocked.
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Each feature shares a 120 s budget across candidate evaluations.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source

@@ -110,8 +110,8 @@ that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
 `model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and
 lengths; face results include names, areas, sample points and optional planar normals.
 Measured inference also runs `timeline.suppress`, `inspect.compare` and `sketch.inspect`; a
-host without them leaves the surface distance unmeasured and the other measures decide, and
-finds no regions beyond the source's loops. It must enforce deadlines, bound responses, isolate evaluations from the user's open
+host without surface comparison results and both face counts refuses new final-shape inferences, and without
+`sketch.inspect` finds no regions beyond the source's loops. It must enforce deadlines, bound responses, isolate evaluations from the user's open
 design and serialize engine access if needed. The `Send + Sync` contract also permits
 native assembly workers to share an evaluator.
 
