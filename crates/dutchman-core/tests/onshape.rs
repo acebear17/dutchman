@@ -547,7 +547,11 @@ fn two_bodies(plate_name: &str) -> Vec<u8> {
     let mut details = Value::Null;
     for i in 0..archive.len() {
         let mut member = archive.by_index(i).unwrap();
-        let name = member.name().unwrap().to_owned();
+        let name: String = {
+            let name = member.name().unwrap();
+            let name: &str = name.as_ref();
+            name.to_owned()
+        };
         let mut data = Vec::new();
         member.read_to_end(&mut data).unwrap();
         if name.ends_with("export.step") {
