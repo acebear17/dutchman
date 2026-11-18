@@ -28,6 +28,19 @@ the output beside the input from `--to`. An existing derived output is kept with
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
 Explicit outputs retain their replacement behaviour. MCP output paths remain required.
 
+For public Fusion (`a360.co` or `*.autodesk360.com`) and Google Drive file shares, use
+`dutchman convert '<url>' -o design.sc`, or paste/drop the link into the desktop app and
+choose Convert after the download. Omitted CLI output goes in the current folder.
+Saved `.url`/`.webloc` shortcuts can be dropped; if a browser's raw link drop is not
+delivered by the desktop toolkit, paste it instead.
+Only public downloads needing no login work. Drive uses `uc?export=download` and handles
+its virus-scan confirmation; Fusion needs a public download exposed by its share page.
+Downloads are limited to 200 MB and two minutes, use only provider HTTPS hosts, and live
+in temporary folders that are cleaned up. Private/expired links or unavailable Fusion
+downloads ask for a manual download and file drop. Never ask for login credentials.
+MCP tools still require local paths; download the file locally before calling them.
+Reports describe temporary local inputs and never include the original share URL.
+
 SolidWorks parts convert in their saved configuration when its body membership is known.
 An Info note counts bodies left out from other configurations and names the saved configuration;
 bodies with unknown membership stay.

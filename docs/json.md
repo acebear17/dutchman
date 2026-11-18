@@ -1,5 +1,19 @@
 # Machine-readable reports
 
+## Share link inputs
+
+`dutchman convert <url>` and the desktop app resolve public Fusion and Google Drive file
+links before ordinary local conversion. Successful conversion reports have the existing
+schemas and describe the downloaded file's temporary local path. Project ZIP downloads
+use `dutchman.convert-all/1`. The temporary source is removed after the CLI finishes, or
+when the app no longer needs the queued file or result; output paths remain usable.
+
+A CLI download failure with `--json` returns `dutchman.convert/1`, `ok: false`,
+`error.stage: "input"`, and `input.path: "Shared file"`. Its message explains the download
+limit, private/expired link, disallowed host, or need for a manual download. No report
+field is added for the original URL, file ID, or query tokens, and the provider's response body is never copied into reports.
+MCP input arguments remain local paths. There are no schema or field changes.
+
 ## Saved desktop and watch reports
 
 The desktop app saves each converted file's full `dutchman.convert/1` report as
