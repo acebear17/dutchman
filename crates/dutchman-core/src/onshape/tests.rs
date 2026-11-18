@@ -993,6 +993,48 @@ fn a_variable_revolve_angle_becomes_a_parameter_the_revolve_owns() {
 }
 
 #[test]
+fn suppressed_features_and_variables_do_not_report_variable_loss() {
+    for suppression in ["suppressed", "parentSuppressed"] {
+        for suppress_variable in [false, true] {
+            let mut round = variable("round-variable", "round", "LENGTH", "lengthValue", "1 mm");
+            round[suppression] = json!(suppress_variable);
+            let bytes = with_variables(
+                include_bytes!("../../tests/fixtures/onshape-plate-fillet.onshape-bundle"),
+                vec![round],
+                |response| {
+                    let fillet = &mut response["features"][2];
+                    fillet[suppression] = json!(true);
+                    for p in fillet["parameters"].as_array_mut().unwrap() {
+                        if p["parameterId"] == "radius" {
+                            p["expression"] = json!("#round");
+                        }
+                    }
+                },
+            );
+            let (wire, report) = read(&bytes);
+            assert_eq!(wire["features"][0]["suppressed"], suppress_variable);
+            assert_eq!(wire["features"][3]["suppressed"], true);
+            assert_eq!(
+                wire["parameters"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| { p["id"] == id("parameter", "round-variable") }),
+                !suppress_variable
+            );
+            assert!(
+                !report.losses().iter().any(|loss| loss
+                    .code
+                    .as_deref()
+                    .is_some_and(|code| code.starts_with("onshape/history."))),
+                "{suppression}, suppress_variable={suppress_variable}: {:?}",
+                report.losses()
+            );
+        }
+    }
+}
+
+#[test]
 fn a_variable_value_no_parameter_drives_is_a_named_loss() {
     let bytes = with_variables(
         include_bytes!("../../tests/fixtures/onshape-plate-fillet.onshape-bundle"),

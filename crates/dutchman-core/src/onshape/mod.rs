@@ -314,10 +314,12 @@ pub(super) fn read(
         };
         let definition = match mapped {
             Ok(definition) => {
-                if !matches!(
-                    feature.get("featureType").and_then(Value::as_str),
-                    Some("newSketch" | "assignVariable")
-                ) {
+                if !suppressed
+                    && !matches!(
+                        feature.get("featureType").and_then(Value::as_str),
+                        Some("newSketch" | "assignVariable")
+                    )
+                {
                     features::report_evaluated_variables(feature, &model.ir.model, report);
                 }
                 definition
