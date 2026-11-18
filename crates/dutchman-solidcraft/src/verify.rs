@@ -384,6 +384,15 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
     let says_solidcraft = version_of(&cli)?.filter(|line| {
         line.to_ascii_lowercase().contains("solidcraft") && parse_version(line).is_some()
     });
+    if let Some(line) = says_solidcraft.as_deref() {
+        if let Some(oldest) = older_than_supported(line) {
+            return Err(format!(
+                "{line} at {} is older than {oldest}, the oldest Dutchman supports. Choose the \
+                 solidcraft-cli of a newer SolidCraft.",
+                cli.display()
+            ));
+        }
+    }
     match says_solidcraft {
         Some(_) => Ok(cli),
         None => Err(format!(
@@ -580,6 +589,18 @@ impl std::fmt::Display for NoCli {
     }
 }
 
+/// "SolidCraft 0.18 patch 2" when a `--version` line names a SolidCraft older than
+/// [`OLDEST_SOLIDCRAFT`], the oldest that opens and checks Dutchman's designs.
+fn older_than_supported(line: &str) -> Option<String> {
+    match parse_version(line) {
+        Some(version) if version < OLDEST_SOLIDCRAFT => {
+            let [major, minor, patch] = OLDEST_SOLIDCRAFT;
+            Some(format!("SolidCraft {major}.{minor} patch {patch}"))
+        }
+        _ => None,
+    }
+}
+
 /// [`find_cli`], refused with the reason when the CLI found says it is older than
 /// [`OLDEST_SOLIDCRAFT`] or macOS blocks it. One that does not say its version is used as it is.
 pub fn usable_cli(verification: &Verification) -> Result<PathBuf, NoCli> {
@@ -587,16 +608,13 @@ pub fn usable_cli(verification: &Verification) -> Result<PathBuf, NoCli> {
     let Some(line) = version_of(&cli).map_err(NoCli::Blocked)? else {
         return Ok(cli);
     };
-    match parse_version(&line) {
-        Some(version) if version < OLDEST_SOLIDCRAFT => {
-            let [major, minor, patch] = OLDEST_SOLIDCRAFT;
-            Err(NoCli::TooOld(format!(
-                "{line} at {} is older than SolidCraft {major}.{minor} patch {patch}, the oldest that \
-                 opens and checks Dutchman's designs; install a newer SolidCraft",
-                cli.display()
-            )))
-        }
-        _ => Ok(cli),
+    match older_than_supported(&line) {
+        Some(oldest) => Err(NoCli::TooOld(format!(
+            "{line} at {} is older than {oldest}, the oldest that opens and checks Dutchman's \
+             designs; install a newer SolidCraft",
+            cli.display()
+        ))),
+        None => Ok(cli),
     }
 }
 
@@ -2741,6 +2759,16 @@ mod cli_tests {
         assert!(chosen_cli(&other)
             .unwrap_err()
             .contains("did not answer as solidcraft-cli"));
+    }
+
+    #[test]
+    fn a_chosen_cli_older_than_the_oldest_supported_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.17.0");
+        let why = chosen_cli(&cli).unwrap_err();
+        assert!(why.contains("older than SolidCraft 0.18 patch 2"), "{why}");
+        let floor = version_script(dir.path(), "floor", "solidcraft-cli 0.18.2");
+        assert_eq!(chosen_cli(&floor), Ok(floor));
     }
 
     #[test]
