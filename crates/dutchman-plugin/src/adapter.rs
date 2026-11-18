@@ -154,9 +154,9 @@ mod guest {
                     ))
                 })?;
                 if size > limit {
-                    return Err(keep(PluginError::LimitExceeded(format!(
-                        "{host_path}: input exceeds the {limit}-byte file limit; choose a smaller CAD file"
-                    ))));
+                    return Err(keep(PluginError::LimitExceeded(
+                        crate::input_limit_message(limit),
+                    )));
                 }
                 files.set(files.get() + 1);
                 if files.get() > 4096 {
@@ -230,11 +230,16 @@ mod guest {
 
     fn read(path: &str, size: u64, budget: &Cell<u64>) -> Result<Vec<u8>, PluginError> {
         let limit = crate::MAX_INPUT_BYTES.min(dutchman_core::MAX_INPUT_BYTES);
-        if size > limit.saturating_sub(budget.get()) {
-            // The file and the parts read before it share one limit.
+        if size > limit {
             return Err(PluginError::LimitExceeded(crate::input_limit_message(
                 limit,
             )));
+        }
+        if size > limit.saturating_sub(budget.get()) {
+            // The file and the parts read before it share one limit.
+            return Err(PluginError::LimitExceeded(
+                crate::aggregate_input_limit_message(limit),
+            ));
         }
         budget.set(budget.get() + size);
         let mut bytes = Vec::new();

@@ -21,7 +21,8 @@ zip.workspace = true
 wit-bindgen = "0.57.1"
 
 [features]
-host-tests = ["dep:wasmtime"]
+# Only native replay regressions read the public FreeCAD fillet fixture.
+host-tests = ["dep:wasmtime", "dutchman-core/freecad"]
 
 [[test]]
 name = "component"

@@ -81,8 +81,9 @@ The dialog shows three options:
 
 - SolidCraft 0.44 or newer, desktop only for now.
 - One file per conversion, at most 1 GiB read (the file and its assembly parts together) and
-  256 MiB written. A bigger file stops with a message saying so; the `dutchman` command line,
-  which has no such limit, converts it instead.
+  256 MiB written. Convert fewer parts at once, or use the `dutchman` command line for an
+  assembly over the combined input limit. Every individual file must fit the same 1 GiB cap
+  in both the plugin and the command line; save smaller parts in the source program otherwise.
 - Fusion, Inventor, and SolidWorks only. FreeCAD files open with SolidCraft's own reader (see
   above); for any other format the plugin's message names the formats it converts.
 
@@ -95,7 +96,10 @@ The message says what to do first, then the detail:
   report it on the [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
   form; `dutchman convert FILE --report-anon report.json` makes an anonymous report to attach,
   with no design data in it.
-- **Over 1 GiB, or over the memory limit**: convert it with the `dutchman` command line.
+- **One file over 1 GiB**: save smaller parts in the source program; the command line has the
+  same per-file cap.
+- **Assembly inputs together over 1 GiB, or over the plugin memory limit**: convert fewer
+  parts at once, or use the `dutchman` command line. Each file must still fit its 1 GiB cap.
 - **Missing assembly parts**: keep the part files in the assembly's folder, under their saved
   names, and open the assembly again.
 

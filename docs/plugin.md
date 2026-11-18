@@ -131,9 +131,10 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
   A missing member (`source.resolve` returns none) remains an ordinary assembly loss.
   The plugin's own reasons (`message` in `src/lib.rs`) say what to do first and
   give the cause after `Detail:`. A file in no plugin format names only the plugin's formats,
-  not the command line's whole list; `.FCStd` points at File > Open; an input over 1 GiB (the
-  file and its parts together, `MAX_INPUT_BYTES`, the core reader's cap) or over the memory
-  budget points at the `dutchman` command line; an unreadable file asks for a fresh copy and
+  not the command line's whole list; `.FCStd` points at File > Open. A single input over 1 GiB
+  asks for smaller parts saved in the source program, since the command line shares that cap. Inputs
+  together over the plugin's 1 GiB aggregate budget, or over its memory budget, point at the
+  `dutchman` command line; an unreadable file asks for a fresh copy and
   names the issue form and `--report-anon`. A file in no plugin format is refused before it is
   read.
 
@@ -205,7 +206,7 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 | Field | Shape and meaning |
 |---|---|
 | `summary` | One line, at most 240 bytes, such as `Editable history: 12 of 14 features mapped; 3 losses`. It counts only what the design lost, including rows omitted by the limits below. A file with no feature history to rebuild says `Shape converted; the file has no feature history to rebuild`, not that history was lost; with Keep editable history off it says `Geometry only, as Keep editable history is off`. |
-| `items` | At most 4096 rows, dropped losses first, then degraded losses (source order within each severity), one per retained thing the design lost (`Loss::lost_from_design` in `dutchman-core`): everything `dropped`, and every `degraded` loss except records kept as they were and notes on the file's own structure (a dialect check, a kernel record chain). Notes (`info`: STEP restatement counts, part-position statistics, renamed parameters) are never items. Each row: `severity` (`degraded` or `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Appearances carried over with changes" or "Features left out"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. A conversion that lost nothing has no loss items; a report shortened by the byte limit still carries the notice below. |
+| `items` | At most 4096 rows, dropped losses first, then degraded losses (source order within each severity), one per retained thing the design lost (`Loss::lost_from_design` in `dutchman-core`): everything `dropped`, and every `degraded` loss except explicitly recognized source-bookkeeping diagnostics. Unknown degraded codes remain visible; retaining a native record in CADIR does not mean its meaning reached SolidCraft. Notes (`info`: STEP restatement counts, part-position statistics, renamed parameters) are never items. Each row: `severity` (`degraded` or `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Appearances carried over with changes" or "Features left out"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. A conversion that lost nothing has no loss items; a report shortened by the byte limit still carries the notice below. |
 | `details` | The full `dutchman.plugin.loss/1` report below, every loss and note included. When the whole result exceeds 1 MiB, its `losses` array is left out; items are reduced further if needed, retaining the severity priority. Stage counts always describe all losses and notes. |
 
 When real losses exceed the item limit or the full report exceeds the byte limit, a
@@ -250,10 +251,10 @@ A host should show feature blockers together with the relevant stage losses rath
 inventing a code from a feature name.
 
 Placement regressions check component parents, hidden occurrence and joint endpoint
-paths, and hidden-body world names when adding the wrapper. The component harness also
-converts `freecad-1.1.4-P04/P04a.FCStd` with Stand up through the real host evaluator, requires a
-mapped fillet, and replays the resulting placed design in SolidCraft. Fatal member read,
-size and resolve errors (permission and limit errors), the aggregate input limit, and
+paths, and hidden-body world names when adding the wrapper. The native writer/Stand up seam
+also converts `freecad-1.1.4-P04/P04a.FCStd`, requires a mapped fillet verified against the source,
+and replays the resulting placed design in SolidCraft; the component itself refuses FreeCAD.
+Fatal member read, size and resolve errors (permission and limit errors), the aggregate input limit, and
 oversized member metadata are tested after a good member; each must return the original
 error without writing a partial design.
 
@@ -299,8 +300,8 @@ The Wasmtime values come from the optimized native harness, with a fresh Engine 
 no compiled-code cache, fuel enabled, a 16 MiB Wasm stack and an 18 MiB async-stack
 budget. The RSS figure is the whole test process, which also runs the native pipeline.
 
-Targeted validation passed: 16 plugin library tests, four core report tests and four
-component harness tests. Native plugin/core clippy and plugin Wasm clippy passed with
+Baseline targeted validation passed: 16 plugin library tests, four core report tests and four
+component harness tests, before the follow-up appearance-loss and size-advice regressions. Native plugin/core clippy and plugin Wasm clippy passed with
 warnings denied. Seven successfully converted fixtures matched the CLI's unpacked
 document and exact STEP payloads; five more were refused by both pipelines.
 

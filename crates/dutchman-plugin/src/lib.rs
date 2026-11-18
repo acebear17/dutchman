@@ -39,12 +39,23 @@ const FORMAT_NAMES: &str =
 pub const FREECAD: &str = "Open FreeCAD files with File > Open: SolidCraft's own reader keeps \
      their editable history, which the Dutchman plugin does not match yet.";
 
-/// What to do first when a file is over the plugin's input limit.
+/// What to do first when one file is over the shared per-file limit.
 pub fn input_limit_message(limit: u64) -> String {
     format!(
-        "Choose a file under {}, or convert this one with the dutchman command line, which has \
-         no such limit: {}.",
+        "Save smaller parts in the source program and choose a file under {}. The dutchman \
+         command line has the same per-file limit.",
+        size(limit)
+    )
+}
+
+/// The command line has no plugin aggregate budget, but still caps each input file.
+pub fn aggregate_input_limit_message(limit: u64) -> String {
+    format!(
+        "Convert fewer parts at once, or use the dutchman command line: the file and its \
+         parts together exceed the plugin's {} input limit. Each file must still fit the \
+         command line's {} per-file limit: {}.",
         size(limit),
+        size(dutchman_core::MAX_INPUT_BYTES),
         dutchman_core::RELEASES
     )
 }
