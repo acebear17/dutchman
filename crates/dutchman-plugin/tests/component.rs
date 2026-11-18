@@ -138,7 +138,7 @@ impl Host {
             !self.input_failed,
             "input work continued after a fatal failure"
         );
-        if !path.ends_with("P02a.FCStd") {
+        if !path.ends_with("other_cube.sldprt") {
             return Ok(());
         }
         let fail = match self.fault {
@@ -187,6 +187,9 @@ impl clock::Host for Host {
 impl source::Host for Host {
     fn resolve(&mut self, path: String) -> Result<Option<String>, PluginError> {
         self.input("resolve", &path)?;
+        if path.ends_with("other_cube.sldprt") && self.fault.is_some() {
+            return Ok(Some("other_cube.sldprt".into()));
+        }
         if path.is_empty() {
             return Ok(Some(path));
         }
@@ -224,12 +227,21 @@ impl source::Host for Host {
     }
     fn size(&mut self, path: String) -> Result<Option<u64>, PluginError> {
         self.input("size", &path)?;
-        if path.ends_with("P02a.FCStd") {
+        if path.ends_with("other_cube.sldprt") {
             if let Some(Fault::Aggregate | Fault::Oversize) = self.fault {
                 assert!(self.good_member_read);
                 self.input_failed = true;
                 return Ok(Some(
                     (1 << 30) + u64::from(matches!(self.fault, Some(Fault::Oversize))),
+                ));
+            }
+            if self.fault.is_some() {
+                return Ok(Some(
+                    self.root
+                        .join("solidworks_cube.sldprt")
+                        .metadata()
+                        .map_err(failed)?
+                        .len(),
                 ));
             }
         }
@@ -262,7 +274,7 @@ impl source::Host for Host {
             usize::try_from(offset).map_err(|e| PluginError::LimitExceeded(e.to_string()))?;
         let end = start.saturating_add(len as usize).min(bytes.len());
         let chunk = bytes.get(start..end).unwrap_or_default().to_vec();
-        if path.ends_with("P01a.FCStd") && end == bytes.len() {
+        if path.ends_with("solidworks_cube.sldprt") && end == bytes.len() {
             self.good_member_read = true;
         }
         self.calls += 1;
@@ -381,7 +393,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "{}",
             (1u64 << 30) + 1,
             "limit",
-            "Choose a file under 1 GiB, or convert this one with the dutchman command line",
+            "Save smaller parts in the source program and choose a file under 1 GiB.",
         ),
         // Not a plugin format: FreeCAD is left to SolidCraft's own reader, and anything else
         // hears the plugin's formats only, not the command line's whole list.
@@ -426,6 +438,9 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         assert_eq!(actual, expected, "{name}: {reason}");
         assert!(reason.starts_with(says), "{name}: {reason}");
         assert!(!reason.contains("Rhino"), "{name}: {reason}");
+        if matches!(name, "design.FCStd" | "part.3dm") {
+            assert_eq!(store.data().calls, 0, "unsupported format was read");
+        }
         assert!(store.data().output.is_empty());
     }
 
@@ -461,7 +476,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     drop(store);
 
     fatal_member_failures(&engine, &component, &linker, &root)?;
-    stand_up_replays(&engine, &component, &linker, &root)?;
+    stand_up_replays(&root)?;
     hidden_repeated_bodies(&engine, &component, &linker, &root)?;
     let mut fixtures = Vec::new();
     collect_fixtures(&root, &mut fixtures)?;
@@ -630,8 +645,7 @@ fn fatal_member_failures(
     linker: &Linker<Host>,
     root: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let root = root.join("freecad-1.1.4-A01");
-    let main = std::fs::read(root.join("A01a.FCStd"))?;
+    let main = std::fs::read(root.join("two_parts.sldasm"))?;
     for fault in [
         Fault::ReadDenied,
         Fault::ReadLimit,
@@ -642,7 +656,7 @@ fn fatal_member_failures(
         Fault::Aggregate,
         Fault::Oversize,
     ] {
-        let mut host = host(&root, main.clone());
+        let mut host = host(root, main.clone());
         host.fault = Some(fault);
         let mut store = Store::new(engine, host);
         store.limiter(|host| &mut host.limits);
@@ -653,7 +667,7 @@ fn fatal_member_failures(
             &mut store,
             "convert",
             &source::FileInfo {
-                name: "A01a.FCStd".into(),
+                name: "two_parts.sldasm".into(),
                 size: main.len() as u64,
             },
             "{}",
@@ -665,8 +679,11 @@ fn fatal_member_failures(
             Fault::SizeLimit => PluginError::LimitExceeded("Original source.size failure".into()),
             Fault::ResolveDenied => PluginError::PermissionDenied("Original source.resolve failure".into()),
             Fault::ResolveLimit => PluginError::LimitExceeded("Original source.resolve failure".into()),
-            Fault::Aggregate => PluginError::LimitExceeded("Input exceeds the 1 GiB conversion limit; choose a smaller CAD file".into()),
-            Fault::Oversize => PluginError::LimitExceeded("P02a.FCStd: input exceeds the 1073741824-byte file limit; choose a smaller CAD file".into()),
+            Fault::Aggregate => PluginError::LimitExceeded(format!(
+                "Convert fewer parts at once, or use the dutchman command line: the file and its parts together exceed the plugin's 1 GiB input limit. Each file must still fit the command line's 1 GiB per-file limit: {}.",
+                dutchman_core::RELEASES
+            )),
+            Fault::Oversize => PluginError::LimitExceeded("Save smaller parts in the source program and choose a file under 1 GiB. The dutchman command line has the same per-file limit.".into()),
         };
         assert_eq!(
             format!("{:?}", result.unwrap_err()),
@@ -701,34 +718,26 @@ fn component_parents(doc: &Value) {
         );
     }
 }
-fn stand_up_replays(
-    engine: &Engine,
-    component: &Component,
-    linker: &Linker<Host>,
-    root: &Path,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let cli = dutchman_solidcraft::find_cli(&Verification::Auto)?;
-    let evaluator = CliEvaluator::new(cli);
-    let main = std::fs::read(root.join("freecad-1.1.4-P04/P04a.FCStd"))?;
-    let mut host = host(root, main.clone());
-    host.evaluator = Some(evaluator.clone());
-    let mut store = Store::new(engine, host);
-    store.limiter(|host| &mut host.limits);
-    store.set_fuel(50_000_000_000)?;
-    let instance = ImporterPlugin::instantiate(&mut store, component, linker)?;
-    let report = import_file(
-        &instance,
-        &mut store,
-        "convert",
-        &source::FileInfo {
-            name: "P04a.FCStd".into(),
-            size: main.len() as u64,
-        },
-        r#"{"up_axis":"stand_up"}"#,
-    )?
-    .map_err(|e| format!("{e:?}"))?;
-    let report: Value = serde_json::from_str(&report)?;
-    let doc = document(&store.data().output);
+fn stand_up_replays(root: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // The plugin leaves FreeCAD to SolidCraft. Keep the existing synthetic fillet
+    // regression at the writer/placement seam, without claiming it as a plugin format.
+    let evaluator = CliEvaluator::new(dutchman_solidcraft::find_cli(&Verification::Auto)?);
+    let mut native_report = Report::default();
+    let model = dutchman_core::read(
+        Format::FreeCadDocument,
+        &root.join("freecad-1.1.4-P04/P04a.FCStd"),
+        &mut native_report,
+    )?;
+    let mut untransformed = Vec::new();
+    SolidCraftWriter::new()
+        .threads(1)
+        .target_version(Some(SolidCraftVersion::default()))
+        .evaluator(std::sync::Arc::new(evaluator.clone()))
+        .hide_unverified_history(true)
+        .write(&model, &mut untransformed, &mut native_report)?;
+    let stood = stand_up::apply(&untransformed)?;
+    let report = loss_report::json(&native_report);
+    let doc = document(&stood);
     component_parents(&doc);
     assert!(
         doc["features"]
@@ -738,8 +747,8 @@ fn stand_up_replays(
             .any(|f| f["type"] == "fillet"),
         "{report}"
     );
-    let verified = report["details"]["outcome"]["verification"]["status"] == "verified"
-        || report["details"]["parts"]
+    let verified = report["outcome"]["verification"]["status"] == "verified"
+        || report["parts"]
             .as_array()
             .unwrap()
             .iter()
@@ -756,11 +765,7 @@ fn stand_up_replays(
             "mapped fillet was suppressed: {feature}"
         );
     }
-    let replay = evaluator.evaluate(
-        &store.data().output,
-        std::time::Duration::from_secs(120),
-        "stood-fillet",
-    )?;
+    let replay = evaluator.evaluate(&stood, std::time::Duration::from_secs(120), "stood-fillet")?;
     assert!(
         replay["bodies"]
             .as_array()
@@ -772,19 +777,6 @@ fn stand_up_replays(
     for row in replay["timeline"].as_array().unwrap() {
         assert!(row["error"].is_null() || row["error"] == "", "{replay}");
     }
-    let mut native_report = Report::default();
-    let model = dutchman_core::read(
-        Format::FreeCadDocument,
-        &root.join("freecad-1.1.4-P04/P04a.FCStd"),
-        &mut native_report,
-    )?;
-    let mut untransformed = Vec::new();
-    SolidCraftWriter::new()
-        .threads(1)
-        .target_version(Some(SolidCraftVersion::default()))
-        .evaluator(std::sync::Arc::new(evaluator.clone()))
-        .hide_unverified_history(true)
-        .write(&model, &mut untransformed, &mut native_report)?;
     let baseline = evaluator.evaluate(
         &untransformed,
         std::time::Duration::from_secs(120),
@@ -812,10 +804,7 @@ fn stand_up_replays(
             );
         }
     }
-    eprintln!(
-        "stand_up_fillet: mapped, verified, and replayed with rotated bounds: {}",
-        report["summary"]
-    );
+    eprintln!("stand_up_fillet: mapped, verified, and replayed with rotated bounds");
     Ok(())
 }
 

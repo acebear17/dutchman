@@ -162,10 +162,10 @@ impl Loss {
     /// and what happened to it, from its severity.
     pub fn title(&self) -> String {
         let noun = self.noun();
-        // Records kept unread are kept as they were, whatever their severity says about it.
+        // Retained bookkeeping records stay as-is; unresolved design semantics are a loss.
         let title = match self.severity {
             Severity::Dropped => format!("{noun} left out"),
-            _ if self.kept() => format!("{noun} kept as-is"),
+            _ if self.kept() && !self.lost_from_design() => format!("{noun} kept as-is"),
             Severity::Degraded => format!("{noun} carried over with changes"),
             Severity::Info => format!("Notes about {noun}"),
         };
@@ -176,14 +176,23 @@ impl Loss {
     }
 
     /// Whether the converted design lost or changed something the user can see: anything
-    /// left out, and any change except to records kept as they were and to the file's own
-    /// structure. Notes (`Info`) never are. A front end that shows only what was lost lists
-    /// these and keeps the rest for whoever reports a problem.
+    /// left out, and any change except known source-bookkeeping diagnostics. Notes (`Info`)
+    /// never are. Unknown degraded codes remain visible: a record retained in CADIR does
+    /// not imply its meaning was carried into the written design.
     pub fn lost_from_design(&self) -> bool {
         match self.severity {
             Severity::Dropped => true,
             Severity::Info => false,
-            Severity::Degraded => !self.kept() && self.noun() != FILE_STRUCTURE,
+            Severity::Degraded => !matches!(
+                self.code.as_deref(),
+                Some(
+                    "f3d/source.unindexed-records-retained"
+                        | "sldprt/config.inferred-without-native"
+                        | "sldprt/source.dialect-unverified"
+                        | "sldprt/kernel.dialect-unverified"
+                        | "inventor/rse.segment-pair-untyped"
+                )
+            ),
         }
     }
 
@@ -800,6 +809,25 @@ mod tests {
             Stage::Decode
         )
         .lost_from_design());
+    }
+
+    #[test]
+    fn native_appearance_and_unknown_degraded_losses_remain_visible() {
+        for code in [
+            "sldprt/appearance.native-scope-unresolved",
+            "sldprt/appearance.opaque-binding-unresolved",
+            "sldprt/unheard-of.not-preserved",
+        ] {
+            let loss = Loss {
+                severity: Severity::Degraded,
+                subject: code.to_owned(),
+                code: Some(code.to_owned()),
+                detail: "Meaning was not transferred to the converted design".into(),
+                stage: Stage::Decode,
+            };
+            assert!(loss.lost_from_design(), "{code}");
+            assert!(!loss.title().ends_with("kept as-is"), "{code}");
+        }
     }
 
     #[test]

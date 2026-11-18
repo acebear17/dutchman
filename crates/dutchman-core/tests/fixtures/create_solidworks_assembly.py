@@ -18,7 +18,7 @@ def reference(key, name, transform, suppressed="NO"):
             f'swIsVirtualComponent="NO" swTransform="{transform}"/>')
 
 
-def generate(part_path=r"W:\authored\SOLIDWORKS_CUBE.SLDPRT", part_type="PART", embedded=False):
+def generate(part_path=r"W:\authored\SOLIDWORKS_CUBE.SLDPRT", part_type="PART", embedded=False, second_path=None):
     type_attr = f' swDocType="{part_type}"' if part_type else ""
     references = "".join([
         reference(4, "First", IDENTITY),
@@ -31,6 +31,11 @@ def generate(part_path=r"W:\authored\SOLIDWORKS_CUBE.SLDPRT", part_type="PART", 
         extra_file = r'<swFile id="13" swDocType="PART" swPath="W:\authored\SOLIDWORKS_CUBE.SLDPRT"/>'
         extra_model = '<swModel id="12" swName="Cube" swConfigurationName="Default" swFileRef="13"/>'
         children = reference(14, "Leaf", IDENTITY).replace('swModelRef="8"', 'swModelRef="12"')
+    if second_path:
+        references = references.replace('id="7" swName="Second" swReferenceNumber="1" swModelRef="8"',
+                                        'id="7" swName="Second" swReferenceNumber="1" swModelRef="12"')
+        extra_file = f'<swFile id="13" swDocType="PART" swPath="{second_path}"/>'
+        extra_model = '<swModel id="12" swName="Other cube" swConfigurationName="Default" swFileRef="13"/>'
     child_model = '<swModel id="8" swName="Cube" swConfigurationName="Default" swFileRef="9"'
     child_model += f'>{children}</swModel>' if embedded else '/>'
     xml = rf'''<?xml version="1.0" encoding="UTF-8"?>
@@ -75,3 +80,7 @@ if __name__ == "__main__":
     # A local holder with its own embedded component tree and a saved assembly copy.
     Path(__file__).with_name("local_cubes.sldasm").write_bytes(
         generate(r"W:\authored\placed_cubes.sldasm", "ASSEMBLY", embedded=True))
+
+    # Two distinct part references let the component harness fail after a readable member.
+    Path(__file__).with_name("two_parts.sldasm").write_bytes(
+        generate(second_path=r"W:\authored\other_cube.sldprt"))

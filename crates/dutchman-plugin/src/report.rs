@@ -210,6 +210,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unresolved_native_appearance_is_a_visible_loss() {
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            "appearance",
+            "sldprt/appearance.native-scope-unresolved",
+            "Conflicting face appearances remain unresolved.",
+        );
+        report.push_coded(
+            Severity::Degraded,
+            "source",
+            "sldprt/source.dialect-unverified",
+            "Source dialect is unverified.",
+        );
+        let value: Value = serde_json::from_str(&encode(&report, "history off").unwrap()).unwrap();
+        assert_eq!(value["summary"], "Converted; 1 loss");
+        assert_eq!(value["items"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["items"][0]["title"],
+            "Appearances carried over with changes"
+        );
+        assert_eq!(
+            value["items"][0]["code"],
+            "sldprt/appearance.native-scope-unresolved"
+        );
+        assert_eq!(value["details"]["losses"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
     fn notes_stay_in_details_when_the_report_is_shortened() {
         let mut report = Report::default();
         for _ in 0..4096 {

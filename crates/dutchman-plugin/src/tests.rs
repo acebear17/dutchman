@@ -192,7 +192,7 @@ fn the_report_lists_only_what_the_design_lost() {
         assert_ne!(item["severity"], "info", "{item}");
         let title = item["title"].as_str().unwrap();
         assert!(!title.starts_with("Notes about"), "{title}");
-        assert!(!title.starts_with("Parts of the file"), "{title}");
+        assert!(!title.ends_with("kept as-is"), "{title}");
     }
     let summary = report["summary"].as_str().unwrap();
     // The cube has no feature history: that is not a loss.
@@ -268,13 +268,16 @@ fn messages_put_what_to_do_first_and_name_only_plugin_formats() {
         limit: crate::MAX_INPUT_BYTES,
     });
     assert!(
-        large.starts_with(
-            "Choose a file under 1 GiB, or convert this one with the dutchman command line"
-        ),
+        large
+            .starts_with("Save smaller parts in the source program and choose a file under 1 GiB."),
         "{large}"
     );
     assert!(large.ends_with("This file is 1.5 GiB."), "{large}");
-    assert!(crate::input_limit_message(crate::MAX_INPUT_BYTES).contains(dutchman_core::RELEASES));
+    assert!(large.contains("same per-file limit"), "{large}");
+    let aggregate = crate::aggregate_input_limit_message(crate::MAX_INPUT_BYTES);
+    assert!(aggregate.starts_with("Convert fewer parts at once, or use the dutchman command line"));
+    assert!(aggregate.contains("Each file must still fit"));
+    assert!(aggregate.contains(dutchman_core::RELEASES));
     // The reader's advice comes first in the plugin's words, then only the reader's cause.
     let truncated = convert(
         "cube.f3d",
