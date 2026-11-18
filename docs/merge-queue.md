@@ -10,10 +10,16 @@ squash-merges it only if the required checks pass.
 
 | Workflow | In the queue |
 |---|---|
-| `ci.yml` | The same jobs as a pull request, judged against the group's base commit. Never saves a cache. |
-| `placements.yml` | Runs only if the group touches the paths that start it on a pull request (a queue has no path filter, so a job decides). |
-| `docker.yml` | Runs only if the group touches `Dockerfile`, `.dockerignore` or the workflow. Never writes the layer cache. |
-| `release-build.yml` | The `plan` job compares the group's base commit with its head: the full release builds run only for a packaging change (`[profile.*]` tables in `Cargo.toml` included). The `release-build` label cannot be read in the queue. |
+| `ci.yml` | Full tests on Linux x86_64, ARM64, Windows and macOS, plus fmt, Clippy, MSRV, WebAssembly, Docker, release checks and SolidCraft round trips. No path skips and no cache writes. |
+| `placements.yml` | Called by `ci.yml`; builds once and checks all three assemblies, including Voron. |
+| `docker.yml` | No separate queue run; `ci.yml` owns the Docker check. Main, scheduled and manual runs stay available. |
+| `release-build.yml` | Called by `ci.yml`; `plan` enables all release targets and packaging for every group. No Rust caches. |
+
+PRs run only fast Linux checks, with focused docs tests for docs-only changes, plus release
+notes, changelog and version gates. `gh workflow run ci.yml --ref <branch>` runs the full
+queue matrix on a PR branch by hand. Packaging changes and the `release-build` label no longer
+start full builds on a PR. Candidate and stable tag pushes also run the full matrix; their
+release builds run directly in `release-build.yml` to preserve candidate artifact discovery.
 
 ## Ruleset
 
@@ -76,16 +82,18 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
 
 - Squash merges, groups of up to 5 built in parallel, merged when all are green (`ALLGREEN`),
   after waiting 5 minutes for more pull requests to join. A group whose checks do not report
-  within 120 minutes is removed.
+  within 180 minutes is removed.
 - Repository admins bypass the rule (role id 5), so an emergency fix can merge directly.
 - The one required check is `ci-result`, a job in `ci.yml` that always runs, needs every other
-  CI job, and fails only if one of them failed or was cancelled. Requiring the test jobs by
+  CI job, including the reusable placement and release builds in the queue. It checks explicit
+  expected results for the event and paths, rejecting failures, cancellations and unexpected
+  skips. Requiring the test jobs by
   name doesn't work: a docs-only change skips the test matrix, and a skipped matrix job reports
   once under its bare name (`test`), so `test (ubuntu-latest)` and the others never appear and
-  the pull request waits forever. Left out on purpose:
-  `placements`, `docker` and `release-build` (path filters mean they do not report on every pull
-  request, so requiring them would block it forever), `solidcraft-roundtrip` (informational),
-  and the CodeQL checks (they do not run in the queue).
+  the pull request waits forever. Heavy jobs are intentionally skipped on PRs and required in
+  the queue, including `solidcraft-roundtrip`. Main keeps its path filters and informational
+  round trips. On tags, release builds report independently from `ci-result`. CodeQL checks
+  do not run in the queue.
 - Windows and ARM tests are the slowest required checks (ARM took 34 minutes on one run).
 - GitHub's ARM runners are sometimes shut down mid-job (exit code 143, "The runner has received
   a shutdown signal"). The ARM tests run as their own job, `test (ubuntu-24.04-arm)`; when it

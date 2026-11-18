@@ -3,13 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
-  # The merge queue (docs/merge-queue.md) tests each group on a temporary branch: judged like a
-  # pull request, against the commit the group is based on.
+  # The merge queue tests the full matrix once for each group (docs/merge-queue.md).
   merge_group:
     types: [checks_requested]
   # Started by hand, and by the SolidCraft window workflow for the pull request it opens (pull
-  # requests opened with the default token do not start workflows). Judged like a pull request.
+  # requests opened with the default token do not start workflows). Runs the full matrix.
   workflow_dispatch:
 
 permissions:
@@ -30,13 +30,12 @@ env:
 # runs started by hand on main) save, so pull requests and merge queue groups never evict each other's or main's cache.
 
 jobs:
-  # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on;
-  # whether it is code at all (a docs-only change runs only the docs and release-notes jobs);
-  # or the Docker image, which the Docker job waits on (on pull requests, only the image's own
-  # inputs; on main, any crate).
+  # PRs and main keep their path filters. Queue groups, tags and manual runs always test all
+  # platforms, even for documentation changes, so ci-result can require the full matrix.
   changes:
     runs-on: ubuntu-latest
     outputs:
+      full: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
       rust: ${{ steps.diff.outputs.rust }}
       code: ${{ steps.diff.outputs.code }}
       docker: ${{ steps.diff.outputs.docker }}
@@ -48,8 +47,12 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            BASE=$(git merge-base origin/main HEAD)
+          if [ "${{ github.event_name }}" = merge_group ] || [ "${{ github.event_name }}" = workflow_dispatch ] \
+            || [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
@@ -71,8 +74,7 @@ jobs:
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
           fi
-          # The image is a full release build (40-80 minutes), so pull requests build it only when
-          # the image itself or the web server it serves changes; every push to main builds it.
+          # Keep main's existing image path filter; PRs never build the image.
           if [ "${{ github.event_name }}" = push ]; then
             image='^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'
           else
@@ -143,7 +145,7 @@ jobs:
   # dutchman-solidcraft turns on every input format plus FreeCAD, so the codecs are checked too.
   wasm:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -162,12 +164,12 @@ jobs:
     # Debug-profile build and tests on Linux x86_64 and ARM64 and Windows (macOS is test-macos
     # below). Inventor and SolidWorks users are mostly on Windows; macOS has a case-insensitive
     # filesystem. Both matter to finding an assembly's part files. The optimised release builds
-    # are not made here: release-build.yml makes them for release and packaging changes.
+    # are not made here: release-build.yml makes them in the queue, on tags and by hand.
     strategy:
       fail-fast: false
       matrix:
         # ARM64 is test-arm below, which gets a second try when its runner is shut down.
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
@@ -205,7 +207,7 @@ jobs:
   # runs them once more, and ci-result counts that second try in place of the first.
   test-arm:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     name: test (ubuntu-24.04-arm)
     runs-on: ubuntu-24.04-arm
     env:
@@ -232,7 +234,7 @@ jobs:
   # A second try of test-arm, only when its runner was shut down; a real failure is not retried.
   test-arm-again:
     needs: [changes, test-arm]
-    if: always() && needs.changes.outputs.code == 'true' && needs.test-arm.result == 'failure'
+    if: always() && github.event_name != 'pull_request' && needs.changes.outputs.code == 'true' && needs.test-arm.result == 'failure'
     name: test (ubuntu-24.04-arm, again)
     runs-on: ubuntu-24.04-arm
     permissions:
@@ -297,7 +299,7 @@ jobs:
   test-macos:
     name: test (macos-latest)
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.rust == 'true'
     runs-on: macos-latest
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -316,7 +318,7 @@ jobs:
   # and converts a fixture through its web server (docs/web.md).
   docker:
     needs: changes
-    if: needs.changes.outputs.docker == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -360,7 +362,7 @@ jobs:
 
   msrv:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -372,14 +374,14 @@ jobs:
       - run: cargo check --workspace --locked
 
   # Opens converted designs in the newest and oldest releases in the rolling 14-day
-  # window (NEWEST_SOLIDCRAFT and WINDOW_OLDEST). Informational:
-  # a SolidCraft change must not block Dutchman's own checks.
+  # window (NEWEST_SOLIDCRAFT and WINDOW_OLDEST), plus the fixed 0.18.2 opens-in floor.
+  # Informational on main; required for the queue, tags and manual full runs.
   solidcraft-roundtrip:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     strategy:
       fail-fast: false
       matrix:
@@ -444,27 +446,63 @@ jobs:
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
           cargo test --locked -p dutchman-solidcraft --test history --test assembly
 
-  # One result for branch rules to require: it always runs, and fails only when a job it needs
-  # failed or was cancelled. Jobs a change skips (a docs-only change skips the builds and tests)
-  # count as passed, so a required check never waits for a job that never starts.
+  # Reuse the existing jobs so ci-result waits for them, without a second merge_group run.
+  placements:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    uses: ./.github/workflows/placements.yml
+
+  release-build:
+    # Tag builds run directly in release-build.yml: release promotion finds those artifacts by
+    # workflow name. The queue and manual full CI runs include them as a required dependency.
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/release-build.yml
+
+  # The only required branch check. Accept skips only for the event and path filters above;
+  # an unexpectedly skipped dependency must never turn a partial run green.
   ci-result:
-    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip]
+    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip, placements, release-build]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check the results of every job
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           echo "$RESULTS" | python3 -c '
-          import json, sys
+          import json, os, sys
           needs = json.load(sys.stdin)
-          bad = {job: need["result"] for job, need in needs.items() if need["result"] in ("failure", "cancelled")}
-          # test-arm-again runs only when test-arm failed, and passes only after a runner
-          # shutdown and a passing second try: then the first try does not count.
-          if needs.get("test-arm-again", {}).get("result") == "success":
-              bad.pop("test-arm", None)
+          event = os.environ["EVENT"]
+          outputs = needs["changes"]["outputs"]
+          full = outputs.get("full") == "true"
+          code = outputs.get("code") == "true"
+          native = event != "pull_request" and code
+          required = {
+              "changes": True, "release-notes": True,
+              "fmt": code, "clippy": code, "test": code, "docs": not code,
+              "wasm": native, "msrv": native, "solidcraft-roundtrip": native,
+              "test-macos": event != "pull_request" and outputs.get("rust") == "true",
+              "docker": event != "pull_request" and outputs.get("docker") == "true",
+              "placements": full,
+              "release-build": event in ("merge_group", "workflow_dispatch"),
+          }
+          bad = {}
+          for job, run in required.items():
+              expected = "success" if run else "skipped"
+              if needs[job]["result"] != expected:
+                  bad[job] = needs[job]["result"] + " (expected " + expected + ")"
+          # A passing retry replaces only a failed first ARM attempt, never a cancellation.
+          arm = needs["test-arm"]["result"]
+          retry = needs["test-arm-again"]["result"]
+          if (native and (arm, retry) not in (("success", "skipped"), ("failure", "success"))) or (not native and (arm, retry) != ("skipped", "skipped")):
+              bad["test-arm"] = arm + "; retry: " + retry
+          if any(outputs.get(key) not in ("true", "false") for key in ("full", "code", "rust", "docker")):
+              bad["changes"] = "missing or unexpected filter outputs"
+          if event in ("merge_group", "workflow_dispatch") or os.environ["GITHUB_REF"].startswith("refs/tags/"):
+              if not full or not code or outputs.get("rust") != "true" or outputs.get("docker") != "true":
+                  bad["changes"] = "full matrix filters must all be true"
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
-          sys.exit(f"failed or cancelled: {bad}" if bad else 0)
+          sys.exit(f"unexpected job results: {bad}" if bad else 0)
           '
