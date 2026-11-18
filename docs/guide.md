@@ -368,6 +368,9 @@ This page used to hold everything. Each part now has its own page:
 
 ### List what a file holds: contents
 
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
 [List what a file holds: contents](command-line.md#list-what-a-file-holds-contents)
 
 Contents reports what maps for the newest SolidCraft release known to this build,

@@ -753,9 +753,9 @@ pub fn contents(
     let mut summary = Vec::new();
     let mut counts: BTreeMap<&str, usize> = VERDICTS.iter().map(|word| (*word, 0)).collect();
     for part in parts {
-        let listed_bodies = listing::bodies(part.model);
-        let listed_parameters = listing::parameters(part.model);
-        let suppressed = listing::suppressed(part.model);
+        let listed_bodies = listing::bodies(&part.model);
+        let listed_parameters = listing::parameters(&part.model);
+        let suppressed = listing::suppressed(&part.model);
         summary.push(json!({
             "name": part.part,
             "bodies": listed_bodies.len(),
@@ -1855,6 +1855,94 @@ mod tests {
 #[cfg(test)]
 mod compact_loss_tests {
     use super::*;
+
+    #[test]
+    fn contents_includes_root_and_intermediate_assembly_records_once() {
+        use dutchman_core::{Assembly, Format, Model};
+
+        fn assembly(parts: Vec<Model>) -> Assembly {
+            Assembly {
+                own_part: None,
+                parts,
+                definitions: Vec::new(),
+                identities: Vec::new(),
+                placements: Vec::new(),
+                joints: Vec::new(),
+                left_out: Vec::new(),
+                held: Vec::new(),
+                joint_notes: Vec::new(),
+                stored_placements: Vec::new(),
+            }
+        }
+        fn records(mut model: Model, keys: &[u32]) -> Model {
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["features"] =
+                json!(keys.iter().map(|key| json!({
+                "id": format!("synthetic:model:feature#{key}"), "ordinal": key,
+                "name": format!("Plane{key}"), "suppressed": false,
+                "definition": {"kind": "operation", "value": {
+                    "kind": "datum_principal_plane", "value": {"plane": "top"}}},
+                "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []
+            })).collect::<Vec<_>>());
+            wire["model"]["parameters"] = json!(keys
+                .iter()
+                .map(|key| json!({
+                    "id": format!("synthetic:model:parameter#{key}"), "ordinal": key,
+                    "name": format!("length{key}"), "expression": "7 mm",
+                    "dependencies": [], "properties": {}
+                }))
+                .collect::<Vec<_>>());
+            model.ir = serde_json::from_value(wire).unwrap();
+            model
+        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        let cube =
+            dutchman_core::read(Format::FusionArchive, &path, &mut Report::default()).unwrap();
+        let leaf = records(cube.clone(), &[1]);
+        let mut sub = records(cube.clone(), &[1, 2]);
+        sub.name = "Sub".into();
+        sub.assembly = Some(assembly(vec![leaf.clone()]));
+        let mut root = records(cube, &[1, 2, 3]);
+        root.name = "Root".into();
+        root.assembly = Some(assembly(vec![
+            sub,
+            Model {
+                source_file: Some("other.f3d".into()),
+                ..leaf
+            },
+        ]));
+        let writer = dutchman_solidcraft::SolidCraftWriter::new();
+        let parts = writer.verdicts(&root);
+        let report = contents(&path, &Report::default(), &parts, "0.43.0", Some((2, 2)));
+        assert_eq!(report["bodies"]["count"], 2);
+        assert_eq!(report["features"]["count"], 4);
+        assert_eq!(report["parameters"]["count"], 4);
+        for (name, path) in [
+            ("Plane2", "assembly: /Root/Sub[1]"),
+            ("Plane3", "assembly: /Root"),
+        ] {
+            let row = report["features"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["name"] == name)
+                .unwrap();
+            assert_eq!(row["part"], path);
+        }
+        for (name, path) in [
+            ("length2", "assembly: /Root/Sub[1]"),
+            ("length3", "assembly: /Root"),
+        ] {
+            let row = report["parameters"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["name"] == name)
+                .unwrap();
+            assert_eq!(row["part"], path);
+        }
+    }
 
     #[test]
     fn contents_lines_list_bodies_verdicts_and_parameters() {

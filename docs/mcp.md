@@ -331,6 +331,9 @@ known to this build, without looking for an installed CLI. Reading large assembl
 still take time. See
 [`dutchman.contents/1`](json.md#dutchmancontents1).
 
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
 carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required

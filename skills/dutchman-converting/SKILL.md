@@ -243,6 +243,9 @@ features would carry across, call `contents` with `input`. It writes nothing, ru
 SolidCraft, and returns `dutchman.contents/1`. Verdicts target the newest SolidCraft
 release known to the build, without looking for an installed CLI:
 
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
 - `bodies.items`: each body's `kind`, `name` and `hidden`.
 - `features.items`: the timeline in order, with `kind`, `name`, `suppressed`, and a `verdict`:
   `mapped`; `needs_solidcraft_check` (it maps, but converting keeps it only when SolidCraft

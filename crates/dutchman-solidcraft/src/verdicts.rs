@@ -2,7 +2,8 @@
 //! the history mapping alone, with every step that only SolidCraft can confirm named as such
 //! instead of being run.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report};
 use serde_json::Value;
@@ -50,8 +51,8 @@ pub struct PartVerdicts<'a> {
     /// The part's file inside an assembly, or its name when it comes from the assembly's own
     /// file; `None` for a single part.
     pub part: Option<String>,
-    /// The part's model, for listing its bodies and parameters.
-    pub model: &'a Model,
+    /// The part's model, or a container's own records after removing child slices.
+    pub model: Cow<'a, Model>,
     /// Its source features, in timeline order.
     pub features: Vec<FeatureVerdict>,
     /// Why none of its history maps, when none does and the features don't say.
@@ -73,7 +74,7 @@ impl SolidCraftWriter {
         let repeated = repeats::find(assembly);
         let mut parts = Vec::new();
         repeats::leaves(assembly, &repeated, &mut Vec::new(), &mut parts);
-        parts
+        let mut listed: Vec<_> = parts
             .into_iter()
             .map(|part| {
                 // A part read from the assembly's own file (a FreeCAD or multi-component
@@ -84,7 +85,69 @@ impl SolidCraftWriter {
                 };
                 self.part_verdicts(part, part, Some(label))
             })
-            .collect()
+            .collect();
+        self.container_verdicts(
+            model,
+            &format!("/{}", model.name),
+            &repeated,
+            &mut Vec::new(),
+            &mut listed,
+        );
+        listed
+    }
+
+    // Containers retain the complete source CADIR, including records copied into component
+    // slices. Only list records not already held below this container in the same file.
+    fn container_verdicts<'a>(
+        &self,
+        model: &'a Model,
+        path: &str,
+        repeated: &BTreeMap<repeats::PartPath, repeats::PartPath>,
+        indices: &mut repeats::PartPath,
+        listed: &mut Vec<PartVerdicts<'a>>,
+    ) {
+        let Some(assembly) = &model.assembly else {
+            return;
+        };
+        for (index, part) in assembly.parts.iter().enumerate() {
+            indices.push(index);
+            if !repeated.contains_key(indices) {
+                self.container_verdicts(
+                    part,
+                    &format!("{path}/{}[{}]", part.name, index + 1),
+                    repeated,
+                    indices,
+                    listed,
+                );
+            }
+            indices.pop();
+        }
+        let mut features = BTreeSet::new();
+        let mut parameters = BTreeSet::new();
+        descendant_records(model, model, &mut features, &mut parameters);
+        let mut ir = model.ir.clone();
+        ir.model
+            .features
+            .retain(|row| !features.contains(row.id.as_str()));
+        ir.model
+            .parameters
+            .retain(|row| !parameters.contains(row.id.as_str()));
+        if ir.model.features.is_empty() && ir.model.parameters.is_empty() {
+            return;
+        }
+        let mut own = Model {
+            ir,
+            fidelity: None,
+            name: model.name.clone(),
+            source_file: model.source_file.clone(),
+            assembly: None,
+            source_step: None,
+        };
+        let mut verdicts = self.part_verdicts(&own, model, Some(format!("assembly: {path}")));
+        // Map against the source geometry, but do not inventory aggregate bodies again.
+        own.ir.geometry.bodies.clear();
+        verdicts.model = Cow::Owned(own);
+        listed.push(verdicts);
     }
 
     fn part_verdicts<'a>(
@@ -154,9 +217,26 @@ impl SolidCraftWriter {
             .collect();
         PartVerdicts {
             part,
-            model: shown,
+            model: Cow::Borrowed(shown),
             history: mapping.result.err(),
             features,
+        }
+    }
+}
+
+fn descendant_records<'a>(
+    root: &Model,
+    model: &'a Model,
+    features: &mut BTreeSet<&'a str>,
+    parameters: &mut BTreeSet<&'a str>,
+) {
+    if let Some(assembly) = &model.assembly {
+        for part in &assembly.parts {
+            if part.source_file == root.source_file {
+                features.extend(part.ir.model.features.iter().map(|row| row.id.as_str()));
+                parameters.extend(part.ir.model.parameters.iter().map(|row| row.id.as_str()));
+            }
+            descendant_records(root, part, features, parameters);
         }
     }
 }
