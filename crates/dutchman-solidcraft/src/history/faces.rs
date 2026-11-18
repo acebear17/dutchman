@@ -13,22 +13,12 @@ use serde_json::{json, Value};
 use super::sketch::{dot, v3, V3};
 use super::Context;
 
-/// A single planar face parallel to the sketch, as a SolidCraft pick: a resolved face on an
-/// earlier named body, or a face of `feature`'s own input topology rebuilt from its boundary.
-/// Native and generated selections need their own topology resolver.
+/// A single planar face, as a SolidCraft pick: a resolved face on an earlier named body, or a
+/// face of `feature`'s own input topology rebuilt from its boundary. Native and generated
+/// selections need their own topology resolver. A face at a slant to the sketch is accepted
+/// when `slanted` (SolidCraft 0.44 extrudes from and to one); the returned flag says whether
+/// the picked face is slanted. A face along the travel is always refused.
 pub(super) fn pick(
-    ctx: &Context,
-    feature: &Value,
-    selection: Option<&Value>,
-    normal: V3,
-) -> Result<V3, String> {
-    pick_flat(ctx, feature, selection, normal, false).map(|(point, _)| point)
-}
-
-/// [`pick`], also accepting a flat face at a slant to the sketch when `slanted` (SolidCraft
-/// 0.44 extrudes from and to one); the flag says whether the picked face is slanted. A face
-/// perpendicular to the sketch is never reached by the sweep and is refused.
-pub(super) fn pick_flat(
     ctx: &Context,
     feature: &Value,
     selection: Option<&Value>,

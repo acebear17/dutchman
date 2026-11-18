@@ -136,7 +136,7 @@ pub(crate) fn map(
         let start = definition.get("start").ok_or("its start is malformed")?;
         let slanted = crate::VersionGate::SlantedFaceExtent.supported(ctx.target_version);
         let (point, tilted) =
-            super::faces::pick_flat(ctx, feature, start.get("face"), sketch.normal, slanted)?;
+            super::faces::pick(ctx, feature, start.get("face"), sketch.normal, slanted)?;
         // A slanted start has no single height: no flat-cap proof applies to its far end.
         slanted_start = tilted;
         start_height = point
@@ -389,7 +389,7 @@ fn side(
             .ok_or_else(|| "its blind length is malformed".to_owned()),
         Some("through_all") => Ok(Side::ThroughAll),
         Some("to_face") => Ok(Side::ToObject(
-            super::faces::pick_flat(
+            super::faces::pick(
                 ctx,
                 feature,
                 termination.get("face"),
