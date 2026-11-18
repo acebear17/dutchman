@@ -3593,6 +3593,8 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
 #[cfg(feature = "test-support")]
 #[test]
 fn a_running_card_shows_the_feature_and_the_measured_note() {
+    use egui_kittest::kittest::NodeT as _;
+
     for (theme, label) in [
         (ThemePreference::Light, "Day"),
         (ThemePreference::Dark, "Night"),
@@ -3641,6 +3643,32 @@ fn a_running_card_shows_the_feature_and_the_measured_note() {
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0))
                     .contains_rect(feature)
             );
+            // The design is already read (1/1), but feature mapping is only 29/37.
+            let progress = harness.get_by_role(egui::accesskit::Role::ProgressIndicator);
+            assert_eq!(progress.accesskit_node().numeric_value(), Some(78.0));
+            let track = progress.rect();
+            assert!(track.top() >= feature.bottom());
+            assert!((track.left() - feature.left()).abs() < 1.0);
+            // The results card has 436 points of inner width at this window size.
+            assert!((track.width() - 436.0).abs() < 2.0, "{track:?}");
+            let palette = if label == "Day" {
+                dutchman_gui::theme::DAY
+            } else {
+                dutchman_gui::theme::NIGHT
+            };
+            assert!(harness.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect)
+                    if rect.rect == track && rect.fill == palette.surface_2)
+            }));
+            assert!(harness.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect)
+                    if rect.rect.min == track.min
+                        && (rect.rect.width() / track.width() - 29.0 / 37.0).abs() < 0.001
+                        && rect.fill == palette.spectre)
+            }));
+            assert!(harness
+                .query_by_label("Fusion .f3d: reads geometry")
+                .is_none());
             let note = dutchman_core::progress_words::measured();
             assert_eq!(harness.query_by_label(note).is_some(), measured);
             if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {

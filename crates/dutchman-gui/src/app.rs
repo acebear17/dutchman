@@ -2451,13 +2451,26 @@ fn row_ui(
             if let Some(note) = event.measured_note() {
                 ui.label(RichText::new(note).small().color(p.tide));
             }
-            if let Some(total) = event.designs_total.filter(|total| *total > 0) {
-                ui.add(
-                    egui::ProgressBar::new(
-                        (event.designs_read as f32 / total as f32).clamp(0.0, 1.0),
-                    )
-                    .desired_width(200.0),
-                );
+            let progress = event
+                .running
+                .as_ref()
+                .and_then(|step| step.feature.as_ref())
+                .filter(|feature| feature.total > 0)
+                .map(|feature| (feature.index, feature.total))
+                .or_else(|| {
+                    event
+                        .designs_total
+                        .filter(|total| *total > 0)
+                        .map(|total| (event.designs_read, total))
+                });
+            if let Some((current, total)) = progress {
+                ui.scope(|ui| {
+                    ui.visuals_mut().extreme_bg_color = p.surface_2;
+                    ui.add(
+                        egui::ProgressBar::new((current as f32 / total as f32).clamp(0.0, 1.0))
+                            .desired_width(ui.available_width()),
+                    );
+                });
             } else {
                 ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
             }
@@ -2465,8 +2478,10 @@ fn row_ui(
             ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
         }
     }
-    if let Some(status) = &view.capability {
-        ui.label(status);
+    if row.status != Status::Converting {
+        if let Some(status) = &view.capability {
+            ui.label(status);
+        }
     }
     if let Some(text) = &view.missing_summary {
         missing_ui(ui, p, text);
