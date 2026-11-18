@@ -344,13 +344,17 @@ as mapped with its plate) when the plate is one rectangle that spans the whole p
 stands square to the sheet at 90 degrees, is flush with the edge's end face, has the sheet's
 thickness and starts where the bend ends or, as Inventor stores a flange measured from where
 the outer faces meet, at the sheet's outer face; the flange height is the plate's far end measured
-from the sheet's outer face. Any other plate, or a bend without its plate, keeps the geometry
+from the sheet's outer face. The unchanged base can be a single simple polygon, including an
+L-shaped or notched sheet: attachment uses the actual profile edge, including a concave edge,
+rather than the edge of a bounding rectangle. Curved, open, crossing, disconnected, or
+collinear base edges and base profiles with holes or partial regions are not supported yet
+by this attachment proof. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
-relieve) needs no SolidCraft feature and is counted as not needed. CADIR has no
-contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
-settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
+relieve) needs no SolidCraft feature and is counted as not needed. Contour flanges and
+unfold/refold operations are not mapped yet. Sheet rules keep SolidCraft's defaults for
+K-factor and relief settings. The report names the
 first feature that stops the history; the original geometry is still converted.
 
 ## Partial history
