@@ -22,6 +22,19 @@ pub(super) fn pick(
     selection: Option<&Value>,
     normal: V3,
 ) -> Result<V3, String> {
+    pick_flat(ctx, feature, selection, normal, false).map(|(point, _)| point)
+}
+
+/// [`pick`], also accepting a flat face at a slant to the sketch when `slanted` (SolidCraft
+/// 0.44 extrudes from and to one); the flag says whether the picked face is slanted. A face
+/// perpendicular to the sketch is never reached by the sweep and is refused.
+pub(super) fn pick_flat(
+    ctx: &Context,
+    feature: &Value,
+    selection: Option<&Value>,
+    normal: V3,
+    slanted: bool,
+) -> Result<(V3, bool), String> {
     let selection = selection.ok_or("its face selection is missing")?;
     if selection.get("kind").and_then(Value::as_str) == Some("historical") {
         let (point, face_normal) = super::face_profile::planar_face(
@@ -29,12 +42,8 @@ pub(super) fn pick(
             selection.get("value").unwrap_or(&Value::Null),
             ctx,
         )?;
-        if dot(face_normal, normal).abs() < 1.0 - 1e-9 {
-            return Err(
-                "an extrude face not parallel to its sketch is not supported yet".to_owned(),
-            );
-        }
-        return Ok(point);
+        let tilted = flat_face(face_normal, normal, slanted)?;
+        return Ok((point, tilted));
     }
     let ids = match selection.get("kind").and_then(Value::as_str) {
         Some("faces") => selection.get("value"),
@@ -63,10 +72,10 @@ pub(super) fn pick(
         .pointer("/geometry/value/kind")
         .and_then(Value::as_str)
         != Some("plane")
-        || dot(face_normal, normal).abs() < 1.0 - 1e-9
     {
         return Err("an extrude face not parallel to its sketch is not supported yet".to_owned());
     }
+    let tilted = flat_face(face_normal, normal, slanted)?;
     let earlier = ctx.named_bodies.iter().any(|(body, _)| {
         ctx.row("bodies", body).is_some_and(|body| {
             faces(ctx, body)
@@ -114,7 +123,31 @@ pub(super) fn pick(
             return Err("a terminating face with curved edges is not supported yet".to_owned());
         }
     }
-    point_on(ctx, face).ok_or_else(|| "its face has no resolved planar interior point".to_owned())
+    point_on(ctx, face)
+        .map(|point| (point, tilted))
+        .ok_or_else(|| "its face has no resolved planar interior point".to_owned())
+}
+
+/// Whether a flat face is at a slant to the sketch, refusing what the target cannot reach.
+fn flat_face(face_normal: V3, normal: V3, slanted: bool) -> Result<bool, String> {
+    let along = dot(face_normal, normal).abs();
+    if along >= 1.0 - 1e-9 {
+        return Ok(false);
+    }
+    if !slanted {
+        return Err(
+            "an extrude face not parallel to its sketch needs SolidCraft 0.44 or newer as the target"
+                .to_owned(),
+        );
+    }
+    // A face nearly along the travel is never crossed by the sweep at one place.
+    if along < 1e-6 {
+        return Err(
+            "an extrude face not parallel to its sketch runs along the travel; it is not supported yet"
+                .to_owned(),
+        );
+    }
+    Ok(true)
 }
 
 /// Body and face bindings override inline colours. Uniform, fully painted bodies need only
@@ -848,6 +881,24 @@ mod tests {
         let half = 5.0 * std::f64::consts::FRAC_1_SQRT_2;
         assert!((p[0] - half).abs() < 1e-9 && (p[1] - half).abs() < 1e-9);
         assert!((p[2] - 5.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod flat_face_tests {
+    use super::flat_face;
+
+    #[test]
+    fn slanted_faces_need_the_gate_and_faces_along_the_travel_are_refused() {
+        let up = [0.0, 0.0, 1.0];
+        let slant = [0.0, 0.6, 0.8];
+        assert_eq!(flat_face(up, up, false), Ok(false));
+        assert_eq!(flat_face([0.0, 0.0, -1.0], up, false), Ok(false));
+        assert!(flat_face(slant, up, false).is_err_and(|why| why.contains("SolidCraft 0.44")));
+        assert_eq!(flat_face(slant, up, true), Ok(true));
+        assert!(
+            flat_face([1.0, 0.0, 0.0], up, true).is_err_and(|why| why.contains("along the travel"))
+        );
     }
 }
 

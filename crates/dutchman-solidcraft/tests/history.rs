@@ -8646,6 +8646,32 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
 }
 
 #[test]
+fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
+    // The front face is perpendicular to the sketch: older targets name the release that
+    // reaches slanted faces, and 0.44 still refuses a face the sweep runs along.
+    for (target, reason) in [
+        (None, "needs SolidCraft 0.44 or newer"),
+        (Some("0.44.0"), "runs along the travel"),
+    ] {
+        let mut model = face_ended_extrude(false, 0.0, false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]
+            ["termination"]["face"] =
+            json!({"kind": "faces", "value": ["synthetic:cube:face#front"]});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(target.map(|t| t.parse().unwrap()));
+        let (_, report) = convert(&model, &writer);
+        assert!(
+            history_line(&report).contains(reason),
+            "{target:?}: {}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
 fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
     let mut model = face_ended_extrude(false, 0.0, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();

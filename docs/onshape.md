@@ -36,7 +36,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points; the writer retains its own knot and degree limits. |
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
-| Solid extrude | Blind, through all, up to a parallel planar face, up to next; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane (Onshape's depth is the total). Up to next becomes an end at the one input face it reaches, see below. Symmetric with another bound, multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
+| Solid extrude | Blind, through all, up to a planar face (at a slant to the sketch from SolidCraft 0.44), up to next; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane (Onshape's depth is the total). Up to next becomes an end at the one input face it reaches, see below. Symmetric with another bound, multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
 | Fillet | Circular, constant radius, explicit input edges and resolvable tangent chains | Variable, partial, conic, curvature and overflow forms are not supported yet. Tangent propagation needs complete shared vertex IDs and endpoint tangents. The writer must prove every edge on replay. |
 | Chamfer | Equal offsets, explicit input edges | Unequal and angle forms are not supported yet. Tangent propagation has the same completeness requirement as fillets. Replay proof still applies. |
@@ -69,11 +69,12 @@ convention was measured.
 SolidCraft has no up-to-next end, so the reader finds the face Onshape's bound
 reaches in bodydetails at the feature's rollback index. Rays from points along
 every profile curve run along the extrude direction; each must meet the same
-planar input face first, that face must be parallel to the sketch, and no other
-input face may lie inside the box the profile sweeps before it. A cut must leave
-material at that face and an added or new extrude must meet material there. The
-extrude then ends at that face, like up to face. Any other case, including a
-spline profile or a slanted next face, is a named loss.
+planar input face first, and no other input face may lie inside the box the
+profile sweeps before it. A cut must leave material at that face and an added or
+new extrude must meet material there. The extrude then ends at that face, like up
+to face. A face at a slant to the sketch, for up to next or up to face, needs
+SolidCraft 0.44 or newer as the target; older targets get a named loss. Any other
+case, including a spline profile, is a named loss.
 
 A compressed sketch-region query carries topology disambiguation naming its source
 sketch curves through `derivedFrom`, `sketchEntityId`, and the sketch's `wireOp` and

@@ -515,9 +515,10 @@ impl State {
         Ok(())
     }
 
-    /// The input face an up-to-next extrude ends on: the one planar face, parallel
-    /// to the sketch, that every profile ray meets first, with nothing else of
-    /// any input body in the swept box before it. A cut must leave material
+    /// The input face an up-to-next extrude ends on: the one planar face that every
+    /// profile ray meets first, with nothing else of any input body in the swept box
+    /// before it. Whether a face at a slant to the sketch can be written is the
+    /// writer's call, by target release. A cut must leave material
     /// there; an added extrude must meet material. Anything else is refused.
     pub fn next_face(&self, samples: &[[f64; 3]], travel: [f64; 3], cut: bool) -> Mapping<Value> {
         const ON: f64 = 1e-4;
@@ -601,11 +602,6 @@ impl State {
                 .ok_or("plane normal is missing")?,
             1.0,
         )?)?;
-        if dot(normal, travel).abs() < 1.0 - 1e-9 {
-            return Err(
-                "an up-to-next end on a face slanted to the sketch is not supported yet".into(),
-            );
-        }
         let outward = match face.get("orientation").and_then(Value::as_bool) {
             Some(true) => dot(normal, travel),
             Some(false) => -dot(normal, travel),

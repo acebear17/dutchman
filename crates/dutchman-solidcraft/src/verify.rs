@@ -414,6 +414,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Extrude From and To Object on a flat face at a slant to the sketch.
+    SlantedFaceExtent,
 }
 
 impl VersionGate {
@@ -422,6 +424,7 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
         }
     }
 
@@ -438,6 +441,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SketchProfileCoil,
         VersionGate::MirrorChain,
         VersionGate::ConePrimitive,
+        VersionGate::SlantedFaceExtent,
     ]
     .into_iter()
     .any(|gate| {
@@ -488,6 +492,9 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// First release extruding from and to a flat face at a slant to the sketch.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
