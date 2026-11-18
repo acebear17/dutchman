@@ -1,11 +1,9 @@
 name: Placements
 
 # Converts three public assemblies and checks where every part lands against the goldens in
-# corpus/placements/, so a change that scatters parts cannot merge. Pull requests run it only
-# when Rust code, the lockfile or a golden changes; a branch push runs it through its pull
-# request. The Voron assembly needs about 15 GB, so it runs only when the lockfile or
-# dutchman-core changes, or when started by hand. A push to main that touches the same paths
-# only builds, to save the release-build cache that pull requests restore (they never save it).
+# corpus/placements/, so a change that scatters parts cannot merge. All three assemblies run
+# in every merge group, tag and full manual CI run (called by ci.yml). A path-filtered push to
+# main only builds to save the cache. This workflow can also be dispatched on its own.
 
 on:
   push:
@@ -17,25 +15,14 @@ on:
       - "corpus/placements/**"
       - "scripts/placements.py"
       - ".github/workflows/placements.yml"
-  pull_request:
-    paths:
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "corpus/placements/**"
-      - "scripts/placements.py"
-      - ".github/workflows/placements.yml"
-  # A merge queue group has no path filter: the changes job below skips the build and the
-  # checks unless this group touches the same paths, judged against the group's base commit.
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: placements-${{ github.ref }}
   # Every push to main finishes, so it saves its cache.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -53,31 +40,9 @@ jobs:
         with:
           fetch-depth: 0
       - id: diff
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
           echo "run=true" >> "$GITHUB_OUTPUT"
-          # A merge queue group runs the checks only for the paths that start them on a pull
-          # request (the workflow's path filter does not apply to the queue).
-          if [ "$EVENT" = merge_group ] && git cat-file -e "$BASE^{commit}" 2>/dev/null \
-            && ! git diff --name-only "$BASE" HEAD \
-            | grep -qE '^(crates/|Cargo\.(toml|lock)$|corpus/placements/|scripts/placements\.py$|\.github/workflows/placements\.yml$)'; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "voron=false" >> "$GITHUB_OUTPUT"
-            echo "No placement-relevant change in this merge group: skipped."
-            exit 0
-          fi
-          # The large assembly: by hand always; on a pull request or merge group when the
-          # lockfile, the converter's core or its golden changed.
-          if { [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; } || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            echo "voron=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$BASE" HEAD \
-            | grep -qE '^(Cargo\.lock$|crates/dutchman-core/|corpus/placements/voron\.json$|scripts/placements\.py$|\.github/workflows/placements\.yml$)'; then
-            echo "voron=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "voron=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "voron=true" >> "$GITHUB_OUTPUT"
 
   build:
     needs: changes
@@ -91,7 +56,7 @@ jobs:
         with:
           shared-key: placements-release
           cache-on-failure: true
-          # Only main writes the shared cache; pull requests and merge queue groups restore it.
+          # Only main writes the shared cache; full CI runs restore it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build Dutchman
         run: >
@@ -99,7 +64,7 @@ jobs:
           --config profile.release.lto=false --config profile.release.codegen-units=16
       - run: target/release/dutchman --version
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
         with:
           name: dutchman-bin
           path: target/release/dutchman
@@ -109,7 +74,7 @@ jobs:
   placements:
     name: placements (${{ matrix.name }})
     needs: build
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -161,7 +126,7 @@ jobs:
   placements-voron:
     name: placements (voron)
     needs: [changes, build]
-    if: github.event_name != 'push' && needs.changes.outputs.voron == 'true'
+    if: (github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')) && needs.changes.outputs.voron == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
