@@ -11,6 +11,11 @@ on:
   # Started by hand, and by the SolidCraft window workflow for the pull request it opens (pull
   # requests opened with the default token do not start workflows). Runs the full matrix.
   workflow_dispatch:
+    inputs:
+      release-builds:
+        description: Also build all release archives and installers
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -453,9 +458,9 @@ jobs:
     uses: ./.github/workflows/placements.yml
 
   release-build:
-    # Tag builds run directly in release-build.yml: release promotion finds those artifacts by
-    # workflow name. The queue and manual full CI runs include them as a required dependency.
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    # Tags build directly in release-build.yml; main has the nightly builds. Queue groups
+    # check every platform above, without building release archives and installers again.
+    if: github.event_name == 'workflow_dispatch' && inputs.release-builds
     uses: ./.github/workflows/release-build.yml
 
   # The only required branch check. Accept skips only for the event and path filters above;
@@ -469,6 +474,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
+          RELEASE_BUILDS: ${{ inputs.release-builds }}
         run: |
           echo "$RESULTS" | python3 -c '
           import json, os, sys
@@ -485,7 +491,7 @@ jobs:
               "test-macos": event != "pull_request" and outputs.get("rust") == "true",
               "docker": event != "pull_request" and outputs.get("docker") == "true",
               "placements": full,
-              "release-build": event in ("merge_group", "workflow_dispatch"),
+              "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",
           }
           bad = {}
           for job, run in required.items():
@@ -495,9 +501,6 @@ jobs:
                   if job == "test-macos":
                       print("macOS (non-blocking in the merge queue): " + result)
                       continue
-                  if job == "release-build":
-                      result = needs[job].get("outputs", {}).get("required", "")
-                      print("release-build non-macOS: " + result)
               if result != expected:
                   bad[job] = result + " (expected " + expected + ")"
           # A passing retry replaces only a failed first ARM attempt, never a cancellation.

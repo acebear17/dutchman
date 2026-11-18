@@ -56,11 +56,11 @@ cargo test --workspace --locked
 Pull requests run the fast checks: path filtering, formatting, Linux Clippy and x86_64 tests
 (or the focused docs tests for a docs-only change), release notes, changelog and version gates.
 The merge queue runs the full matrix once per group of up to five entries: Windows, macOS,
-ARM64, Rust 1.88, WebAssembly, Docker, SolidCraft round trips (including 0.18.2), all placements
-and full release builds. The required `ci-result` checks the fast jobs on a PR and the full
+ARM64, Rust 1.88, WebAssembly, Docker, SolidCraft round trips (including 0.18.2), all placements. Full release archives and installers build on tags, in the
+main nightly, and by explicit dispatch. The required `ci-result` checks the fast jobs on a PR and the full
 set in the queue; an unexpected skip fails it. Candidate and stable tags also run the full
 matrix. To run everything on a PR branch before queueing, use
-`gh workflow run ci.yml --ref <branch>` (Actions → CI → Run workflow also works).
+`gh workflow run ci.yml --ref <branch>` (add `-F release-builds=true` to check packaging) (Actions → CI → Run workflow also works).
 Packaging paths and the former `release-build` label no longer start full builds on PRs.
 Main and scheduled checks keep their existing behavior; SolidCraft round trips remain
 informational on main. To run a round trip locally, put a SolidCraft release's `solidcraft-cli`

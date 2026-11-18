@@ -19,9 +19,9 @@ name: Release builds
 # (archive, MSI, checksums) and dutchman-<version>-macos (universal archive, disk image,
 # per-chip archives), for 30 days.
 #
-# The `plan` job enables the full builds for queue groups (called by ci.yml), candidate and
+# The `plan` job enables the full builds for explicit CI dispatches, candidate and
 # stable tags, and manual runs. PRs run only ci.yml fast checks; dispatch ci.yml on a PR branch
-# to exercise the full queue matrix. These release builds restore and save no Rust cache.
+# to exercise the full queue matrix; add release-builds=true for packaging. These release builds restore and save no Rust cache.
 # A newer candidate tag cancels the candidate build in progress.
 
 on:
@@ -75,7 +75,7 @@ jobs:
           echo "result=$RESULT" >> "$GITHUB_OUTPUT"
           test "$RESULT" = success
 
-  # No packaging-path gate: every merge group builds all release targets.
+  # Release tags and explicit dispatches build all requested targets.
   plan:
     runs-on: ubuntu-latest
     outputs:

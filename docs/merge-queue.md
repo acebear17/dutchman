@@ -13,20 +13,19 @@ squash-merges it only if the required checks pass.
 | `ci.yml` | Full tests on Linux x86_64, ARM64, Windows and macOS, plus fmt, Clippy, MSRV, WebAssembly, Docker, release checks and SolidCraft round trips. No path skips and no cache writes. |
 | `placements.yml` | Called by `ci.yml`; builds once and checks all three assemblies, including Voron. |
 | `docker.yml` | No separate queue run; `ci.yml` owns the Docker check. Main, scheduled and manual runs stay available. |
-| `release-build.yml` | Called by `ci.yml`; `plan` enables all release targets and packaging for every group. No Rust caches. |
+| `release-build.yml` | Tags and explicit dispatches only; the queue already checks compilation and tests on every platform. Main has nightly builds. |
 
 PRs run only fast Linux checks, with focused docs tests for docs-only changes, plus release
 notes, changelog and version gates. `gh workflow run ci.yml --ref <branch>` runs the full
-queue matrix on a PR branch by hand. Packaging changes and the `release-build` label no longer
+queue matrix on a PR branch by hand. Add `-F release-builds=true` for full release packaging. Packaging changes and the `release-build` label no longer
 start full builds on a PR. Candidate and stable tag pushes also run the full matrix; their
 release builds run directly in `release-build.yml` to preserve candidate artifact discovery.
 
 ## macOS in the merge queue
 
-macOS tests, release builds and packaging still run in the merge queue, but are non-blocking
-there. Hosted macOS runners are scarce: missing runners caused jobs to be cancelled. For
-merge groups, `ci-result` prints the macOS test result and requires the non-macOS release
-build/check output to be `success`, regardless of the overall release-build result. Every
+macOS tests still run in code merge groups, but are non-blocking there.
+Release builds and packaging run on tags, nightly and explicit dispatches. Hosted macOS runners are scarce: missing runners caused jobs to be cancelled. For
+merge groups, `ci-result` prints the macOS test result. Every
 non-macOS failure, cancellation or unexpected skip still blocks the queue.
 macOS stays required on main pushes, tags and manual runs, so a macOS break shows within
 hours and blocks a release.
@@ -95,7 +94,7 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
   within 180 minutes is removed.
 - Repository admins bypass the rule (role id 5), so an emergency fix can merge directly.
 - The one required check is `ci-result`, a job in `ci.yml` that always runs, needs every other
-  CI job, including the reusable placement and release builds in the queue. It checks explicit
+  CI job, including the reusable placement checks in the queue and release builds when explicitly requested. It checks explicit
   expected results for the event and paths, rejecting failures, cancellations and unexpected
   skips, except for macOS in the merge queue as described above. Requiring the test jobs by
   name doesn't work: a docs-only change skips the test matrix, and a skipped matrix job reports
