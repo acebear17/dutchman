@@ -754,7 +754,9 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
 form without private names or paths. The desktop offers these actions in its always-open
 **Is there a problem? Is something missing?** panel. The **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps and also appear under **More**. Failure narrowing is for failed files.
+pills sit below the three steps and also appear under **More**. Between the steps and pills,
+a muted line says: "Only the Dutchman team sees it. It's never published or used in public tests,
+and we delete it on request." Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call

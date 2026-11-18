@@ -909,3 +909,6 @@ losses for meshes it could not decode.
 
 The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
 and **GitHub issue** (a public issue under the user’s GitHub name).
+
+A muted line between the desktop report steps and these pills reassures users: "Only the
+Dutchman team sees it. It's never published or used in public tests, and we delete it on request."

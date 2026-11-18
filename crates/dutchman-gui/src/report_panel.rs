@@ -21,6 +21,8 @@ pub const STEP_TEXT: &str =
      every part.";
 /// The DM card's hint when no finished file is chosen.
 pub const DM_GENERAL: &str = "Paste the message and say what's wrong.";
+/// The privacy reassurance between the step cards and the backup buttons.
+pub const PRIVACY: &str = "Only the Dutchman team sees it. It's never published or used in public tests, and we delete it on request.";
 /// Shown on the Discord card once its invite has opened.
 pub const JOIN_DONE: &str = "The invite opened in your browser. Then go to step 2.";
 /// Shown on the DM card once its message is copied, for a file dragged into the DM.

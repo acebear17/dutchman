@@ -550,8 +550,10 @@ in view. Click its folder path or **Change…** to reopen all output settings. *
 removes the designs and results and restores the expanded settings.
 
 Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps in **Is there a problem? Is something missing?**,
-and also appear under **More**. **Anonymous report** opens a review for the chosen file
+pills sit below the three steps in **Is there a problem? Is something missing?**,
+and also appear under **More**. A muted privacy line between the steps and pills says:
+"Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
+on request." **Anonymous report** opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never

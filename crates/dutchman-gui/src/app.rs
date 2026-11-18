@@ -2583,6 +2583,7 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
+            ui.label(RichText::new(report_panel::PRIVACY).small().color(p.tide));
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(
