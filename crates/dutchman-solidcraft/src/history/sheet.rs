@@ -278,10 +278,7 @@ fn base_edges(ctx: &Context, preceding: &[Value], attached: bool) -> Result<Base
         ]
     };
     let perimeter = ring.len();
-    let area: f64 = ring
-        .iter()
-        .map(|([ax, ay], [bx, by])| ax * by - ay * bx)
-        .sum();
+    let area = super::crossing::signed_area(ring.iter().copied());
     let mut outward = Vec::new();
     for (a, b) in &ring {
         let direction = difference(sketch.world(*b), sketch.world(*a));

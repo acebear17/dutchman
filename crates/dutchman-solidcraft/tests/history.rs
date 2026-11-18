@@ -8086,6 +8086,70 @@ const L_BASE: [[f64; 2]; 6] = [
 ];
 
 #[test]
+fn translated_attached_plates_keep_rectangular_and_concave_base_edges() {
+    for (points, edge) in [
+        (vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], 0),
+        (
+            L_BASE.iter().map(|[x, y]| [x / 80.0, y / 80.0]).collect(),
+            3,
+        ),
+    ] {
+        for reverse in [false, true] {
+            let mut points = points.clone();
+            let edge = if reverse {
+                points.reverse();
+                (points.len() * 2 - edge - 2) % points.len()
+            } else {
+                edge
+            };
+            for offset in [0.0, 100_000_000.0, 100_000_001.0] {
+                let translated: Vec<_> = points
+                    .iter()
+                    .map(|[x, y]| [x + offset, y + offset])
+                    .collect();
+                for top in [false, true] {
+                    let mut model = polygon_attached_plate(&translated, edge, top);
+                    if points.len() > 4 {
+                        // Inset the plate at the concave edge: the flush-face proof must
+                        // use the outward winding sign, not just admit a nonzero area.
+                        let mut wire = serde_json::to_value(&model.ir).unwrap();
+                        wire["model"]["sketches"][1]["placement"]["frame"]["origin"]["x"] =
+                            json!(translated[edge][0] - 1.0);
+                        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                    }
+                    let (document, report) = convert(
+                        &model,
+                        &SolidCraftWriter::new().verification(Verification::Off),
+                    );
+                    assert!(
+                        history_line(&report).starts_with("4 of 4 features rebuilt"),
+                        "reverse={reverse}, offset={offset}, top={top}: {}",
+                        history_line(&report)
+                    );
+                    let flange = document["features"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|f| f["type"] == "sheet_flange")
+                        .unwrap();
+                    let (a, b) = (translated[edge], translated[(edge + 1) % translated.len()]);
+                    assert_eq!(
+                        flange["edges"],
+                        json!([[
+                            (a[0] + b[0]) / 2.0,
+                            (a[1] + b[1]) / 2.0,
+                            if top { 1.0 } else { 0.0 },
+                        ]])
+                    );
+                    assert_eq!(flange["height"], "20 mm");
+                    assert_eq!(flange["position"], "inside");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn attached_plates_use_the_actual_concave_base_edge_on_either_face_and_winding() {
     for reverse in [false, true] {
         let mut points = L_BASE.to_vec();
