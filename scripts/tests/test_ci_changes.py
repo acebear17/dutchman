@@ -62,11 +62,11 @@ class ChangesTests(unittest.TestCase):
 
     def test_complete_diff_uses_nul_separated_paths(self):
         with patch.object(CHANGES.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
-             patch.object(CHANGES.subprocess, 'check_output', return_value=b'changelog.d/n.md\0crates/dutchman-core/src/lib.rs\0') as diff:
+             patch.object(CHANGES.subprocess, 'check_output', return_value=b'M\0changelog.d/n.md\0M\0crates/dutchman-core/src/lib.rs\0') as diff:
             selected = CHANGES.select('base', 'merge_group', 'refs/heads/queue')
             self.assertTrue(selected['full'])
             self.assertTrue(selected['code'])
-            diff.assert_called_once_with(['git', 'diff', '--name-only', '-z', 'base', 'HEAD'])
+            diff.assert_called_once_with(['git', 'diff', '--name-status', '--no-renames', '-z', 'base', 'HEAD'])
 
     def test_workflow_selects_conversion_jobs_for_core_but_not_gui(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -89,7 +89,7 @@ class ChangesTests(unittest.TestCase):
 
     def select_group(self, paths):
         with patch.object(CHANGES.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
-             patch.object(CHANGES.subprocess, 'check_output', return_value=b'\0'.join(p.encode() for p in paths) + b'\0'):
+             patch.object(CHANGES.subprocess, 'check_output', return_value=b''.join(b'M\0' + p.encode() + b'\0' for p in paths)):
             return CHANGES.select('base', 'merge_group', 'refs/heads/queue')
 
     def test_asset_only_merge_group_forces_every_flag_true(self):
@@ -162,7 +162,7 @@ class ReferenceScanTests(unittest.TestCase):
             self.assertIn('CONTRIBUTING.md', inputs)
             with patch.object(CHANGES, 'referenced_inputs', return_value=inputs), \
                  patch.object(CHANGES.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
-                 patch.object(CHANGES.subprocess, 'check_output', return_value=b'CONTRIBUTING.md\0'):
+                 patch.object(CHANGES.subprocess, 'check_output', return_value=b'M\0CONTRIBUTING.md\0'):
                 self.assertTrue(all(CHANGES.select('base', 'merge_group', 'refs/heads/queue').values()))
             # Deletion must not lose the include target from the exclusion.
             (root / 'guide.md').unlink()
@@ -173,3 +173,52 @@ class ReferenceScanTests(unittest.TestCase):
         for name in ('README.md', 'docs/json.md', 'docs/install.md',
                      'skills/dutchman-converting/SKILL.md', 'assets/install/AGENTS.md'):
             self.assertIn(name, inputs)
+
+
+class CompleteScanTests(unittest.TestCase):
+    def test_real_scanner_finds_changelog_and_python_test_inputs(self):
+        inputs = CHANGES.referenced_inputs()
+        for name in ('CHANGELOG.md', 'changelog.d/ci-path-filters.md', 'docs/install.md'):
+            self.assertIn(name, inputs)
+            with patch.object(CHANGES.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                 patch.object(CHANGES.subprocess, 'check_output', return_value=b'M\0' + name.encode() + b'\0'), \
+                 patch.object(CHANGES, 'referenced_inputs', return_value=inputs):
+                self.assertTrue(all(CHANGES.select('base', 'merge_group', 'refs/heads/queue').values()))
+
+    def test_python_ci_test_reference_is_discovered(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'scripts/tests').mkdir(parents=True)
+            (root / 'scripts/tests/test_doc.py').write_text('read_text("CONTRIBUTING.md")')
+            (root / 'CONTRIBUTING.md').write_text('Test input')
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+            self.assertIn('CONTRIBUTING.md', CHANGES.referenced_inputs(root))
+
+    def test_grep_diagnostics_force_full_even_with_zero_or_one_status(self):
+        for status, stderr in [(0, b'error: Permission denied'), (1, b'error: Permission denied'), (2, b''), (128, b'')]:
+            with self.subTest(status=status, stderr=stderr):
+                def output(command):
+                    return b'M\0CONTRIBUTING.md\0' if command[1] == 'diff' else b'CONTRIBUTING.md\0'
+                with patch.object(CHANGES.subprocess, 'check_output', side_effect=output), \
+                     patch.object(CHANGES.subprocess, 'run', side_effect=[
+                         subprocess.CompletedProcess([], 0),
+                         subprocess.CompletedProcess([], status, stdout=b'crates/consumer.rs\0' if status == 0 else b'', stderr=stderr)]):
+                    self.assertTrue(all(CHANGES.select('base', 'merge_group', 'refs/heads/queue').values()))
+
+    def test_clean_no_match_is_a_complete_scan(self):
+        def output(command):
+            return b'M\0CONTRIBUTING.md\0' if command[1] == 'diff' else b'CONTRIBUTING.md\0'
+        with patch.object(CHANGES.subprocess, 'check_output', side_effect=output), \
+             patch.object(CHANGES.subprocess, 'run', side_effect=[
+                 subprocess.CompletedProcess([], 0),
+                 subprocess.CompletedProcess([], 1, stdout=b'', stderr=b'')]):
+            self.assertFalse(CHANGES.select('base', 'merge_group', 'refs/heads/queue')['code'])
+
+    def test_rename_from_consumed_doc_classifies_both_names(self):
+        inputs = {'docs/guide.md'}  # Destination is deliberately unconsumed.
+        with patch.object(CHANGES, 'referenced_inputs', return_value=inputs), \
+             patch.object(CHANGES.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(CHANGES.subprocess, 'check_output', return_value=b'D\0docs/guide.md\0A\0SECURITY.md\0') as diff:
+            self.assertTrue(all(CHANGES.select('base', 'merge_group', 'refs/heads/queue').values()))
+            diff.assert_called_once_with(['git', 'diff', '--name-status', '--no-renames', '-z', 'base', 'HEAD'])

@@ -27,12 +27,12 @@ def referenced_inputs(root=ROOT, extra=()):
     candidates = set(tracked.decode('utf-8', errors='surrogateescape').split('\0')) | set(extra)
     candidates.discard('')
     scopes = ['crates', 'tests', 'build.rs', 'xtask', 'Cargo.toml',
-              ':(glob)**/build.rs', ':(glob)scripts/package*', ':(glob)scripts/archive*',
-              ':(glob)scripts/*msi*', ':(glob)scripts/*appimage*', ':(glob)scripts/*dmg*',
-              '.github/workflows']
+              ':(glob)**/build.rs', 'scripts', '.github/workflows',
+              # The selector describes the allowlist; it does not consume its files.
+              ':(exclude)scripts/ci-changes.py']
     found = subprocess.run(['git', '-C', str(root), 'grep', '-I', '-l', '-z',
                             '-e', '.', '--', *scopes], capture_output=True, check=False)
-    if found.returncode not in (0, 1):
+    if found.stderr or found.returncode not in (0, 1):
         raise OSError('Cannot scan CI build and test inputs')
     inputs = set()
     directories = defaultdict(set)
@@ -106,9 +106,15 @@ def select(base, event, ref):
     valid = subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], capture_output=True)
     if valid.returncode != 0:
         return {'full': full, **dict.fromkeys(('code', 'rust', 'conversion', 'docker', 'docs'), True)}
-    diff = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD'])
-    paths = [path.decode('utf-8', errors='surrogateescape') for path in diff.split(b'\0') if path]
     try:
+        # Disable rename detection so a moved input contributes both D(old) and A(new).
+        diff = subprocess.check_output(['git', 'diff', '--name-status', '--no-renames', '-z', base, 'HEAD'])
+        fields = diff.split(b'\0')
+        if fields and fields[-1] == b'':
+            fields.pop()
+        if len(fields) % 2 or any(status not in (b'A', b'D', b'M', b'T', b'U', b'X', b'B') for status in fields[::2]):
+            raise OSError('Cannot classify complete CI diff')
+        paths = [path.decode('utf-8', errors='surrogateescape') for path in fields[1::2]]
         inputs = referenced_inputs(extra=paths)
     except (OSError, subprocess.SubprocessError):
         return {'full': full, **dict.fromkeys(('code', 'rust', 'conversion', 'docker', 'docs'), True)}

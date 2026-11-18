@@ -32,7 +32,7 @@ class DockerSourceTests(unittest.TestCase):
         with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
              patch.object(SOURCE.subprocess, 'check_output', return_value=b'docs/guide.md\0Dockerfile\0') as diff:
             self.assertTrue(SOURCE.select('base'))
-            diff.assert_called_once_with(['git', 'diff', '--name-only', '-z', 'base', 'HEAD'])
+            diff.assert_called_once_with(['git', 'diff', '--name-only', '--no-renames', '-z', 'base', 'HEAD'])
 
     def test_workflow_builds_source_and_runtime_when_required(self):
         text = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -42,3 +42,9 @@ class DockerSourceTests(unittest.TestCase):
             expression = condition.replace('needs.changes.outputs.full', repr(full)).replace('steps.source.outputs.required', repr(required))
             self.assertEqual(eval(expression.replace('||', 'or'), {'__builtins__': {}}), expected)
         self.assertIn("if: needs.changes.outputs.full == 'true'", text.split('      - name: Build the image from the placement programs', 1)[1])
+
+    def test_renamed_dockerfile_keeps_deleted_source_input(self):
+        with patch.object(SOURCE.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(SOURCE.subprocess, 'check_output', return_value=b'Dockerfile\0docs/old-recipe.md\0') as diff:
+            self.assertTrue(SOURCE.select('base'))
+            diff.assert_called_once_with(['git', 'diff', '--name-only', '--no-renames', '-z', 'base', 'HEAD'])

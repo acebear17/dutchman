@@ -18,7 +18,7 @@ def required(paths):
 def select(base):
     if subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], capture_output=True).returncode:
         return True
-    diff = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD'])
+    diff = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', base, 'HEAD'])
     return required([path.decode('utf-8', errors='surrogateescape') for path in diff.split(b'\0') if path])
 
 
