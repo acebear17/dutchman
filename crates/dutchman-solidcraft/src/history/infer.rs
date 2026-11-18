@@ -30,9 +30,10 @@ pub(super) fn map(
         return None;
     }
     let stored = stored_body_centers(feature);
-    // Intermediate scope candidates need source measurements. Without them the writer's
-    // check cannot confirm a scope; avoid constructing and replaying a futile prefix.
-    let scope = scope.filter(|_| final_state || stored.is_some());
+    // Intermediate centres do not establish body correspondence or all consumed inputs.
+    // Only the final-source comparison can confirm a scope; keep the ordinary mapping
+    // at intermediate states even when exact centres are available.
+    let scope = scope.filter(|_| final_state);
     if !inferred_profile && scope.is_some() {
         candidates.push(feature.clone());
     }

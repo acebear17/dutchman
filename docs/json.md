@@ -300,8 +300,10 @@ close unambiguously or has no unambiguous interior point`. These add no report f
 
 `history/body-scope-confirmed` has level `Info`, names the extrude in `subject`,
 and says that the source body check confirmed its selected target bodies. It is
-emitted only for SolidCraft targets from 0.44. Report fields and schema versions
-are unchanged.
+emitted only for SolidCraft targets from 0.44, at the final body-building feature
+when replay matches the final source geometry. Intermediate body centres do not
+establish body scope and never produce this note. Report fields and schema
+versions are unchanged.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face

@@ -46,7 +46,9 @@ generated, or historical vertex selections are not supported yet. Symmetric To O
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
 On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
-from resolved modified-body outputs, and retain names for consumed Combine tools
+at the final body-building feature from resolved modified-body outputs and a
+matching replay against the final source geometry. Intermediate body centres
+cannot confirm scope. It can also retain names for consumed Combine tools
 whose earlier producers supply output identities. The pinned Inventor reader
 still leaves native body references unresolved; those remain blockers. Dutchman
 does not interpret the native references to infer participants.
