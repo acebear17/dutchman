@@ -125,6 +125,15 @@ pub(in crate::history) fn map(
     reference: &Value,
     ctx: &mut Context,
 ) -> Result<(String, Value), String> {
+    map_limited(reference, ctx, super::constraints::MAX_CONSTRAINTS)
+}
+
+/// Share the spatial relation allocation budget with the separate planar copy.
+fn map_limited(
+    reference: &Value,
+    ctx: &mut Context,
+    constraint_limit: usize,
+) -> Result<(String, Value), String> {
     if ctx.target_version < crate::SolidCraftVersion::V0_44_0 {
         return Err("its sketch is not an earlier mapped sketch".to_owned());
     }
@@ -254,14 +263,16 @@ pub(in crate::history) fn map(
             continue;
         };
         let kind = definition.get("kind").and_then(Value::as_str);
+        // Borrow a slice: repeated relations may contain arbitrarily many occurrences.
         let entities = match kind {
-            Some("line_length" | "parallel_to_direction") => {
-                definition.get("entity").into_iter().collect::<Vec<_>>()
-            }
+            Some("line_length" | "parallel_to_direction") => definition
+                .get("entity")
+                .map(std::slice::from_ref)
+                .unwrap_or_default(),
             Some("repeated_line_length") => definition
                 .get("entities")
                 .and_then(Value::as_array)
-                .map(|e| e.iter().collect())
+                .map(Vec::as_slice)
                 .unwrap_or_default(),
             _ => continue,
         };
@@ -301,6 +312,11 @@ pub(in crate::history) fn map(
                 };
                 json!({"type": "length", "l": curve.index, "value": distance(a.1,b.1), "param": param})
             };
+            if constraints.len() == constraint_limit {
+                return Err(format!(
+                    "its planar 3D sketch profile exceeds the {constraint_limit}-constraint copy limit; reduce repeated relations and convert again"
+                ));
+            }
             constraints.push(constraint);
         }
     }
@@ -334,6 +350,75 @@ mod tests {
             normal: [0.0, 1.0, 0.0],
             x: [1.0, 0.0, 0.0],
             y: [0.0, 0.0, -1.0],
+        }
+    }
+
+    fn square(relations: Vec<Value>) -> Value {
+        let corners = [
+            [0.0, 0.0, 0.0],
+            [5.0, 0.0, 0.0],
+            [5.0, 5.0, 0.0],
+            [0.0, 5.0, 0.0],
+        ];
+        let xyz = |[x, y, z]: V3| json!({"x":x,"y":y,"z":z});
+        json!({
+            "spatial_sketches":[{"id":"s","profiles":[{
+                "origin":xyz(corners[0]),"normal":xyz([0.0,0.0,1.0]),"u_axis":xyz([1.0,0.0,0.0]),
+                "boundary":(0..4).map(|i| json!({"entity":format!("e{i}"),"reversed":false})).collect::<Vec<_>>()
+            }]}],
+            "spatial_sketch_entities":(0..4).map(|i| json!({"id":format!("e{i}"),"sketch":"s","geometry":{
+                "kind":"line","start":xyz(corners[i]),"end":xyz(corners[(i+1)%4])
+            }})).collect::<Vec<_>>(),
+            "spatial_sketch_constraints":relations
+        })
+    }
+
+    #[test]
+    fn profile_copy_bounds_repeated_entities_and_the_total_across_rows() {
+        let repeated = |entities: Vec<Value>| {
+            json!({"sketch":"s","definition":{
+                "kind":"repeated_line_length","entities":entities,"parameter":"p"
+            }})
+        };
+        let four: Vec<_> = (0..4).map(|i| json!(format!("e{i}"))).collect();
+        let reference = json!({"value":{"sketch":"s","profiles":[0]}});
+        for (rows, accepted) in [
+            (vec![repeated(four.clone())], true),
+            (vec![repeated(vec![json!("e0"); 100_000])], false),
+            (vec![repeated(four.clone()), repeated(four.clone())], false),
+            (
+                vec![
+                    repeated(four),
+                    json!({"sketch":"s","definition":{
+                        "kind":"parallel_to_direction","entity":"e0","direction":{"x":1.0,"y":0.0,"z":0.0}
+                    }}),
+                ],
+                false,
+            ),
+        ] {
+            let source = square(rows);
+            let mut ctx = Context::testing(&source);
+            ctx.target_version = crate::SolidCraftVersion::V0_44_0;
+            ctx.spatial.insert(
+                "s".to_owned(),
+                super::super::Mapped {
+                    feature: 1,
+                    wires: Default::default(),
+                },
+            );
+            ctx.params.insert("p".to_owned(), "length".to_owned());
+            let result = map_limited(&reference, &mut ctx, 4);
+            if accepted {
+                assert!(result.is_ok(), "{result:?}");
+                let constraints = ctx.extra[0]["sketch"]["constraints"].as_array().unwrap();
+                assert_eq!(constraints.len(), 4);
+                assert_eq!(constraints[3]["id"], "k4");
+                assert_eq!(constraints[3]["param"], "length");
+            } else {
+                assert!(result.unwrap_err().contains("4-constraint copy limit"));
+                assert!(ctx.extra.is_empty());
+                assert!(ctx.sketches.is_empty());
+            }
         }
     }
 

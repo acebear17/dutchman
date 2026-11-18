@@ -29,7 +29,7 @@ fn separation(a: V3, b: V3) -> f64 {
 /// SolidCraft 0.44 joins drawn wire ends within this distance (wire_solve::MEET, mm).
 const JOIN: f64 = 1e-9;
 /// SolidCraft 0.44's hard ceiling is twice its 200,000-point ceiling.
-const MAX_CONSTRAINTS: usize = 400_000;
+pub(super) const MAX_CONSTRAINTS: usize = 400_000;
 
 fn parallel(a: V3, b: V3) -> bool {
     let product = cross(a, b);
@@ -46,10 +46,7 @@ impl Mapper<'_, '_> {
         let [id] = self.builder.shapes.get(entity.as_str()?)?.as_slice() else {
             return None;
         };
-        self.builder
-            .wires
-            .iter()
-            .find(|wire| wire.get("id").and_then(Value::as_str) == Some(id))
+        self.builder.wire_by_id(id)
     }
 
     fn line(&self, entity: &Value) -> Option<&Value> {
@@ -68,11 +65,7 @@ impl Mapper<'_, '_> {
     }
 
     fn at(&self, point: &Value) -> Option<V3> {
-        let wire = self
-            .builder
-            .wires
-            .iter()
-            .find(|w| w.get("id") == point.get("wire"))?;
+        let wire = self.builder.wire_by_id(point.get("wire")?.as_str()?)?;
         position(
             wire.get("fit")?
                 .as_array()?
@@ -381,6 +374,50 @@ mod tests {
             None,
         );
         b
+    }
+
+    #[test]
+    fn large_sketch_resolves_dimensions_through_the_wire_index() {
+        let source = json!({});
+        let mut ctx = Context::testing(&source);
+        ctx.params.insert("p".to_owned(), "length".to_owned());
+        let mut b = Builder::default();
+        b.point("point", [0.0, 0.0, 0.0]);
+        for i in 0..100_000 {
+            let x = f64::from(i) * 10.0;
+            b.wire(
+                &format!("line{i}"),
+                &[[x, 0.0, 0.0], [x, 3.0, 4.0]],
+                &[],
+                None,
+            );
+        }
+        // Check the stored lookup work, including mixed point/line IDs, without a timer.
+        // Each ID resolves to one vector slot rather than walking the preceding wires.
+        assert_eq!(b.wire_indices.len(), 100_001);
+        for (index, wire) in b.wires.iter().enumerate() {
+            assert_eq!(
+                b.wire_indices.get(wire["id"].as_str().unwrap()),
+                Some(&index)
+            );
+        }
+        let mapper = Mapper {
+            builder: &b,
+            ctx: &ctx,
+        };
+        for i in (0..100_000).rev() {
+            let dimension = mapper
+                .length(&json!(format!("line{i}")), &json!("p"))
+                .unwrap();
+            assert_eq!(dimension["value"], 5.0);
+            assert_eq!(dimension["a"]["wire"], format!("w{}", i + 1));
+            // Fail on the first unindexed relation, before a scan regression can run long.
+            assert_eq!(b.indexed_lookups.get(), 3 * (100_000 - i) as usize);
+        }
+        // Every dimension uses exactly three indexed lookups: line and two endpoints.
+        assert_eq!(b.indexed_lookups.get(), 300_000);
+        assert!(b.wire_by_id("missing").is_none());
+        assert_eq!(mapper.at(&json!({"wire":"q1","index":0})), Some([0.0; 3]));
     }
 
     #[test]

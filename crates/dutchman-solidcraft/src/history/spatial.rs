@@ -40,6 +40,10 @@ pub(crate) struct Mapped {
 struct Builder {
     wires: Vec<Value>,
     shapes: BTreeMap<String, Vec<String>>,
+    /// Wire ID to vector position, shared by relation and endpoint lookups.
+    wire_indices: BTreeMap<String, usize>,
+    #[cfg(test)]
+    indexed_lookups: std::cell::Cell<usize>,
     lines: u64,
     points: u64,
     /// Entities written as polylines of an exact curve, and construction entities written solid.
@@ -48,6 +52,12 @@ struct Builder {
 }
 
 impl Builder {
+    fn wire_by_id(&self, id: &str) -> Option<&Value> {
+        #[cfg(test)]
+        self.indexed_lookups.set(self.indexed_lookups.get() + 1);
+        self.wires.get(*self.wire_indices.get(id)?)
+    }
+
     fn wire(&mut self, entity: &str, fit: &[V3], pts: &[V3], arc: Option<Value>) {
         self.lines += 1;
         let id = format!("w{}", self.lines);
@@ -55,6 +65,7 @@ impl Builder {
         if let (Some(arc), Some(fields)) = (arc, wire.as_object_mut()) {
             fields.insert("arc".to_owned(), arc);
         }
+        self.wire_indices.insert(id.clone(), self.wires.len());
         self.wires.push(wire);
         self.shapes.entry(entity.to_owned()).or_default().push(id);
     }
@@ -62,6 +73,7 @@ impl Builder {
     fn point(&mut self, entity: &str, at: V3) {
         self.points += 1;
         let id = format!("q{}", self.points);
+        self.wire_indices.insert(id.clone(), self.wires.len());
         self.wires
             .push(json!({"id": id, "fit": [at], "pts": [at], "space": "component"}));
         self.shapes.entry(entity.to_owned()).or_default().push(id);
