@@ -12991,3 +12991,432 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
         "{report:?}"
     );
 }
+
+/// Two independent, overlapping synthetic cubes. Only the first is modified by the
+/// final extrude. The saved topology includes that result, independently of the recipe.
+fn scoped_extrude(operation: &str) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    for arena in [
+        "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces", "shells",
+        "regions", "bodies",
+    ] {
+        let text = serde_json::to_string(&wire["geometry"][arena]).unwrap();
+        let mut rows: Vec<Value> =
+            serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:other:")).unwrap();
+        if arena == "bodies" {
+            rows[0]["name"] = json!("Other cube");
+        }
+        wire["geometry"][arena].as_array_mut().unwrap().extend(rows);
+    }
+    // Rescale only the first body's point and surface coordinates to the expected
+    // remaining half. Its lines carry endpoint geometry too; transform those carriers.
+    if operation != "join" {
+        fn half(value: &mut Value, cut: bool) {
+            if let Value::Object(fields) = value {
+                if fields.contains_key("x") && fields.contains_key("y") && fields.contains_key("z")
+                {
+                    // Directions stay unit length; only placed points are edited below.
+                    if let Some(z) = fields.get_mut("z") {
+                        *z = json!(z.as_f64().unwrap() * 0.5 + if cut { 5.0 } else { 0.0 });
+                    }
+                } else {
+                    for (key, child) in fields {
+                        if matches!(
+                            key.as_str(),
+                            "value" | "position" | "origin" | "start" | "end" | "center"
+                        ) {
+                            half(child, cut);
+                        }
+                    }
+                }
+            }
+        }
+        for arena in ["points", "curves", "surfaces"] {
+            for row in wire["geometry"][arena].as_array_mut().unwrap() {
+                if row["id"].as_str().unwrap().starts_with("synthetic:cube:") {
+                    if arena == "points" {
+                        half(&mut row["position"], operation == "cut");
+                    } else {
+                        half(&mut row["geometry"], operation == "cut");
+                    }
+                }
+            }
+        }
+        for edge in wire["geometry"]["edges"].as_array_mut().unwrap() {
+            if matches!(
+                edge["id"].as_str().unwrap(),
+                "synthetic:cube:edge#8"
+                    | "synthetic:cube:edge#9"
+                    | "synthetic:cube:edge#10"
+                    | "synthetic:cube:edge#11"
+            ) {
+                edge["carrier"]["param_range"] = json!([0.0, 5.0]);
+            }
+        }
+    }
+    let mut second = wire["model"]["features"][1].clone();
+    second["id"] = json!("synthetic:other:feature#1");
+    second["ordinal"] = json!(2);
+    second["name"] = json!("Other extrusion");
+    second["outputs"] = json!(["synthetic:other:body#0"]);
+    let mut scoped = second.clone();
+    scoped["id"] = json!("synthetic:scope:feature#1");
+    scoped["ordinal"] = json!(3);
+    scoped["name"] = json!("Scoped extrusion");
+    scoped["outputs"] = json!(["synthetic:cube:body#0"]);
+    scoped["definition"]["value"]["value"]["op"] = json!(operation);
+    scoped["definition"]["value"]["value"]["extent"]["side"]["termination"]["length"] =
+        json!(if operation == "join" { 10.0 } else { 5.0 });
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .extend([second, scoped]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn scoped_extrudes_keep_older_target_bytes() {
+    let cli = solidcraft();
+    for operation in ["join", "cut", "intersect"] {
+        let model = scoped_extrude(operation);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // The previous mapper ignored modified-body outputs. Removing them is the
+        // legacy mapping of precisely the same geometry and construction recipe.
+        wire["model"]["features"][3]["outputs"] = json!([]);
+        let legacy = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        };
+        for target in ["0.18.2", "0.25.1", "0.40.1", "0.43.0", "0.43.9"] {
+            let writer = SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap()));
+            assert_eq!(
+                written_with(&model, &writer).0,
+                written_with(&legacy, &writer).0,
+                "{target} {operation}"
+            );
+        }
+        // Scope inference requires replay. Exercise that path too: verification off
+        // alone would not catch an accidental admission of scoped targets before 0.44.
+        if let Some(cli) = &cli {
+            let writer = SolidCraftWriter::new()
+                .verification(Verification::With(cli.clone()))
+                .target_version(Some("0.43.0".parse().unwrap()));
+            assert_eq!(
+                written_with(&model, &writer).0,
+                written_with(&legacy, &writer).0,
+                "0.43.0 with source checks: {operation}"
+            );
+        }
+    }
+}
+
+#[test]
+fn scoped_extrudes_are_confirmed_against_source_bodies() {
+    let Some(cli) = solidcraft() else { return };
+    for operation in ["join", "cut", "intersect"] {
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::With(cli.clone()))
+            .target_version(Some("0.44.0".parse().unwrap()));
+        let (document, report) = convert(&scoped_extrude(operation), &writer);
+        let scoped = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == "Scoped extrusion")
+            .unwrap();
+        assert_eq!(
+            scoped["targets"],
+            json!(["unit cube"]),
+            "{operation}: {report:?}"
+        );
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some("history/body-scope-confirmed")),
+            "{report:?}"
+        );
+        assert_eq!(
+            report.outcome().unwrap().check,
+            Check::Verified,
+            "{report:?}"
+        );
+    }
+}
+
+#[test]
+fn consumed_boolean_tools_keep_names_only_on_044() {
+    let mut model = combined_spheres("cut", false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for rows in wire["geometry"].as_object_mut().unwrap().values_mut() {
+        if let Some(rows) = rows.as_array_mut() {
+            rows.retain(|row| {
+                !row["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("synthetic:tool:"))
+            });
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    for target in ["0.43.0", "0.44.0"] {
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        );
+        if target == "0.44.0" {
+            let features = document["features"].as_array().unwrap();
+            let combine = features.iter().find(|f| f["type"] == "combine").unwrap();
+            assert_eq!(combine["tools"], features[1]["body_names"], "{report:?}");
+        } else {
+            assert!(
+                history_line(&report)
+                    .contains("it selects a body that an earlier feature has not named"),
+                "{report:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn generated_combine_tools_require_a_single_declared_producer_result() {
+    for (members, selected, expected) in [
+        (json!([{"kind":"body", "id":"tool"}]), "tool", true),
+        (json!([{"kind":"body", "id":"tool"}]), "unknown", false),
+        (
+            json!([{"kind":"body", "id":"tool"}, {"kind":"body", "id":"other"}]),
+            "tool",
+            false,
+        ),
+    ] {
+        let mut model = combined_spheres("cut", false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["feature_result_topologies"] = json!([{
+            "id":"synthetic:history-result:state#0", "output_of":"f3d:model:feature#3", "members":members
+        }]);
+        wire["model"]["features"][2]["definition"]["value"]["value"]["operands"]["tools"] = json!({
+            "kind":"generated", "value":{"bodies":[{"feature":"f3d:model:feature#3", "local_id":selected}], "native":"opaque tool"}
+        });
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        for target in ["0.43.0", "0.44.0"] {
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some(target.parse().unwrap())),
+            );
+            let mapped = document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["type"] == "combine");
+            assert_eq!(
+                mapped.is_some(),
+                expected && target == "0.44.0",
+                "{target} {selected}: {report:?}"
+            );
+            if let Some(mapped) = mapped {
+                assert_eq!(mapped["tools"], json!(["Tool"]));
+            }
+        }
+    }
+}
+
+#[test]
+fn scoped_extrudes_keep_the_previous_mapping_without_source_proof() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.44.0".parse().unwrap()));
+    for operation in ["join", "cut", "intersect"] {
+        let (document, report) = convert(&scoped_extrude(operation), &writer);
+        let feature = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == "Scoped extrusion")
+            .unwrap();
+        assert!(feature.get("targets").is_none(), "{report:?}");
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/body-scope-confirmed")));
+    }
+}
+
+#[test]
+fn scoped_extrude_cuts_can_select_several_bodies_and_leave_another_whole() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = scoped_extrude("cut");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for arena in [
+        "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces", "shells",
+        "regions", "bodies",
+    ] {
+        let rows: Vec<Value> = wire["geometry"][arena]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["id"].as_str().unwrap().starts_with("synthetic:cube:"))
+            .cloned()
+            .collect();
+        let text = serde_json::to_string(&rows).unwrap();
+        let mut rows: Vec<Value> =
+            serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:third:")).unwrap();
+        if arena == "bodies" {
+            rows[0]["name"] = json!("Third cube");
+        }
+        wire["geometry"][arena].as_array_mut().unwrap().extend(rows);
+    }
+    let mut third = wire["model"]["features"][2].clone();
+    third["id"] = json!("synthetic:third:feature#1");
+    third["name"] = json!("Third extrusion");
+    third["ordinal"] = json!(3);
+    third["outputs"] = json!(["synthetic:third:body#0"]);
+    wire["model"]["features"][3]["ordinal"] = json!(4);
+    wire["model"]["features"][3]["outputs"] =
+        json!(["synthetic:cube:body#0", "synthetic:third:body#0"]);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .insert(3, third);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::With(cli))
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    let scoped = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Scoped extrusion")
+        .unwrap();
+    assert_eq!(
+        scoped["targets"],
+        json!(["unit cube", "Third cube"]),
+        "{report:?}"
+    );
+    assert_eq!(
+        report.outcome().unwrap().check,
+        Check::Verified,
+        "{report:?}"
+    );
+}
+
+#[test]
+fn scoped_extrudes_reject_targets_that_disagree_with_the_source() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = scoped_extrude("cut");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Both names resolve, but the second body is whole in the saved source.
+    wire["model"]["features"][3]["outputs"] =
+        json!(["synthetic:cube:body#0", "synthetic:other:body#0"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::With(cli))
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    assert_ne!(
+        report.outcome().unwrap().check,
+        Check::Verified,
+        "{report:?}"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/body-scope-confirmed")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn body_mirror_outputs_name_consumed_generated_boolean_tools() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Independently construct the saved result: a box from -10 to +10 along X.
+    // The recipe instead builds the original cube, reflects it, then joins the pair.
+    fn widen(value: &mut Value) {
+        if let Value::Object(fields) = value {
+            if fields.contains_key("x") && fields.contains_key("y") && fields.contains_key("z") {
+                let x = fields.get_mut("x").unwrap();
+                *x = json!(x.as_f64().unwrap() * 2.0 - 10.0);
+            } else {
+                for (key, child) in fields {
+                    if matches!(key.as_str(), "value" | "position" | "origin") {
+                        widen(child);
+                    }
+                }
+            }
+        }
+    }
+    for arena in ["points", "curves", "surfaces"] {
+        for row in wire["geometry"][arena].as_array_mut().unwrap() {
+            if arena == "points" {
+                widen(&mut row["position"]);
+            } else {
+                widen(&mut row["geometry"]);
+            }
+        }
+    }
+    for edge in wire["geometry"]["edges"].as_array_mut().unwrap() {
+        if matches!(
+            edge["id"].as_str().unwrap(),
+            "synthetic:cube:edge#0"
+                | "synthetic:cube:edge#2"
+                | "synthetic:cube:edge#4"
+                | "synthetic:cube:edge#6"
+        ) {
+            edge["carrier"]["param_range"] = json!([0.0, 20.0]);
+        }
+    }
+    let mut mirror = body_mirror_definition();
+    mirror["value"]["pattern"]["plane_origin"] = xyz([0.0, 0.0, 0.0]);
+    wire["model"]["features"].as_array_mut().unwrap().extend([
+        json!({"id":"f3d:model:feature#3", "ordinal":2, "name":"Reflected cube", "suppressed":false,
+            "definition":{"kind":"operation", "value":mirror}, "outputs":["synthetic:mirror:body#0"],
+            "dependencies":[], "source_properties":{}, "source_content":[]}),
+        json!({"id":"f3d:model:feature#4", "ordinal":3, "name":"Join cubes", "suppressed":false,
+            "definition":{"kind":"operation", "value":{"kind":"combine", "value":{
+                "operands":{"target":cube_body(), "tools":{"kind":"generated", "value":{
+                    "bodies":[{"feature":"f3d:model:feature#3", "local_id":"reflected"}], "native":"Synthetic mirror output"}}},
+                "op":"join", "keep_tools":false, "destination":"target_component"}}},
+            "outputs":["synthetic:cube:body#0"], "dependencies":[], "source_properties":{}, "source_content":[]}),
+    ]);
+    wire["model"]["feature_result_topologies"] = json!([{"id":"synthetic:history-result:state#0",
+        "output_of":"f3d:model:feature#3", "members":[{"kind":"body", "id":"reflected"}]}]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .verification(Verification::With(cli))
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    let features = document["features"].as_array().unwrap();
+    let mirror = features
+        .iter()
+        .find(|feature| feature["type"] == "mirror")
+        .unwrap();
+    let combine = features
+        .iter()
+        .find(|feature| feature["type"] == "combine")
+        .unwrap();
+    assert_eq!(mirror["body_names"], combine["tools"], "{report:?}");
+    assert_eq!(mirror["body_names"], json!(["Body 1"]));
+    assert_eq!(
+        report.outcome().unwrap().check,
+        Check::Verified,
+        "{report:?}"
+    );
+}

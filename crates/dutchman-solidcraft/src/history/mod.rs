@@ -516,7 +516,7 @@ impl History {
                 .unwrap_or_else(|| name.to_owned())
         };
         for feature in &mut self.features {
-            for key in ["body_names", "bodies", "tools"] {
+            for key in ["body_names", "bodies", "tools", "targets"] {
                 if let Some(names) = feature.get_mut(key).and_then(Value::as_array_mut) {
                     for name in names {
                         if let Some(old) = name.as_str() {
@@ -2352,6 +2352,7 @@ mod tests {
                 json!({"target": "Part", "tools": ["Part"]}),
                 json!({"bodies": ["Part"]}),
                 json!({"body": "Part"}),
+                json!({"targets": ["Part", "Other"]}),
             ],
             ..History::default()
         };
@@ -2362,6 +2363,10 @@ mod tests {
         assert_eq!(history.features[1]["tools"], json!(["Part (Second)"]));
         assert_eq!(history.features[2]["bodies"], json!(["Part (Second)"]));
         assert_eq!(history.features[3]["body"], "Part (Second)");
+        assert_eq!(
+            history.features[4]["targets"],
+            json!(["Part (Second)", "Other"])
+        );
     }
 
     #[test]

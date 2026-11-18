@@ -395,6 +395,12 @@ native profile selection can't be resolved, Dutchman tries the selected curves a
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
+For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
+selected body scope when the reader names modified bodies and the source body
+check confirms the scoped replay. The Info note `history/body-scope-confirmed`
+records this confirmation. Without confirmation the previous mapping applies;
+older targets keep their existing output.
+
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
