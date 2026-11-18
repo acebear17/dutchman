@@ -54,8 +54,8 @@ cargo test --workspace --locked
 ```
 
 Pull requests run the fast checks: path filtering, formatting, Linux Clippy and x86_64 tests
-(or the focused docs tests for a docs-only change), release notes, changelog and version gates.
-The merge queue runs the full matrix once per group of up to five entries: Windows, macOS,
+(or focused docs tests when their inputs change without code), release notes, changelog and version gates.
+The merge queue filters the complete group diff and runs the full code matrix for every group containing a build or test input: Windows, macOS,
 ARM64, Rust 1.88, WebAssembly, Docker, SolidCraft round trips (including 0.18.2), all placements
 and full release builds. The required `ci-result` checks the fast jobs on a PR and the full
 set in the queue; an unexpected skip fails it. Candidate and stable tags also run the full

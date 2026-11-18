@@ -10,8 +10,8 @@ squash-merges it only if the required checks pass.
 
 | Workflow | In the queue |
 |---|---|
-| `ci.yml` | Full tests on Linux x86_64, ARM64, Windows and macOS, plus fmt, Clippy, MSRV, WebAssembly, Docker, release checks and SolidCraft round trips. No path skips and no cache writes. |
-| `placements.yml` | Called by `ci.yml`; builds the command, MCP and web programs once in Bookworm, checks all three assemblies including Voron, and shares the programs with Docker. |
+| `ci.yml` | Full tests on Linux x86_64, ARM64, Windows and macOS, plus fmt, Clippy, MSRV, WebAssembly, Docker, release checks and SolidCraft round trips. Path skips apply to the whole group: docs and changelog changes skip unrelated builds; a mixed group runs code checks. No Rust cache writes. |
+| `placements.yml` | Called by `ci.yml`; builds the command, MCP and web programs once in Bookworm, checks all three assemblies including Voron for code changes, and shares the programs with Docker. |
 | `docker.yml` | No separate queue run; `ci.yml` owns the Docker check. Main, scheduled and manual runs stay available. |
 | `release-build.yml` | Called by `ci.yml`; `plan` enables all release targets and packaging for every group. No Rust caches. |
 
