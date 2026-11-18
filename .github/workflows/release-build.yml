@@ -107,7 +107,7 @@ jobs:
     container: ${{ matrix.container || '' }}
     # An uncached Windows release build alone takes 65-87 minutes; the Windows job then
     # builds and tests the installer and compiles the release updater tests.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 150 || 90 }}
+    timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: ${{ matrix.jobs }}
     steps:
