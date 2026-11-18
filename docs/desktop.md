@@ -282,7 +282,7 @@ that the result is wrong and asks what differs from the original.
 
 The card takes the invite, the limits, and the message from a small policy built into the app.
 Once a day at most, where update checks run, the app reads a newer copy from
-<https://dutchman-cad.github.io/report-policy.json> in the background. The request says nothing
+<https://dutchmancad.xyz/report-policy.json> in the background. The request says nothing
 about your files. `DUTCHMAN_UPDATE_CHECK=0`, turning off automatic update checks, and source
 builds all stop it, and the built-in copy is used.
 

@@ -571,8 +571,8 @@ that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
 reports contain neither that invitation nor status prose outside the report.
 The invitation appears once for programs with `ok: false`, `verification.status: "flattened"` or `"partial"`,
-or `history.mapped < history.total`, except IGES, and offers test-file recipes and private help
-in Discord.
+or `history.mapped < history.total`, except IGES, and offers test-file recipes at
+<https://dutchmancad.xyz/fixtures/> and private help in Discord.
 
 ## `dutchman.inspect/1`
 

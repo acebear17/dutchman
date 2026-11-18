@@ -316,7 +316,8 @@ Batch results retain that refusal; IGES does not trigger the CLI or GUI fixtures
 Numbered `.prt.N` saves are identified by contents too; a directory conversion keeps only
 the highest revision per part and returns older saves in `skipped_revisions` (`path`, `newer`).
 Numbered saves use the part's base output name and keep existing output files.
-The CLI and desktop volunteer invitation is absent from MCP and `--json` output.
+The CLI and desktop volunteer invitation links to <https://dutchmancad.xyz/fixtures/>
+and is absent from MCP and `--json` output.
 
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.

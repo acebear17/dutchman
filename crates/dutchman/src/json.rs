@@ -83,7 +83,7 @@ pub fn status_line(report: &Value) -> Option<String> {
     ))
 }
 
-pub const FIXTURES_URL: &str = "https://dutchman-cad.github.io/fixtures/";
+pub const FIXTURES_URL: &str = "https://dutchmancad.xyz/fixtures/";
 pub const DISCORD_URL: &str = "https://discord.gg/yTcseBEdeu";
 
 /// One invitation for the programs whose inputs need more coverage.
