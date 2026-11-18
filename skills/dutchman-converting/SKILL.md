@@ -25,8 +25,13 @@ report still applies. See `docs/onshape.md`.
 Sketch-only Part Studios can omit STEP and convert to sketches alone. The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,
-assigned variables and symmetric blind extrudes. Variable expressions use earlier
-variables and bounded arithmetic with compatible units; FeatureScript evaluation and
+assigned variables and symmetric blind extrudes. Up-to-next ends need one planar
+input face reached by the whole profile; up-to-face ends keep their selected face.
+A planar face at a slant to the sketch, for either a start or an end, needs
+SolidCraft 0.44 or newer as the target. Older targets keep a named loss and the
+final geometry. Symmetric non-blind bounds remain named losses.
+Variable expressions use earlier variables and bounded arithmetic with compatible units;
+FeatureScript evaluation and
 opaque external origin references still produce named losses.
 If a bundle is marked `consistent: false`, explain that its snapshots differ and
 ask the owner to fetch again or use a version link. Older v1 bundles without this

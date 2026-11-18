@@ -763,7 +763,9 @@ mod tests {
         ]);
         let ctx = Context::testing(&model);
         let feature = json!({"id": "f"});
-        let point = pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap();
+        let (point, slanted) =
+            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0], false).unwrap();
+        assert!(!slanted);
         assert!((point[2] - z).abs() < 1e-9, "{point:?}");
         assert!(
             point[0] > 10.0 && point[0] < 14.0 && point[1].abs() < 14.0,
@@ -778,11 +780,11 @@ mod tests {
         ]);
         let ctx = Context::testing(&wall);
         assert_eq!(
-            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0]).unwrap_err(),
-            "an extrude face not parallel to its sketch is not supported yet"
+            pick(&ctx, &feature, Some(&historical()), [0.0, 0.0, 1.0], false).unwrap_err(),
+            "an extrude face not parallel to its sketch needs SolidCraft 0.44 or newer as the target"
         );
         let other = json!({"id": "g"});
-        assert!(pick(&ctx, &other, Some(&historical()), [0.0, 0.0, 1.0]).is_err());
+        assert!(pick(&ctx, &other, Some(&historical()), [0.0, 0.0, 1.0], false).is_err());
     }
 
     #[test]

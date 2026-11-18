@@ -538,6 +538,80 @@ fn up_to_next_ends_on_the_first_face_every_profile_ray_meets() {
 }
 
 #[test]
+fn up_to_next_retains_a_slanted_planar_end_for_the_writer_to_gate() {
+    // Raise the top of a synthetic box linearly along X, leaving its bottom on XY.
+    let bytes = changed(&up_to_next("REMOVE", None), |path, value| {
+        if !path.ends_with("bodydetails/2.json") {
+            return;
+        }
+        let point = |p: &mut Value| {
+            let x = p["x"].as_f64().unwrap();
+            let z = p["z"].as_f64().unwrap();
+            p["z"] = json!(z * (1.0 + 10.0 * x));
+        };
+        for edge in value["bodies"][0]["edges"].as_array_mut().unwrap() {
+            for key in ["startPoint", "midPoint", "endPoint"] {
+                point(&mut edge["geometry"][key]);
+            }
+            point(&mut edge["curve"]["origin"]);
+            let start = &edge["geometry"]["startPoint"];
+            let end = &edge["geometry"]["endPoint"];
+            edge["curve"]["direction"] = json!({
+                "x": end["x"].as_f64().unwrap() - start["x"].as_f64().unwrap(),
+                "y": end["y"].as_f64().unwrap() - start["y"].as_f64().unwrap(),
+                "z": end["z"].as_f64().unwrap() - start["z"].as_f64().unwrap()
+            });
+        }
+        for face in value["bodies"][0]["faces"].as_array_mut().unwrap() {
+            point(&mut face["surface"]["origin"]);
+            point(&mut face["box"]["minCorner"]);
+            point(&mut face["box"]["maxCorner"]);
+            if face["id"] == "high2" {
+                face["surface"]["normal"] = json!({"x": -0.02, "y": 0.0, "z": 1.0});
+            }
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "extrude"],
+        "{:?}",
+        report.losses()
+    );
+    let wire = timeline(&model);
+    assert_eq!(
+        wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]
+            ["termination"]["face"]["value"]["faces"],
+        json!(["high2"])
+    );
+}
+
+#[test]
+fn symmetric_non_blind_extrudes_keep_a_specific_loss() {
+    for bound in ["UP_TO_NEXT", "UP_TO_SURFACE", "THROUGH_ALL"] {
+        let bytes = changed(&up_to_next("REMOVE", None), |path, value| {
+            if path.ends_with("features.json") {
+                let parameters = value["features"][2]["parameters"].as_array_mut().unwrap();
+                parameters
+                    .iter_mut()
+                    .find(|p| p["parameterId"] == "endBound")
+                    .unwrap()["value"] = json!(bound);
+                parameters.push(json!({"parameterId": "symmetric", "value": true}));
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(kinds(&model), ["sketch", "extrude", "native"]);
+        assert!(
+            report.losses().iter().any(|loss| loss
+                .detail
+                .contains("symmetric extrudes with this bound are not supported yet")),
+            "{:?}",
+            report.losses()
+        );
+    }
+}
+
+#[test]
 fn circles_arcs_and_simple_splines_remain_exact_sketch_entities() {
     let bytes = changed(&fixture("revolve"), |path, value| {
         if path.ends_with("features.json") {

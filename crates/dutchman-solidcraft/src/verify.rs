@@ -441,14 +441,14 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SketchProfileCoil,
         VersionGate::MirrorChain,
         VersionGate::ConePrimitive,
-        VersionGate::SlantedFaceExtent,
     ]
     .into_iter()
     .any(|gate| {
         !matches!(gate, VersionGate::EntryRecessTip)
             && gate.supported(SolidCraftVersion::default())
             && !gate.supported(target)
-    })
+    }) || (VersionGate::SlantedFaceExtent.supported(SolidCraftVersion::default())
+        && !VersionGate::SlantedFaceExtent.supported(target))
 }
 
 /// Installed-version status, independent of CLI discovery or network access.
