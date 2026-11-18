@@ -490,8 +490,16 @@ jobs:
           bad = {}
           for job, run in required.items():
               expected = "success" if run else "skipped"
-              if needs[job]["result"] != expected:
-                  bad[job] = needs[job]["result"] + " (expected " + expected + ")"
+              result = needs[job]["result"]
+              if event == "merge_group":
+                  if job == "test-macos":
+                      print("macOS (non-blocking in the merge queue): " + result)
+                      continue
+                  if job == "release-build":
+                      result = needs[job].get("outputs", {}).get("required", "")
+                      print("release-build non-macOS: " + result)
+              if result != expected:
+                  bad[job] = result + " (expected " + expected + ")"
           # A passing retry replaces only a failed first ARM attempt, never a cancellation.
           arm = needs["test-arm"]["result"]
           retry = needs["test-arm-again"]["result"]

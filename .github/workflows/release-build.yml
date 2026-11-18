@@ -37,6 +37,10 @@ on:
         default: all
   # Called only for full CI runs; standalone tag runs keep release artifacts discoverable.
   workflow_call:
+    outputs:
+      required:
+        description: Result of the non-macOS release builds and checks
+        value: ${{ jobs.required.outputs.result }}
     inputs:
       targets:
         type: string
@@ -56,6 +60,21 @@ env:
   DUTCHMAN_RELEASE_BUILD: "1"
 
 jobs:
+  # No macOS dependencies: a missing hosted runner must not affect the queue's required result.
+  required:
+    needs: [plan, build, image-check]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - id: result
+        env:
+          RESULT: ${{ needs.plan.result == 'success' && needs.build.result == 'success' && (needs.image-check.result == 'success' || (inputs.targets == 'linux-x86_64' && needs.image-check.result == 'skipped')) && 'success' || 'failure' }}
+        run: |
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+          test "$RESULT" = success
+
   # No packaging-path gate: every merge group builds all release targets.
   plan:
     runs-on: ubuntu-latest

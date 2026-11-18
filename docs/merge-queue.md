@@ -21,6 +21,16 @@ queue matrix on a PR branch by hand. Packaging changes and the `release-build` l
 start full builds on a PR. Candidate and stable tag pushes also run the full matrix; their
 release builds run directly in `release-build.yml` to preserve candidate artifact discovery.
 
+## macOS in the merge queue
+
+macOS tests, release builds and packaging still run in the merge queue, but are non-blocking
+there. Hosted macOS runners are scarce: missing runners caused jobs to be cancelled. For
+merge groups, `ci-result` prints the macOS test result and requires the non-macOS release
+build/check output to be `success`, regardless of the overall release-build result. Every
+non-macOS failure, cancellation or unexpected skip still blocks the queue.
+macOS stays required on main pushes, tags and manual runs, so a macOS break shows within
+hours and blocks a release.
+
 ## Ruleset
 
 Create it once, then enable it when ready (`"enforcement": "active"` switches it on at creation;
@@ -87,7 +97,7 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
 - The one required check is `ci-result`, a job in `ci.yml` that always runs, needs every other
   CI job, including the reusable placement and release builds in the queue. It checks explicit
   expected results for the event and paths, rejecting failures, cancellations and unexpected
-  skips. Requiring the test jobs by
+  skips, except for macOS in the merge queue as described above. Requiring the test jobs by
   name doesn't work: a docs-only change skips the test matrix, and a skipped matrix job reports
   once under its bare name (`test`), so `test (ubuntu-latest)` and the others never appear and
   the pull request waits forever. Heavy jobs are intentionally skipped on PRs and required in
