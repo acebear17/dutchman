@@ -503,7 +503,7 @@ impl SolidCraftWriter {
                 history::prove_blends(
                     mapping,
                     |_, _, _| Err(why.clone()),
-                    |_| history::infer::Fit::Unknown,
+                    |_, _| history::infer::Fit::Unknown,
                 );
             }
         }
@@ -556,12 +556,36 @@ impl SolidCraftWriter {
                 remaining = remaining.saturating_sub(started.elapsed());
                 replayed
             },
-            |history| self.profile_check(model, history, step, None, true, true, progress),
+            |history, budget| {
+                self.bounded_profile_check(model, history, step, None, true, budget, progress)
+            },
         );
         match failure {
             Some(err) => Err(err),
             None => Ok(()),
         }
+    }
+
+    /// Share the feature's remaining budget across original, replay and surface measurements.
+    #[allow(clippy::too_many_arguments)]
+    fn bounded_profile_check(
+        &self,
+        model: &Model,
+        prefix: &history::History,
+        step: &str,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        budget: Duration,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> history::infer::Fit {
+        let Ok(evaluator) = self.selected_evaluator(&self.verification) else {
+            return history::infer::Fit::Unknown;
+        };
+        let mut writer = self.clone();
+        writer.evaluator = Some(std::sync::Arc::new(evaluator::Budgeted::new(
+            evaluator, budget,
+        )));
+        writer.profile_check(model, prefix, step, stored, final_state, true, progress)
     }
 
     /// Measure an inferred profile with the same comparison used for unconfirmed whole-sketch
@@ -594,11 +618,20 @@ impl SolidCraftWriter {
             return match self.check(model, prefix, step, &design, progress) {
                 Ok(verify::Outcome::Matches) => {
                     let one_body = solid_bodies(model) == 1 && sheet_bodies(model) == 0;
-                    let deviation = (compare && one_body)
-                        .then(|| {
+                    let deviation = if compare {
+                        if !one_body {
+                            return Fit::Unknown;
+                        }
+                        let Some(deviation) =
                             verify::deviation(cli.as_ref(), self.timeout, &design, prefix.next_id)
-                        })
-                        .flatten();
+                                .filter(|deviation| deviation.faces.is_some())
+                        else {
+                            return Fit::Unknown;
+                        };
+                        Some(deviation)
+                    } else {
+                        None
+                    };
                     Fit::Matches(Measure {
                         against: InferredAgainst::OriginalShape,
                         deviation,
@@ -945,6 +978,24 @@ impl history::infer::Host for Measuring<'_, '_> {
             stored,
             final_state,
             compare,
+            self.progress,
+        )
+    }
+
+    fn fit_bounded(
+        &mut self,
+        prefix: &history::History,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        budget: Duration,
+    ) -> history::infer::Fit {
+        self.writer.bounded_profile_check(
+            self.model,
+            prefix,
+            self.step,
+            stored,
+            final_state,
+            budget,
             self.progress,
         )
     }
@@ -1592,7 +1643,7 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
     history::prove_blends(
         &mut mapping,
         |_, _, _| Err("only a SolidCraft design is replayed to find them".to_owned()),
-        |_| history::infer::Fit::Unknown,
+        |_, _| history::infer::Fit::Unknown,
     );
     MappedHistory {
         features: mapping.result.and_then(|history| match history.stop {

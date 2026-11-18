@@ -1591,7 +1591,7 @@ enum Proven {
 pub(crate) fn prove_blends(
     mapping: &mut Mapping,
     mut replay: impl FnMut(&History, &[u64], bool) -> Replayed,
-    mut measure: impl FnMut(&History) -> infer::Fit,
+    mut measure: impl FnMut(&History, std::time::Duration) -> infer::Fit,
 ) {
     let Ok(history) = &mut mapping.result else {
         return;

@@ -307,6 +307,10 @@ than one matching equally, none matching, some not measurable, or the time allow
 A last fillet or chamfer whose input edges cannot be proven is measured the same way; it carries
 `inferred` with `selection: "edges"`, and a refusal adds `; its edges could not be inferred: …` to
 the proof's reason. Features kept this way, and the inferred profiles above, are marked `inferred`.
+New measured regions are tried only at the last body-building feature. Final-shape inferences
+require a measured surface distance and both face counts for a one-body part. If that
+comparison is unavailable, the earlier refusal stands and no `inferred` object is added.
+A feature's 120 s measurement budget is shared across its candidate evaluations.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face

@@ -44,6 +44,17 @@ pub(crate) trait Host {
         compare: bool,
     ) -> Fit;
 
+    /// Measure with one remaining budget shared by every evaluator call for this candidate.
+    fn fit_bounded(
+        &mut self,
+        prefix: &History,
+        stored: Option<&[crate::verify::StoredBody]>,
+        final_state: bool,
+        _budget: Duration,
+    ) -> Fit {
+        self.fit(prefix, stored, final_state, true)
+    }
+
     /// The regions SolidCraft finds in the sketch feature `sketch` of `prefix`: each one's
     /// area and the point it names it by. `None` when SolidCraft cannot say.
     fn regions(&mut self, _prefix: &History, _sketch: u64) -> Option<Vec<SketchRegion>> {
@@ -235,9 +246,9 @@ fn measured(
     check: &mut Check<'_>,
 ) -> Option<Result<Mapped, String>> {
     let stored = stored_body_centers(feature);
-    // Short of the final state, only the bodies the source stores after the feature can be
-    // compared with: without them nothing could match.
-    if !final_state && stored.is_none() {
+    // Stored body centres cannot prove an unrecorded region's shape. New measured
+    // selections require the source's final solid; the earlier two readings stay unchanged.
+    if !final_state {
         return None;
     }
     let features = match regions(feature, ctx, history, params, check)? {
@@ -262,7 +273,12 @@ fn measured(
             continue;
         };
         measured += 1;
-        match check.fit(&trial.prefix, stored.as_deref(), final_state, true) {
+        match check.fit_bounded(
+            &trial.prefix,
+            stored.as_deref(),
+            final_state,
+            MEASURE_BUDGET.saturating_sub(started.elapsed()),
+        ) {
             Fit::Matches(measure) if measure.deviation.is_none_or(|d| d.within()) => {
                 found.push((trial, measure));
             }
@@ -390,6 +406,18 @@ fn regions(
 /// Every choice of `picks` (one or two) of `count` regions, or the reason when there are more
 /// than are measured.
 fn choices(count: usize, picks: usize) -> Result<Vec<Vec<usize>>, String> {
+    // Reject before allocating or enumerating a file-controlled number of combinations.
+    let total = if picks == 1 {
+        Some(count)
+    } else {
+        count.checked_mul(count.saturating_sub(1)).map(|n| n / 2)
+    };
+    if total.is_none_or(|total| total > MAX_CANDIDATES) {
+        return Err(format!(
+            "its profile region could not be inferred: its sketch has more than the \
+             {MAX_CANDIDATES} candidate regions measured"
+        ));
+    }
     let mut choices: Vec<Vec<usize>> = Vec::new();
     if picks == 1 {
         choices.extend((0..count).map(|a| vec![a]));
@@ -399,13 +427,6 @@ fn choices(count: usize, picks: usize) -> Result<Vec<Vec<usize>>, String> {
                 choices.push(vec![a, b]);
             }
         }
-    }
-    if choices.len() > MAX_CANDIDATES {
-        return Err(format!(
-            "its profile region could not be inferred: its sketch has {} candidate regions, \
-             more than the {MAX_CANDIDATES} measured",
-            choices.len()
-        ));
     }
     Ok(choices)
 }
@@ -586,7 +607,7 @@ pub(super) fn edges(
     source: usize,
     pending: &super::blend::Pending,
     bodies: &crate::verify::ReplayedBodies,
-    measure: &mut dyn FnMut(&History) -> Fit,
+    measure: &mut dyn FnMut(&History, Duration) -> Fit,
 ) -> Option<Result<(Vec<super::blend::Selection>, Inferred), String>> {
     let last = history
         .features
@@ -613,7 +634,7 @@ pub(super) fn edges(
         if super::split_blend(&mut trial, at, source, selections.clone()).is_err() {
             continue;
         }
-        match measure(&trial) {
+        match measure(&trial, MEASURE_BUDGET.saturating_sub(started.elapsed())) {
             Fit::Matches(measure) if measure.deviation.is_none_or(|d| d.within()) => {
                 found.push((selections, measure));
             }
@@ -660,4 +681,19 @@ pub(super) fn edges(
             deviation_nm: measure.deviation.and_then(|d| nanometres(d.max)),
         },
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{choices, MAX_CANDIDATES};
+
+    #[test]
+    fn oversized_region_sets_are_refused_before_enumeration() {
+        assert_eq!(choices(MAX_CANDIDATES, 1).unwrap().len(), MAX_CANDIDATES);
+        assert!(choices(MAX_CANDIDATES + 1, 1).is_err());
+        assert_eq!(choices(7, 2).unwrap().len(), 21);
+        assert!(choices(8, 2).is_err());
+        assert!(choices(usize::MAX, 1).is_err());
+        assert!(choices(usize::MAX, 2).is_err());
+    }
 }
