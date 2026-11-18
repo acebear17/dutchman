@@ -13194,11 +13194,13 @@ fn measured_regions_are_not_tried_without_a_solidcraft_check() {
     );
     let extrude = &report.outcome().unwrap().features[1];
     assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
-    assert!(extrude
+    assert!(extrude.inferred.is_none());
+    // The first readings' refusal stands: nothing measured, so nothing claims an inference.
+    assert!(!extrude
         .reason
         .as_deref()
         .unwrap()
-        .contains("could not be confirmed"));
+        .contains("could not be inferred"));
 }
 
 #[test]
