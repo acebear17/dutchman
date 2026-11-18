@@ -501,6 +501,9 @@ impl SolidCraftVersion {
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
 
+    /// First release with dimensional constraints on drawn 3D sketch wires.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
+
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
         let Self([major, minor, _]) = self;

@@ -23,7 +23,22 @@ pub(super) fn map(
     final_state: bool,
     check: &mut Check<'_>,
 ) -> Option<Result<Mapped, String>> {
-    let candidates = candidates(feature, ctx);
+    let spatial = ctx.target_version >= crate::SolidCraftVersion::V0_44_0
+        && super::operation_kind(feature) == Some("extrude")
+        && super::operation(feature)
+            .pointer("/profile/kind")
+            .and_then(Value::as_str)
+            == Some("spatial_sketch_profiles");
+    let candidates = if spatial {
+        vec![feature.clone()]
+    } else {
+        candidates(feature, ctx)
+    };
+    let unconfirmed = if spatial {
+        "its planar 3D sketch profile has not been confirmed against the source body"
+    } else {
+        UNCONFIRMED
+    };
     if candidates.is_empty() {
         return None;
     }
@@ -64,19 +79,26 @@ pub(super) fn map(
         if !check(&prefix, stored.as_deref(), final_state) {
             continue;
         }
+        if spatial {
+            trial.profile_unverified = false;
+        }
         *ctx = trial;
         history.features = preceding;
         report.append(notes);
-        report.push_coded(
-            Severity::Degraded, describe(feature), "history/profile-region-inferred",
-            "Dutchman inferred the profile region from the sketch selection; the source body check confirmed it",
-        );
+        if spatial {
+            report.push(Severity::Info, describe(feature), "its planar 3D sketch profile is written as a separate planar sketch; the source body check confirmed it");
+        } else {
+            report.push_coded(
+                Severity::Degraded, describe(feature), "history/profile-region-inferred",
+                "Dutchman inferred the profile region from the sketch selection; the source body check confirmed it",
+            );
+        }
         return Some(Ok(Mapped::Feature(mapped)));
     }
     Some(Err(if checked {
-        UNCONFIRMED.to_owned()
+        unconfirmed.to_owned()
     } else {
-        mapping_failure.unwrap_or_else(|| UNCONFIRMED.to_owned())
+        mapping_failure.unwrap_or_else(|| unconfirmed.to_owned())
     }))
 }
 

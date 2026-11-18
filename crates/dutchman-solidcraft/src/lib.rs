@@ -736,17 +736,29 @@ impl SolidCraftWriter {
                 == Some("sketch")
             {
                 // Retry the solved geometry without constraints before giving up its sketch.
-                if let Some(constraints) = history
-                    .features
-                    .get_mut(at)
-                    .and_then(|f| f.get_mut("sketch"))
-                    .and_then(|s| s.get_mut("constraints"))
-                    .and_then(Value::as_array_mut)
-                    .filter(|constraints| !constraints.is_empty())
-                {
-                    dropped = constraints.len();
-                    constraints.clear();
-                    repaired = true;
+                for key in ["constraints", "wire_constraints"] {
+                    if let Some(constraints) = history
+                        .features
+                        .get_mut(at)
+                        .and_then(|f| f.get_mut("sketch"))
+                        .and_then(|s| s.get_mut(key))
+                        .and_then(Value::as_array_mut)
+                        .filter(|constraints| !constraints.is_empty())
+                    {
+                        dropped += constraints.len();
+                        constraints.clear();
+                        repaired = true;
+                        if key == "wire_constraints" {
+                            if let Some(sketch) = history
+                                .features
+                                .get_mut(at)
+                                .and_then(|f| f.get_mut("sketch"))
+                                .and_then(Value::as_object_mut)
+                            {
+                                sketch.insert("wires_joined".to_owned(), Value::Bool(false));
+                            }
+                        }
+                    }
                 }
                 if repaired {
                     if let Some(sketch) = history.features.get(at) {
@@ -849,7 +861,12 @@ impl SolidCraftWriter {
 
 fn report_sketches(features: &[FeatureOutcome], report: &mut Report) {
     for feature in features.iter().filter(|f| {
-        f.kind == "sketch" && (f.status == FeatureStatus::Blocked || f.reason.is_some())
+        (f.kind == "sketch"
+            || (f.kind == "spatial_sketch"
+                && f.reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("not carried after replay failed"))))
+            && (f.status == FeatureStatus::Blocked || f.reason.is_some())
     }) {
         report.push(
             Severity::Degraded,

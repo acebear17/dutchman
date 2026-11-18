@@ -156,3 +156,8 @@ in code from `cadmpeg_ir::examples::unit_cube`: a 10 mm box with a 2 mm vertical
 fillet and a top-face hole, and a 10 mm plate with two separate 2 mm through holes. Their
 feature input samples are authored from those lines, quarter-circle arcs, and circles.
 No native design file or external model is used or stored for these tests.
+
+The `spatial_044_*` history tests in `dutchman-solidcraft/tests/history.rs` build
+neutral CADIR in code on cadmpeg's public synthetic unit cube. They use a square,
+a skew quadrilateral, independent spatial lines, points and an arc; no native
+CAD file or third-party geometry was added for them.

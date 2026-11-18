@@ -555,3 +555,12 @@ Debug builds accept `DUTCHMAN_TEST_SLOW_PART=<design name>` to hold one named pa
 preparation for six seconds, long enough for a real five-second heartbeat. Release builds
 do not read it. The running-step GUI screenshot case uses injected snapshots at 0 s,
 61 s, 120 s and 121 s through the normal card renderer in both themes.
+
+For target 0.44 and newer, the spatial sketch mapper writes `wire_constraints`
+for the neutral relations the pinned CADIR exposes and SolidCraft can solve.
+Assembly relocation renames their dimension parameters alongside planar ones;
+replay recovery clears both constraint lists before retrying solved geometry.
+Extrudes of explicitly resolved spatial loops use a planar copy in the
+source profile frame, admitted through the existing source body comparison
+callback. No native selection strings are interpreted. Older targets use the
+previous spatial mapper output and profile refusals.

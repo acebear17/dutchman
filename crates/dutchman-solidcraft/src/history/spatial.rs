@@ -5,8 +5,12 @@
 //! geometry, its coordinate `space`, and, for an exact arc, its centre, normal, radius and ends.
 //! Lines, exact arcs, full circles (as two half arcs), NURBS curves and points are written at
 //! their solved positions. A NURBS curve becomes a dense polyline of the exact curve with fit
-//! points along it. Relations to model edges and vertices, constraints, surfaces and
-//! source-native geometry are not carried.
+//! points along it. Relations to model edges and vertices, unsupported constraints, surfaces and
+//! source-native geometry are not carried. Targets from 0.44 also carry the neutral relations
+//! supported by the wire solver; older targets retain the solved-geometry representation.
+
+mod constraints;
+pub(super) mod profile;
 
 use std::collections::BTreeMap;
 
@@ -149,22 +153,25 @@ pub(crate) fn map(
             ),
         );
     }
-    let constraints = ctx
+    let legacy_constraints = ctx
         .arena("spatial_sketch_constraints")
         .iter()
         .filter(|row| row.get("sketch").and_then(Value::as_str) == Some(sketch_id))
         .count();
-    if constraints > 0 {
+    let modern = ctx.target_version >= crate::SolidCraftVersion::V0_44_0;
+    if !modern && legacy_constraints > 0 {
         report.push(
             Severity::Info,
-            subject,
+            subject.clone(),
             format!(
-                "{constraints} constraint{} not carried: the geometry is written at its solved \
+                "{legacy_constraints} constraint{} not carried: the geometry is written at its solved \
                  positions, and links to model edges and vertices are not kept",
-                if constraints == 1 { "" } else { "s" }
+                if legacy_constraints == 1 { "" } else { "s" }
             ),
         );
     }
+
+    let constraints = modern.then(|| constraints::map(sketch_id, &subject, &builder, ctx, report));
 
     ctx.spatial.insert(
         sketch_id.to_owned(),
@@ -173,7 +180,7 @@ pub(crate) fn map(
             wires: builder.shapes,
         },
     );
-    Ok(json!({
+    let mut out = json!({
         "id": id,
         "name": name,
         "type": "sketch",
@@ -187,7 +194,17 @@ pub(crate) fn map(
             "view": {"three_d": true},
             "wires": builder.wires,
         },
-    }))
+    });
+    if let Some(constraints) = constraints {
+        if let Some(sketch) = out.get_mut("sketch").and_then(Value::as_object_mut) {
+            if let Some(counters) = sketch.get_mut("counters").and_then(Value::as_object_mut) {
+                counters.insert("k".to_owned(), json!(constraints.len()));
+            }
+            sketch.insert("wire_constraints".to_owned(), json!(constraints));
+            sketch.insert("wires_joined".to_owned(), json!(true));
+        }
+    }
+    Ok(out)
 }
 
 /// The wires one entity's `geometry` becomes, or why none.
