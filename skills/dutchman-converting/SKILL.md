@@ -24,9 +24,12 @@ explain a refused boundary using its specific loss. The ordinary history/verific
 report still applies. See `docs/onshape.md`.
 Ellipses and elliptical arcs retain editable curves. Variables keep units and
 expressions, and remain design parameters alongside the STEP fallback even when no
-sketch maps. Explain `onshape/extrude.thin-not-supported` as a missing neutral wall
-representation; asymmetric chamfers need input reference-face ordering. Keep the
-final geometry and explain the named loss instead of guessing a wall or chamfer side.
+sketch maps. Thin extrudes keep selected curves, thickness and side on SolidCraft
+0.44 and newer. Unresolved wall options retain `onshape/extrude.thin-not-supported`;
+older targets keep a named loss. Repeated ellipse trims use solved chord endpoints
+and intersection records; outside-face witnesses recover complete closed loops.
+Tied intersections remain named losses. Asymmetric chamfers need input reference-face
+ordering. Keep final geometry and explain a named loss rather than guessing a side.
 Sketch-only Part Studios can omit STEP and convert to sketches alone. The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,

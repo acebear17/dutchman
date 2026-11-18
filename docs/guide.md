@@ -23,8 +23,10 @@ counterbore/countersink holes, midpoint relations, assigned variables and symmet
 blind extrudes. Unresolved selections and unsupported expressions retain named losses.
 Ellipses and elliptical arcs keep editable geometry. Variables keep their units and
 expressions, including when conversion falls back to STEP with no usable sketch.
-Thin walls report `onshape/extrude.thin-not-supported`; asymmetric chamfers explain
-the missing input reference-face ordering.
+Thin walls keep their curve selections, thickness and side on SolidCraft 0.44
+and newer (`--solidcraft-version 0.44.1`); older targets retain a named loss.
+Repeated ellipse carriers use solved chord endpoints and intersection records to retain distinct trimmed regions.
+Asymmetric chamfers explain the missing input reference-face ordering.
 See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.

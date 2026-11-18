@@ -175,7 +175,7 @@ fn point(u: f64, v: f64) -> Value {
     json!({"u": u, "v": v})
 }
 
-fn geometry(entity: &Value) -> Mapping<Value> {
+pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
     if entity.get("btType").and_then(Value::as_str) == Some("BTMSketchPoint-158") {
         return Ok(
             json!({"kind": "point", "position": point(coordinate(entity, "x")? * 1000.0, coordinate(entity, "y")? * 1000.0)}),

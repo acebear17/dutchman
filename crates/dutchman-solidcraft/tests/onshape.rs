@@ -286,6 +286,14 @@ fn synthetic_bundle_named(name: &str, mut edit: impl FnMut(&mut Value)) -> (Mode
 }
 
 fn write_synthetic(model: &Model, report: &mut Report) -> Value {
+    write_synthetic_target(model, report, SolidCraftVersion::default())
+}
+
+fn write_synthetic_latest(model: &Model, report: &mut Report) -> Value {
+    write_synthetic_target(model, report, SolidCraftVersion::V0_44_0)
+}
+
+fn write_synthetic_target(model: &Model, report: &mut Report, target: SolidCraftVersion) -> Value {
     let host = Arc::new(Measurements {
         step: model.source_step.clone().unwrap(),
         calls: Mutex::default(),
@@ -293,6 +301,7 @@ fn write_synthetic(model: &Model, report: &mut Report) -> Value {
     });
     let mut output = Vec::new();
     SolidCraftWriter::new()
+        .target_version(Some(target))
         .evaluator(host)
         .write(model, &mut output, report)
         .unwrap();
@@ -539,6 +548,154 @@ fn new_synthetic_sketches_and_inch_parameters_replay_against_the_source() {
             Check::Verified,
             "{:?}",
             report.losses()
+        );
+    }
+}
+
+fn thin_bundle(midplane: bool, flip: bool, second: f64) -> (Model, Report) {
+    synthetic_bundle(|value| {
+        value["features"].as_array_mut().unwrap().truncate(2);
+        let params = value["features"][1]["parameters"].as_array_mut().unwrap();
+        params[0]["value"] = json!("THIN");
+        params
+            .iter_mut()
+            .find(|p| p["parameterId"] == "entities")
+            .unwrap()["parameterId"] = json!("wallShape");
+        params.push(json!({"parameterId":"entities","queries":[]}));
+        params.extend([
+            json!({"parameterId":"midplane","value":midplane}),
+            json!({"parameterId":"flipWall","value":flip}),
+            json!({"parameterId":"thickness","expression":"2 mm"}),
+            json!({"parameterId":"thickness1","expression":"1 mm"}),
+            json!({"parameterId":"thickness2","expression":format!("{second} mm")}),
+        ]);
+    })
+}
+
+#[test]
+fn typed_thin_outputs_write_exact_curves_sides_and_thicknesses() {
+    for (midplane, flip, second, side, thickness, thickness2) in [
+        (false, false, 0.0, Some("outside"), "1 mm", None),
+        (false, true, 0.0, Some("inside"), "1 mm", None),
+        (true, false, 0.0, None, "2 mm", None),
+        (false, false, 2.0, Some("two_sides"), "2 mm", Some("1 mm")),
+    ] {
+        let (model, mut report) = thin_bundle(midplane, flip, second);
+        let doc = write_synthetic_latest(&model, &mut report);
+        let extrude = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "extrude")
+            .unwrap();
+        assert_eq!(extrude["thin"]["side"].as_str(), side);
+        assert_eq!(extrude["thin"]["thickness"], thickness);
+        assert_eq!(extrude["thin"]["thickness2"].as_str(), thickness2);
+        assert_eq!(extrude["thin"]["curves"].as_array().unwrap().len(), 4);
+        assert!(
+            report
+                .outcome()
+                .unwrap()
+                .features
+                .iter()
+                .all(|f| f.status == FeatureStatus::Mapped),
+            "{:?}",
+            report.outcome()
+        );
+    }
+}
+
+#[test]
+fn thin_outputs_refuse_conflicting_projections_and_preserve_older_targets() {
+    let mut report = Report::default();
+    // A mismatched profile in an otherwise well-formed typed record is not
+    // allowed to supply output semantics to a different model projection.
+    let (model, _) = thin_bundle(false, false, 0.0);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"]["features"][0]["definition"]["operation"]["value"]["profile"]["picks"] =
+        json!({"kind":"named","value":[]});
+    let model = Model {
+        ir: serde_json::from_value(wire).unwrap(),
+        ..model
+    };
+    let doc = write_synthetic_latest(&model, &mut report);
+    assert!(!doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "extrude"));
+    assert!(report.outcome().unwrap().features.iter().any(|f| f
+        .reason
+        .as_deref()
+        .is_some_and(|r| r.contains("projection disagree"))));
+    let (model, mut report) = thin_bundle(false, false, 0.0);
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.18.2".parse().unwrap()))
+        .write(&model, &mut output, &mut report)
+        .unwrap();
+    assert!(report.outcome().unwrap().features.iter().any(|f| f
+        .reason
+        .as_deref()
+        .is_some_and(|r| r.contains("thin extrudes need SolidCraft"))));
+}
+
+#[test]
+fn thin_circle_walls_replay_with_the_stated_side_and_volume() {
+    let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
+        eprintln!("Set SOLIDCRAFT_CLI to replay thin circle walls");
+        return;
+    };
+    let evaluator = dutchman_solidcraft::CliEvaluator::new(cli);
+    for (midplane, flip, second, area) in [
+        (false, false, 0.0, 11.0),
+        (false, true, 0.0, 9.0),
+        (true, false, 0.0, 20.0),
+        (false, false, 2.0, 27.0),
+    ] {
+        let (model, mut report) = synthetic_bundle(|value| {
+            value["features"].as_array_mut().unwrap().truncate(2);
+            value["features"][0]["constraints"] = json!([]);
+            value["features"][0]["entities"] = json!([{"btType":"BTMSketchCurve-4","entityId":"ring",
+                "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.005,"xDir":1.0}}]);
+            let params = value["features"][1]["parameters"].as_array_mut().unwrap();
+            params[0]["value"] = json!("THIN");
+            params
+                .iter_mut()
+                .find(|p| p["parameterId"] == "entities")
+                .unwrap()["parameterId"] = json!("wallShape");
+            params.push(json!({"parameterId":"entities","queries":[]}));
+            params.extend([
+                json!({"parameterId":"midplane","value":midplane}),
+                json!({"parameterId":"flipWall","value":flip}),
+                json!({"parameterId":"thickness","expression":"2 mm"}),
+                json!({"parameterId":"thickness1","expression":"1 mm"}),
+                json!({"parameterId":"thickness2","expression":format!("{second} mm")}),
+            ]);
+        });
+        let host = Arc::new(Measurements {
+            step: model.source_step.clone().unwrap(),
+            calls: Mutex::default(),
+            mismatch: "",
+        });
+        let mut output = Vec::new();
+        SolidCraftWriter::new()
+            .target_version(Some(SolidCraftVersion::V0_44_0))
+            .evaluator(host)
+            .write(&model, &mut output, &mut report)
+            .unwrap();
+        // The transport double above exercises archive writing; the kernel's
+        // independent measurement must match the analytic annulus, not that double.
+        let measured = evaluator
+            .evaluate(&output, Duration::from_secs(120), "thin-circle")
+            .unwrap();
+        let bodies = measured["bodies"].as_array().unwrap();
+        assert_eq!(bodies.len(), 1, "{measured}");
+        let volume = bodies[0]["volume_mm3"].as_f64().unwrap();
+        assert!(
+            (volume - area * std::f64::consts::PI * 2.0).abs() < 1e-7,
+            "{measured}"
         );
     }
 }

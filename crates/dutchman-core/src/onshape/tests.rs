@@ -55,7 +55,14 @@ fn read(bytes: &[u8]) -> (Value, Report) {
 fn compact(value: &Value) -> String {
     match value {
         Value::String(s) => format!("S{:x}${s}", s.len()),
-        Value::Number(n) => format!("D{:x}", n.as_i64().unwrap()),
+        Value::Number(n) => {
+            let n = n.as_i64().unwrap();
+            if n < 0 {
+                format!("D-{:x}", n.unsigned_abs())
+            } else {
+                format!("D{n:x}")
+            }
+        }
         Value::Bool(b) => if *b { "T" } else { "F" }.to_owned(),
         Value::Array(a) => format!(
             "A{:x}{}",
@@ -200,6 +207,7 @@ fn ambiguous_region_queries_get_specific_losses_and_keep_the_sketch() {
         ("ids", "one boundary description"),
         ("disambiguation", "unique boundary"),
         ("side", "resolved side"),
+        ("empty", "no resolved boundary edges"),
     ] {
         let bytes = changed(|response| {
             let query = selected(response);
@@ -217,6 +225,7 @@ fn ambiguous_region_queries_get_specific_losses_and_keep_the_sketch() {
                 "ids" => query["deterministicIds"] = json!(["one", "two"]),
                 "disambiguation" => value["disambiguationData"] = json!([]),
                 "side" => boundaries[0][1] = json!(0),
+                "empty" => *boundaries = json!([]),
                 _ => panic!("unknown test case"),
             }
             replace_query(query, &value);
@@ -962,4 +971,177 @@ fn elliptical_arc_regions_keep_the_source_interval_and_closing_chord() {
     assert!(boundary
         .iter()
         .any(|b| b["parameter_range"] == json!([0.0, span])));
+}
+
+// Synthetic ellipse cut by two solved chords. Both sides of the middle region
+// use the same ellipse carrier, with distinct imprint intervals across its seam.
+fn repeated_ellipse_region(response: &mut Value) {
+    response["features"][0]["entities"] = json!([
+        {"btType":"BTMSketchCurve-4","entityId":"oval","geometry":{
+            "btType":"BTCurveGeometryEllipse-1189","radius":0.010,"minorRadius":0.005,"xDir":1.0}},
+        {"btType":"BTMSketchCurveSegment-155","entityId":"upper","startParam":0.0,"endParam":0.016,
+            "geometry":{"btType":"BTCurveGeometryLine-117","pntX":-0.008,"pntY":0.003,"dirX":1.0}},
+        {"btType":"BTMSketchCurveSegment-155","entityId":"lower","startParam":0.0,"endParam":0.016,
+            "geometry":{"btType":"BTCurveGeometryLine-117","pntX":-0.008,"pntY":-0.003,"dirX":1.0}}
+    ]);
+    response["features"][0]["constraints"] = json!([]);
+    let query = selected(response);
+    let mut value = query::resolved(query).unwrap();
+    let operation = value["operationId"][0]
+        .as_str()
+        .unwrap()
+        .strip_suffix(".imprint")
+        .unwrap()
+        .to_owned();
+    let source = |name| {
+        json!({"entityType":"EDGE","historyType":"CREATION","queryType":"SKETCH_ENTITY",
+        "operationId":[format!("{operation}.wireOp")],"sketchEntityId":name})
+    };
+    let vertex = |line, order, side| {
+        json!([
+        {"entityType":"VERTEX","historyType":"CREATION","queryType":"INTERSECT",
+            "operationId":[format!("{operation}.imprint")],"derivedFrom":[source("oval"),source(line)],
+            "disambiguationData":[{"disambiguationType":"ORDER","order":order}]},side])
+    };
+    let ellipse = |vertices| {
+        json!([
+        {"entityType":"EDGE","historyType":"CREATION","queryType":"IMPRINT",
+            "operationId":[format!("{operation}.imprint")],"derivedFrom":source("oval"),
+            "disambiguationData":[{"disambiguationType":"TOPOLOGY","entities":vertices}]},1])
+    };
+    let line = |name, side| {
+        json!([
+        {"entityType":"EDGE","historyType":"CREATION","queryType":"IMPRINT",
+            "operationId":[format!("{operation}.imprint")],"derivedFrom":source(name)},side])
+    };
+    value["disambiguationData"][0]["entities"] = json!([
+        ellipse(json!([vertex("upper", 1, 1), vertex("lower", 0, -1)])),
+        ellipse(json!([vertex("lower", 1, 1), vertex("upper", 0, -1)])),
+        line("upper", -1),
+        line("lower", 1)
+    ]);
+    replace_query(query, &value);
+}
+
+#[test]
+fn repeated_ellipse_carrier_uses_the_solved_chords_and_intersection_order() {
+    let bytes = changed(repeated_ellipse_region);
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+    let boundary = wire["features"][1]["definition"]["value"]["value"]["profile"]["value"]["value"]
+        ["regions"][0]["outer_boundary"]
+        .as_array()
+        .unwrap();
+    assert_eq!(boundary.len(), 4);
+    let ranges: Vec<_> = boundary
+        .iter()
+        .filter(|e| e["entity"].as_str().unwrap().ends_with("/oval"))
+        .map(|e| {
+            (
+                e["parameter_range"][0].as_f64().unwrap(),
+                e["parameter_range"][1].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(ranges.len(), 2, "{boundary:?}");
+    let sweep: f64 = ranges.iter().map(|(a, b)| b - a).sum();
+    assert!((sweep - 4.0 * 0.6_f64.asin()).abs() < 1e-12);
+    assert!(ranges.iter().any(|(_, b)| *b > std::f64::consts::TAU));
+}
+
+#[test]
+fn repeated_ellipse_intersections_refuse_ties_and_unsolved_endpoints() {
+    for tie in [false, true] {
+        let bytes = changed(|response| {
+            repeated_ellipse_region(response);
+            let chord = &mut response["features"][0]["entities"][1];
+            if tie {
+                chord["endParam"] = json!(0.0);
+            } else {
+                chord["geometry"]["pntY"] = json!(0.004);
+            }
+        });
+        let (wire, report) = read(&bytes);
+        assert_eq!(kinds(&wire), ["sketch", "native"]);
+        assert!(
+            report.losses().iter().any(|l| l.code.as_deref()
+                == Some("onshape/history.not-supported")
+                && l.detail.contains(if tie {
+                    "order is ambiguous"
+                } else {
+                    "not a solved ellipse endpoint"
+                })),
+            "{:?}",
+            report.losses()
+        );
+    }
+}
+
+#[test]
+fn fractional_quantity_literals_use_the_unit_suffix_instead_of_the_default_zero() {
+    for (expression, expected) in [
+        ("3/8 in", 9.525),
+        ("(3/8) in", 9.525),
+        ("(2 + 1) / 4 mm", 0.75),
+    ] {
+        let bytes = changed(|response| {
+            response["features"][1]["parameters"][4]["expression"] = json!(expression);
+            response["features"][1]["parameters"][4]["value"] = json!(0.0);
+        });
+        let (wire, report) = read(&bytes);
+        assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+        assert!(
+            (wire["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+                ["length"]
+                .as_f64()
+                .unwrap()
+                - expected)
+                .abs()
+                < 1e-12
+        );
+    }
+}
+
+#[test]
+fn outside_region_witnesses_recover_the_outline_and_unlisted_holes() {
+    let bytes = changed(|response| {
+        repeated_ellipse_region(response);
+        let entities = response["features"][0]["entities"].as_array_mut().unwrap();
+        for (i, (x, y, dx, dy, length)) in [
+            (-0.02, -0.015, 1.0, 0.0, 0.04),
+            (0.02, -0.015, 0.0, 1.0, 0.03),
+            (0.02, 0.015, -1.0, 0.0, 0.04),
+            (-0.02, 0.015, 0.0, -1.0, 0.03),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            entities.push(json!({"btType":"BTMSketchCurveSegment-155","entityId":format!("frame{i}"),"startParam":0.0,"endParam":length,
+                "geometry":{"btType":"BTCurveGeometryLine-117","pntX":x,"pntY":y,"dirX":dx,"dirY":dy}}));
+        }
+        for (name, x, y) in [("hole", 0.013, 0.006), ("separate", 0.06, 0.06)] {
+            entities.push(json!({"btType":"BTMSketchCurve-4","entityId":name,
+                "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.002,"xCenter":x,"yCenter":y,"xDir":1.0}}));
+        }
+        let query = selected(response);
+        let mut value = query::resolved(query).unwrap();
+        let mut witness = value["disambiguationData"][0]["entities"][0].clone();
+        witness[1] = json!(-1);
+        value["disambiguationData"][0]["entities"] = json!([witness]);
+        replace_query(query, &value);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+    let region = &wire["features"][1]["definition"]["value"]["value"]["profile"]["value"]["value"]
+        ["regions"][0];
+    assert_eq!(region["outer_boundary"].as_array().unwrap().len(), 4);
+    let holes = region["hole_boundaries"].as_array().unwrap();
+    assert_eq!(holes.len(), 2, "{region}");
+    assert!(holes
+        .iter()
+        .any(|h| h[0]["entity"].as_str().unwrap().ends_with("/hole")));
+    assert!(holes
+        .iter()
+        .any(|h| h[0]["entity"].as_str().unwrap().ends_with("/oval")
+            && h[0]["parameter_range"] == json!([0.0, std::f64::consts::TAU])));
 }

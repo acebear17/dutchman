@@ -186,3 +186,11 @@ line axes, origin and midpoint relations, and assigned-variable symmetric extrud
 All identifiers, dimensions and geometry in those variants were invented for tests.
 `dutchman/tests/onshape.rs` uses a synthetic response client to capture and convert
 a sketch-only Part Studio without any STEP request or network connection.
+
+The repeated-carrier tests in `src/onshape/tests.rs` rebuild the default-plane
+bundle in memory with a generic ellipse and two solved chords. They encode
+intersection-order witnesses independently, including ambiguous endpoints and an
+outside region with an unlisted hole. Thin-wall tests in `tests/onshape.rs` and
+`dutchman-solidcraft/tests/onshape.rs` rebuild the synthetic plate bundle in memory;
+the replay test uses a generic circle and checks analytic annulus volumes. No
+private bundle geometry or identifiers enter these tests.

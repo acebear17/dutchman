@@ -14,11 +14,17 @@ rows and `verification` describe CADIR mapping and comparison with the bundle's
 STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-region
 queries use these existing rows and codes too. Unresolved source boundaries report
 a specific reason under `onshape/history.not-supported`; no report field changes.
-`onshape/extrude.thin-not-supported` is a Degraded loss at stage `map`: the pinned
-neutral extrude cannot carry wall thickness and direction. The final STEP geometry
-remains. Two-offset and distance-and-angle chamfers retain their dimensions in
+`onshape/extrude.thin-not-supported` is a Degraded loss at stage `map` for
+unresolved wall options. Resolved thin outputs keep thickness and side through
+CADIR v11 and map on SolidCraft 0.44 and newer; older targets report a named
+feature reason and preserve final geometry. Repeated ellipse trims and incomplete
+outside-face witness lists use the existing history rows; unresolved intersections
+and tied connections retain `onshape/history.not-supported`. Two-offset and distance-and-angle chamfers retain their dimensions in
 CADIR; asymmetric forms report missing input reference-face ordering in the existing
 history feature reason. Ellipses and variable expressions add no report fields.
+Explicit `--solidcraft-version` and MCP `solidcraft_version` options keep their
+full `x.y.z` value during writer preparation; the report's minor-only target is
+display metadata and is not parsed back into the option.
 Parameters retained alongside a STEP fallback are no longer counted as parameters
 carried only as a non-parametric body, even when no sketch maps.
 The optional bundle manifest field `consistent` is input metadata, not a new

@@ -30,7 +30,10 @@ Missing or unsupported feature selections produce named losses and preserve the
 bundle's STEP geometry. See [Onshape](onshape.md) for the supported subset.
 Ellipses and elliptical arcs map through the shared sketch writer. Variables retain
 units, expressions and sketch/extrude dependencies, also alongside a STEP fallback.
-`onshape/extrude.thin-not-supported` names the missing neutral wall representation;
+Thin extrudes retain selected curves, thickness and side on SolidCraft 0.44 and
+newer (set `solidcraft_version` to `0.44.1`). Repeated ellipse trims use intersection
+records and solved chord endpoints; outside-face witnesses recover complete closed
+source loops. Unresolved wall options retain `onshape/extrude.thin-not-supported`;
 asymmetric chamfers report missing input reference-face ordering.
 An explicitly inconsistent bundle is refused with a request to fetch it again or
 use a version link. Legacy v1 bundles without consistency metadata remain readable.

@@ -16,6 +16,7 @@ pub(crate) fn map(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Result<Value, String> {
+    let thin = super::thin::map(feature, definition, ctx)?;
     let reference = definition.get("profile").map(super::profile::planar);
     let face_profile = reference
         .and_then(|profile| profile.get("kind"))
@@ -36,7 +37,9 @@ pub(crate) fn map(
                 .to_owned(),
         );
     }
-    let (sketch_id, profiles) = if face_profile {
+    let (sketch_id, profiles) = if let Some((sketch, _)) = &thin {
+        (sketch.clone(), json!({"type":"all"}))
+    } else if face_profile {
         // The sketch of the face's boundary runs along the face's outward normal; mapping
         // assumes that side and the replay corrects it, so nothing here may depend on the
         // side beyond travelling along or against the profile normal.
@@ -60,7 +63,7 @@ pub(crate) fn map(
     } else {
         profile(reference, ctx)?
     };
-    let profile_sketch = if face_profile {
+    let profile_sketch = if face_profile || thin.is_some() {
         None
     } else {
         super::profile::whole_region_sketch(feature, &sketch_id, ctx, preceding)
@@ -197,7 +200,7 @@ pub(crate) fn map(
     }
     let end = end_of_sweep(definition, &extent, sketch, start_height, forward);
     let body_names = body_names(feature, ctx, operation);
-    if !face_profile {
+    if !face_profile && thin.is_none() {
         let proven = match (operation, end) {
             ("new_body", Some(end)) if ctx.sole_builder => {
                 match super::cap::check(reference, ctx, &end) {
@@ -225,6 +228,11 @@ pub(crate) fn map(
         "extent": extent,
         "operation": operation,
     });
+    if let Some((_, thin)) = thin {
+        if let Some(fields) = out.as_object_mut() {
+            fields.insert("thin".to_owned(), thin);
+        }
+    }
     if let (Some(names), Some(fields)) = (body_names, out.as_object_mut()) {
         fields.insert("body_names".to_owned(), json!(names));
     }

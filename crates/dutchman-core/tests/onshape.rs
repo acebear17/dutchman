@@ -900,29 +900,55 @@ fn ellipses_and_elliptical_arcs_keep_axes_units_bounds_and_endpoint_loci() {
 }
 
 #[test]
-fn thin_extrusions_report_the_neutral_wall_representation_gap() {
+fn thin_extrusions_keep_typed_wall_thickness_and_side() {
     for midplane in [false, true] {
         for flip in [false, true] {
-            let bytes = changed(&fixture("plate-fillet"), |path, value| {
-                if !path.ends_with("features.json") {
-                    return;
-                }
-                let params = value["features"][1]["parameters"].as_array_mut().unwrap();
-                params[0]["value"] = json!("THIN");
-                params.extend([
-                    json!({"parameterId":"midplane","value":midplane}),
-                    json!({"parameterId":"flipWall","value":flip}),
-                    json!({"parameterId":"thickness","expression":"0.3 mm"}),
-                    json!({"parameterId":"thickness1","expression":"0.1 mm"}),
-                    json!({"parameterId":"thickness2","expression":"0.2 mm"}),
-                ]);
-            });
-            let (model, report) = read(&bytes).unwrap();
-            assert_eq!(kinds(&model)[1], "native");
-            assert!(model.source_step.is_some());
-            assert!(report.losses().iter().any(|l| l.code.as_deref()
-                == Some("onshape/extrude.thin-not-supported")
-                && l.detail.contains("wall thickness and direction")));
+            for second in [0.0, 0.2] {
+                let bytes = changed(&fixture("plate-fillet"), |path, value| {
+                    if !path.ends_with("features.json") {
+                        return;
+                    }
+                    let params = value["features"][1]["parameters"].as_array_mut().unwrap();
+                    params[0]["value"] = json!("THIN");
+                    params
+                        .iter_mut()
+                        .find(|p| p["parameterId"] == "entities")
+                        .unwrap()["parameterId"] = json!("wallShape");
+                    params.push(json!({"parameterId":"entities","queries":[]}));
+                    params.extend([
+                        json!({"parameterId":"midplane","value":midplane}),
+                        json!({"parameterId":"flipWall","value":flip}),
+                        json!({"parameterId":"thickness","expression":"0.3 mm"}),
+                        json!({"parameterId":"thickness1","expression":"0.1 mm"}),
+                        json!({"parameterId":"thickness2","expression":format!("{second} mm")}),
+                    ]);
+                });
+                let (model, report) = read(&bytes).unwrap();
+                assert_eq!(kinds(&model)[1], "extrude", "{:?}", report.losses());
+                let wire = timeline(&model);
+                let thickness = &wire["design"]["features"][0]["definition"]["operation"]["value"]
+                    ["output"]["body"]["thickness"];
+                let literal = |value| json!({"kind":"literal","value":value});
+                let expected = if midplane {
+                    json!({"kind":"symmetric","value":literal(0.3)})
+                } else if second == 0.0 {
+                    json!({"kind":"one_side","value":{"value":literal(0.1),"side":{"kind":if flip {"inside"} else {"outside"}}}})
+                } else {
+                    json!({"kind":"offsets","value":{"outside":literal(if flip {0.2} else {0.1}),"inside":literal(if flip {0.1} else {0.2})}})
+                };
+                assert_eq!(thickness, &expected);
+                assert_eq!(
+                    wire["design"]["features"][0]["id"],
+                    wire["model"]["features"][1]["id"]
+                );
+                let roundtrip: cadmpeg_ir::CadIr =
+                    serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
+                assert_eq!(roundtrip, model.ir);
+                assert!(!report
+                    .losses()
+                    .iter()
+                    .any(|l| l.code.as_deref() == Some("onshape/extrude.thin-not-supported")));
+            }
         }
     }
 }

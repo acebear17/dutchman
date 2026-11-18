@@ -57,16 +57,18 @@ pub(super) fn quantity(parameter: &Value, angle: bool, model: &Model) -> Mapping
             )
             .map(|v| v.value);
         }
-        let mut parts = expression.split_whitespace();
-        if let (Some(Ok(value)), Some(unit), None) = (
-            parts.next().map(str::parse::<f64>),
-            parts.next(),
-            parts.next(),
-        ) {
+        // REST quantities may retain fractional literals while their `value`
+        // is the default zero. The unit suffix applies to the whole scalar
+        // expression, including a parenthesized fraction.
+        if let Some((scalar, unit)) = expression.trim().rsplit_once(char::is_whitespace) {
             if let Some(factor) = scale(unit, angle) {
-                let result = value * factor;
-                if result.is_finite() {
-                    return Ok(result);
+                if let Ok(value) =
+                    super::expression::evaluate(scalar, super::expression::Dimension::Scalar, model)
+                {
+                    let result = value.value * factor;
+                    if result.is_finite() {
+                        return Ok(result);
+                    }
                 }
             }
         }
@@ -103,20 +105,33 @@ pub(super) fn queries<'a>(feature: &'a Value, key: &str) -> Mapping<&'a [Value]>
     }
 }
 
-pub(super) fn profile(feature: &Value, key: &str, model: &Model) -> Mapping<Value> {
+pub(super) fn profile(
+    feature: &Value,
+    key: &str,
+    model: &Model,
+    inputs: &topology::Inputs<'_>,
+) -> Mapping<Value> {
     let query = queries(feature, key)?;
     if query.iter().all(|q| {
         super::query::resolved(q)
             .is_ok_and(|q| q.get("queryType").and_then(Value::as_str) == Some("SKETCH_ENTITY"))
     }) {
-        return sketch_entities(query, model, "VERTEX");
+        return sketch_entities(
+            query,
+            model,
+            if value(feature, "bodyType") == Some("THIN") {
+                "EDGE"
+            } else {
+                "VERTEX"
+            },
+        );
     }
     if query.iter().any(|q| {
         q.get("queryString")
             .and_then(Value::as_str)
             .is_some_and(|s| s.contains("qCompressed("))
     }) {
-        return super::regions::profile(query, model);
+        return super::regions::profile(query, model, inputs);
     }
     let [query] = query else {
         return Err("multiple profile queries are not supported yet".into());
@@ -291,6 +306,7 @@ pub(super) fn map(
     ordinal: usize,
     inputs: &topology::Inputs<'_>,
     model: &mut Model,
+    design: &mut cadmpeg_ir::document::Design,
     report: &mut Report,
 ) -> Mapping<Value> {
     if feature
@@ -375,13 +391,24 @@ pub(super) fn map(
             ))
         }
         "extrude" => {
-            if value(feature, "bodyType") == Some("THIN") {
-                return Err("thin extrudes are not supported yet: the neutral model cannot carry wall thickness and direction; use a solid extrude or keep the final STEP geometry".into());
-            }
-            if value(feature, "bodyType") != Some("SOLID") {
+            if !matches!(value(feature, "bodyType"), Some("SOLID" | "THIN")) {
                 return Err("non-solid extrudes are not supported yet".into());
             }
-            let profile = profile(feature, "entities", model)?;
+            let key = if value(feature, "bodyType") == Some("THIN")
+                && rows(feature, "parameters")?
+                    .iter()
+                    .any(|p| p.get("parameterId").and_then(Value::as_str) == Some("wallShape"))
+            {
+                "wallShape"
+            } else {
+                "entities"
+            };
+            let profile = profile(feature, key, model, inputs)?;
+            let profile = if value(feature, "bodyType") == Some("THIN") {
+                super::thin::profile(profile, model)?
+            } else {
+                profile
+            };
             let termination = match value(feature, "endBound") {
                 Some("BLIND") => {
                     json!({"kind": "blind", "length": length(feature, "depth", model)?})
@@ -427,17 +454,24 @@ pub(super) fn map(
             } else {
                 json!({"kind": "profile_normal"})
             };
-            Ok(definition(
+            let definition = definition(
                 "extrude",
                 json!({"profile": {"kind": "planar", "value": profile}, "direction": direction,
                 "start": {"kind": "profile_plane"}, "extent": {"kind": if enabled(feature,"symmetric") {"symmetric"} else {"one_sided"}, "side": {"termination": termination}}, "op": operation(feature)?, "solid": true}),
-            ))
+            );
+            if value(feature, "bodyType") == Some("THIN") {
+                push(
+                    &mut design.features,
+                    super::thin::feature(feature, &definition, model)?,
+                )?;
+            }
+            Ok(definition)
         }
         "revolve" => {
             if value(feature, "bodyType") != Some("SOLID") {
                 return Err("non-solid revolves are not supported yet".into());
             }
-            let profile = profile(feature, "entities", model)?;
+            let profile = profile(feature, "entities", model, inputs)?;
             let axis_queries = queries(feature, "axis")?;
             let axis = if axis_queries.iter().any(|q| {
                 super::query::resolved(q).is_ok_and(|q| {
@@ -575,6 +609,7 @@ fn hole(
             "entities"
         },
         model,
+        inputs,
     )?;
     if parameter(feature, "scope")
         .ok()
