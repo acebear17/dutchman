@@ -13,7 +13,8 @@ def flags(paths):
     return {
         'code': bool(sources),
         'rust': any(rust.search(path) for path in sources),
-        'docker': any(image.search(path) for path in sources),
+        'conversion': any(not path.startswith('crates/dutchman-gui/') or path.endswith(('Cargo.toml', 'Cargo.lock')) for path in sources),
+        'docker': any(image.search(path) or path.endswith(('Cargo.toml', 'Cargo.lock')) for path in sources),
         'docs': any(path in ('README.md', 'docs/formats.md') for path in paths),
     }
 
@@ -21,10 +22,10 @@ def flags(paths):
 def select(base, event, ref):
     full = event in ('merge_group', 'workflow_dispatch') or ref.startswith('refs/tags/')
     if event == 'workflow_dispatch' or ref.startswith('refs/tags/'):
-        return {'full': full, **dict.fromkeys(('code', 'rust', 'docker', 'docs'), True)}
+        return {'full': full, **dict.fromkeys(('code', 'rust', 'conversion', 'docker', 'docs'), True)}
     valid = subprocess.run(['git', 'cat-file', '-e', f'{base}^{{commit}}'], capture_output=True)
     if valid.returncode != 0:
-        return {'full': full, **dict.fromkeys(('code', 'rust', 'docker', 'docs'), True)}
+        return {'full': full, **dict.fromkeys(('code', 'rust', 'conversion', 'docker', 'docs'), True)}
     diff = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, 'HEAD'])
     paths = [path.decode('utf-8', errors='surrogateescape') for path in diff.split(b'\0') if path]
     return {'full': full, **flags(paths)}

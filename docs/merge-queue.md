@@ -126,3 +126,8 @@ If a workflow is cancelled, its always-running `ci-result` rejects cancelled req
 jobs and reports which checks to rerun. A red `ci-result` in an overall cancelled run
 does not by itself mean a compilation, test or path-filter failure. Rerun CI for the
 commit after runner capacity is available; do not treat cancellation as a passing check.
+
+Groups changing only `crates/dutchman-gui/` retain workspace tests on every OS and
+MSRV, while skipping the conversion-only WebAssembly, placement, round-trip and image
+checks. A Cargo manifest/lockfile, conversion source or unknown build path in the group
+turns those checks back on. Tags and manual full runs always include them.

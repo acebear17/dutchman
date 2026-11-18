@@ -17,7 +17,7 @@ class ChangesTests(unittest.TestCase):
 
     def test_readme_requires_focused_tests(self):
         self.assertEqual(CHANGES.flags(['README.md']),
-                         dict(code=False, rust=False, docker=False, docs=True))
+                         dict(code=False, rust=False, conversion=False, docker=False, docs=True))
 
     def test_crate_readme_needs_no_rust_build(self):
         self.assertFalse(any(CHANGES.flags(["crates/dutchman-core/README.md"]).values()))
@@ -30,12 +30,14 @@ class ChangesTests(unittest.TestCase):
         self.assertTrue(selected['code'])
         self.assertTrue(selected['rust'])
         self.assertFalse(selected['docker'])
+        self.assertFalse(selected['conversion'])
 
     def test_mixed_group_preserves_checks(self):
         selected = CHANGES.flags(['changelog.d/note.md', 'crates/dutchman-core/src/decode.rs'])
         self.assertTrue(selected['code'])
         self.assertTrue(selected['rust'])
         self.assertTrue(selected['docker'])
+        self.assertTrue(selected['conversion'])
 
     def test_renamed_source_still_runs_code_checks(self):
         self.assertTrue(CHANGES.flags(['scripts/new-check.py'])['code'])
@@ -59,3 +61,22 @@ class ChangesTests(unittest.TestCase):
             self.assertTrue(selected['full'])
             self.assertTrue(selected['code'])
             diff.assert_called_once_with(['git', 'diff', '--name-only', '-z', 'base', 'HEAD'])
+
+    def test_workflow_selects_conversion_jobs_for_core_but_not_gui(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        for path, expected in [('crates/dutchman-gui/src/app.rs', False),
+                               ('crates/dutchman-core/src/decode.rs', True)]:
+            outputs = {'full': True, **CHANGES.flags([path])}
+            for job in ('wasm', 'solidcraft-roundtrip', 'placements'):
+                section = workflow[workflow.index('  ' + job + ':\n'):]
+                condition = next(line.strip()[4:] for line in section.splitlines() if line.startswith('    if:'))
+                condition = condition.replace('github.event_name', repr('merge_group'))
+                for key, value in outputs.items():
+                    condition = condition.replace('needs.changes.outputs.' + key, repr(str(value).lower()))
+                selected = eval(condition.replace('&&', 'and'), {'__builtins__': {}})
+                self.assertEqual(selected, expected, (path, job, condition))
+
+    def test_gui_manifest_keeps_conversion_and_image_checks(self):
+        selected = CHANGES.flags(['crates/dutchman-gui/Cargo.toml'])
+        self.assertTrue(selected['conversion'])
+        self.assertTrue(selected['docker'])

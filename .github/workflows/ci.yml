@@ -38,6 +38,7 @@ jobs:
       full: ${{ steps.diff.outputs.full }}
       rust: ${{ steps.diff.outputs.rust }}
       code: ${{ steps.diff.outputs.code }}
+      conversion: ${{ steps.diff.outputs.conversion }}
       docker: ${{ steps.diff.outputs.docker }}
       docs: ${{ steps.diff.outputs.docs }}
     steps:
@@ -108,7 +109,7 @@ jobs:
   # dutchman-solidcraft turns on every input format plus FreeCAD, so the codecs are checked too.
   wasm:
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.conversion == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -374,7 +375,7 @@ jobs:
   solidcraft-roundtrip:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.changes.outputs.conversion == 'true'
     runs-on: ubuntu-latest
     continue-on-error: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     strategy:
@@ -444,7 +445,7 @@ jobs:
   # Reuse the existing jobs so ci-result waits for them, without a second merge_group run.
   placements:
     needs: changes
-    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.conversion == 'true'
     uses: ./.github/workflows/placements.yml
 
   release-build:
@@ -469,17 +470,18 @@ jobs:
           import json, os, sys
           needs = json.load(sys.stdin)
           event = os.environ["EVENT"]
-          outputs = needs["changes"]["outputs"]
+          outputs = needs["changes"].get("outputs", {})
           full = outputs.get("full") == "true"
           code = outputs.get("code") == "true"
           native = event != "pull_request" and code
+          conversion = event != "pull_request" and outputs.get("conversion") == "true"
           required = {
               "changes": True, "release-notes": True,
               "fmt": code, "clippy": code, "test": code, "docs": not code and outputs.get("docs") == "true",
-              "wasm": native, "msrv": native, "solidcraft-roundtrip": native,
+              "wasm": conversion, "msrv": native, "solidcraft-roundtrip": conversion,
               "test-macos": event != "pull_request" and outputs.get("rust") == "true",
               "docker": event != "pull_request" and outputs.get("docker") == "true",
-              "placements": full and code,
+              "placements": full and outputs.get("conversion") == "true",
               "release-build": event in ("merge_group", "workflow_dispatch"),
           }
           bad = {}
@@ -500,12 +502,12 @@ jobs:
           retry = needs["test-arm-again"]["result"]
           if (native and (arm, retry) not in (("success", "skipped"), ("failure", "success"))) or (not native and (arm, retry) != ("skipped", "skipped")):
               bad["test-arm"] = arm + "; retry: " + retry
-          if any(outputs.get(key) not in ("true", "false") for key in ("full", "code", "rust", "docker", "docs")):
+          if any(outputs.get(key) not in ("true", "false") for key in ("full", "code", "rust", "conversion", "docker", "docs")):
               bad["changes"] = "missing or unexpected filter outputs"
           if event == "merge_group" and not full:
               bad["changes"] = "merge group must set full=true"
           if event == "workflow_dispatch" or os.environ["GITHUB_REF"].startswith("refs/tags/"):
-              if not full or not code or outputs.get("rust") != "true" or outputs.get("docker") != "true":
+              if not full or not code or outputs.get("rust") != "true" or outputs.get("docker") != "true" or outputs.get("conversion") != "true":
                   bad["changes"] = "full matrix filters must all be true"
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
