@@ -240,7 +240,8 @@ so you'll get the solid shape without the feature history."
 
 When someone asks what a file holds (its bodies, its features, its parameters) or which
 features would carry across, call `contents` with `input`. It writes nothing, runs no
-SolidCraft, and returns `dutchman.contents/1`:
+SolidCraft, and returns `dutchman.contents/1`. Verdicts target the newest SolidCraft
+release known to the build, without looking for an installed CLI:
 
 - `bodies.items`: each body's `kind`, `name` and `hidden`.
 - `features.items`: the timeline in order, with `kind`, `name`, `suppressed`, and a `verdict`:

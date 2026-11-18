@@ -25,7 +25,11 @@ struct Client {
 
 impl Client {
     fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_dutchman-mcp"))
+        Self::start_command(Command::new(env!("CARGO_BIN_EXE_dutchman-mcp")))
+    }
+
+    fn start_command(mut command: Command) -> Self {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -226,6 +230,66 @@ fn an_mcp_client_converts_through_dutchman() {
     assert!(journal.is_file());
 
     client.finish();
+}
+
+#[test]
+fn contents_matches_the_cli_report_without_writing_a_design() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("project folder");
+    std::fs::create_dir(&folder).unwrap();
+    let input = folder.join("design history.FCStd");
+    std::fs::copy(fixture("design_history.FCStd"), &input).unwrap();
+
+    let mut server_command = Command::new(env!("CARGO_BIN_EXE_dutchman-mcp"));
+    let mut cli_command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
+    server_command.env("SOLIDCRAFT_CLI", dir.path().join("no-solidcraft-cli"));
+    cli_command.env("SOLIDCRAFT_CLI", dir.path().join("no-solidcraft-cli"));
+    #[cfg(unix)]
+    let marker = {
+        use std::os::unix::fs::PermissionsExt;
+        let fake_cli = dir.path().join("solidcraft-cli");
+        std::fs::write(
+            &fake_cli,
+            "#!/bin/sh\nprintf invoked > \"$0.called\"\nprintf 'solidcraft-cli 0.18.2\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        server_command.env("SOLIDCRAFT_CLI", &fake_cli);
+        cli_command.env("SOLIDCRAFT_CLI", &fake_cli);
+        fake_cli.with_extension("called")
+    };
+    let mut client = Client::start_command(server_command);
+    let reply = client.call("contents", json!({"input": input}));
+    assert_eq!(reply["isError"], false, "{reply}");
+    let report = &reply["structuredContent"];
+    assert_eq!(report["schema"], "dutchman.contents/1");
+    assert_eq!(report["input"]["path"], input.display().to_string());
+    assert_eq!(
+        report["solidcraft_version"],
+        dutchman_solidcraft::SolidCraftVersion::default().to_string()
+    );
+    assert!(report["features"]["count"].as_u64().unwrap() > 0);
+    assert!(
+        report["features"]["verdicts"]["needs_solidcraft_check"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    let text: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(&text, report);
+
+    let cli = cli_command
+        .args(["contents", "--json"])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(cli.status.success(), "{cli:?}");
+    let cli_report: Value = serde_json::from_slice(&cli.stdout).unwrap();
+    assert_eq!(&cli_report, report);
+    client.finish();
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+    #[cfg(unix)]
+    assert!(!marker.exists(), "contents must not launch SolidCraft");
 }
 
 #[test]

@@ -370,6 +370,9 @@ This page used to hold everything. Each part now has its own page:
 
 [List what a file holds: contents](command-line.md#list-what-a-file-holds-contents)
 
+Contents reports what maps for the newest SolidCraft release known to this build,
+without looking for or launching an installed SolidCraft CLI.
+
 ### Progress during conversion
 
 [Progress during conversion](command-line.md#progress-during-conversion)

@@ -326,7 +326,9 @@ suppressed) and its parameters (name, value, unit, expression, owning feature), 
 feature a verdict: `mapped`, `needs_solidcraft_check` (it maps, but converting keeps it only
 when SolidCraft confirms it, such as a fillet whose input edges are found on SolidCraft's
 replay), `not_needed`, `left_out`, `not_supported_yet` (with the reason), or `after_blocker`.
-It writes nothing and runs no SolidCraft, so it answers quickly even for large assemblies. See
+It writes nothing and runs no SolidCraft. Verdicts target the newest SolidCraft release
+known to this build, without looking for an installed CLI. Reading large assemblies can
+still take time. See
 [`dutchman.contents/1`](json.md#dutchmancontents1).
 
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note

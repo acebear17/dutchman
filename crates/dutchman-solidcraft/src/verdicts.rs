@@ -61,7 +61,8 @@ pub struct PartVerdicts<'a> {
 impl SolidCraftWriter {
     /// What mapping says of each source feature of `model`, part by part, without running
     /// SolidCraft or writing anything. Parts an assembly repeats are listed once, as
-    /// conversion writes them once.
+    /// conversion writes them once. Without an explicit target version, use the newest
+    /// release known at build time, without discovering an installed CLI.
     pub fn verdicts<'a>(&self, model: &'a Model) -> Vec<PartVerdicts<'a>> {
         let Some(assembly) = &model.assembly else {
             return vec![self.part_verdicts(model, model, None)];
@@ -98,7 +99,7 @@ impl SolidCraftWriter {
         let mapping = history::map_with_profile_check(
             mapped,
             &mut Report::default(),
-            self.resolved_version(),
+            self.target_version.unwrap_or_default(),
             self.sketches,
             &mut |prefix, _, _| {
                 if let Some(id) = prefix
@@ -170,7 +171,9 @@ mod tests {
     #[test]
     fn a_design_without_history_has_one_part_and_says_why_nothing_maps() {
         let model = cube();
-        let parts = SolidCraftWriter::new().verdicts(&model);
+        let writer = SolidCraftWriter::new();
+        let parts = writer.verdicts(&model);
+        assert!(writer.detected_version.get().is_none());
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].part, None);
         assert!(parts[0].features.is_empty());

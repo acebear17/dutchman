@@ -814,7 +814,8 @@ fn contents_inner(
     if let Some(progress) = progress {
         progress.stage(dutchman_core::Stage::Map);
     }
-    let writer = SolidCraftWriter::new();
+    let writer = SolidCraftWriter::new()
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default()));
     let parts = writer.verdicts(&model);
     Ok(json::contents(
         input,
