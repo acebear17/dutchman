@@ -1111,3 +1111,178 @@ fn elliptical_curves_with_unresolved_axes_or_bounds_leave_a_named_loss() {
         assert!(model.source_step.is_some());
     }
 }
+
+#[path = "fixtures/onshape_regions.rs"]
+mod region_fixture;
+
+#[test]
+fn an_open_divider_cannot_expand_the_selected_frame_face() {
+    for divider in [false, true] {
+        let bytes = changed(&fixture("default-plane-regions"), |path, value| {
+            if path.ends_with("features.json") {
+                region_fixture::frame(value, divider);
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model),
+            if divider {
+                vec!["sketch", "native"]
+            } else {
+                vec!["sketch", "extrude"]
+            }
+        );
+        assert_eq!(
+            report.losses().iter().any(|l| l.code.as_deref()
+                == Some("onshape/history.not-supported")
+                && l.detail.contains("open divider")),
+            divider,
+            "{:?}",
+            report.losses()
+        );
+    }
+}
+
+#[test]
+fn repeated_exterior_consumers_exhaust_the_bundle_budget_early() {
+    let bytes = changed(&fixture("default-plane-regions"), |path, value| {
+        if !path.ends_with("features.json") {
+            return;
+        }
+        region_fixture::frame(value, false);
+        let entities = value["features"][0]["entities"].as_array_mut().unwrap();
+        for i in 0..128 {
+            entities.push(json!({"btType":"BTMSketchCurve-4","entityId":format!("small-hole-{i}"),"geometry":{
+                "btType":"BTCurveGeometryCircle-115","radius":0.00005,
+                "xCenter":0.011 + f64::from(i % 16)*0.0004,"yCenter":0.001 + f64::from(i / 16)*0.0004,"xDir":1.0}}));
+        }
+        let template = value["features"][1].clone();
+        let features = value["features"].as_array_mut().unwrap();
+        for i in 0..128 {
+            let mut feature = template.clone();
+            feature["featureId"] = json!(format!("repeat-{i}"));
+            if i == 127 {
+                feature["parameters"][0]["value"] = json!("THIN");
+            }
+            features.push(feature);
+        }
+    });
+    let started = std::time::Instant::now();
+    let (model, report) = read(&bytes).unwrap();
+    let elapsed = started.elapsed();
+    let kinds = kinds(&model);
+    assert_eq!(kinds[1], "extrude");
+    let first_loss = kinds.iter().position(|k| k == "native").unwrap();
+    assert!(
+        first_loss < 100,
+        "refuse well before expanding every consumer: {first_loss}"
+    );
+    assert!(kinds[first_loss..].iter().all(|k| k == "native"));
+    let wire = timeline(&model);
+    let boundary_bytes: usize = wire["model"]["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f.pointer("/definition/value/value/profile/value/value/regions"))
+        .map(|regions| serde_json::to_vec(regions).unwrap().len())
+        .sum();
+    eprintln!("Cumulative recovery: refused at consumer {first_loss} of 129 (128 extra holes); emitted {boundary_bytes} region JSON bytes; reader {elapsed:?}");
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|l| l.detail.contains("budget is exhausted")),
+        "{:?}",
+        report.losses()
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .filter(|l| l.detail.contains("budget is exhausted"))
+        .all(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
+}
+
+fn isolated_arcs(response: &mut Value) {
+    region_fixture::frame(response, false);
+    let entities = response["features"][0]["entities"].as_array_mut().unwrap();
+    for (name, radius, from, to) in [
+        ("free-main", 0.003, 0.0, 1.5 * std::f64::consts::PI),
+        (
+            "free-gap",
+            0.003,
+            5.0 * std::f64::consts::PI / 3.0,
+            11.0 * std::f64::consts::PI / 6.0,
+        ),
+        (
+            "free-inner",
+            0.001,
+            std::f64::consts::PI / 4.0,
+            3.0 * std::f64::consts::PI / 4.0,
+        ),
+    ] {
+        entities.push(json!({"btType":"BTMSketchCurveSegment-155","entityId":name,
+            "startParam":from,"endParam":to,"geometry":{"btType":"BTCurveGeometryCircle-115",
+            "xCenter":0.014,"yCenter":0.010,"radius":radius,"xDir":1.0}}));
+    }
+}
+
+#[test]
+fn isolated_arcs_do_not_partition_a_face_but_an_attached_arc_does() {
+    for attached in [false, true] {
+        let bytes = changed(&fixture("default-plane-regions"), |path, value| {
+            if path.ends_with("features.json") {
+                if attached {
+                    region_fixture::arc_divider(value);
+                } else {
+                    isolated_arcs(value);
+                }
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model),
+            if attached {
+                vec!["sketch", "native"]
+            } else {
+                vec!["sketch", "extrude"]
+            },
+            "{:?}",
+            report.losses()
+        );
+        if attached {
+            assert!(report
+                .losses()
+                .iter()
+                .any(|l| l.detail.contains("open divider")));
+        } else {
+            let wire = timeline(&model);
+            let region = &wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]
+                ["value"]["value"]["regions"][0];
+            assert_eq!(region["outer_boundary"].as_array().unwrap().len(), 4);
+            assert_eq!(region["hole_boundaries"].as_array().unwrap().len(), 1);
+            let free: Vec<_> = wire["model"]["sketch_entities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["id"].as_str().unwrap().contains("/free-"))
+                .collect();
+            assert_eq!(free.len(), 3);
+            assert!(free.iter().all(|e| e["construction"] == false));
+        }
+    }
+}
+
+#[test]
+fn overlapping_dividers_are_not_lost_as_a_zero_area_ring() {
+    let bytes = changed(&fixture("default-plane-regions"), |path, value| {
+        if path.ends_with("features.json") {
+            region_fixture::coincident_dividers(value);
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(kinds(&model), vec!["sketch", "native"]);
+    assert!(report
+        .losses()
+        .iter()
+        .any(|l| l.detail.contains("open divider")));
+}

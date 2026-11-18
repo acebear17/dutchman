@@ -699,3 +699,52 @@ fn thin_circle_walls_replay_with_the_stated_side_and_volume() {
         );
     }
 }
+
+#[path = "../../dutchman-core/tests/fixtures/onshape_regions.rs"]
+mod region_fixture;
+
+#[test]
+fn an_open_divider_is_refused_before_writing_even_without_verification() {
+    for divider in ["line", "arc", "coincident"] {
+        for verification_off in [false, true] {
+            let (model, mut report) =
+                synthetic_bundle_named("default-plane-regions", |value| match divider {
+                    "arc" => region_fixture::arc_divider(value),
+                    "coincident" => region_fixture::coincident_dividers(value),
+                    _ => region_fixture::frame(value, true),
+                });
+            assert!(report
+                .losses()
+                .iter()
+                .any(|l| l.detail.contains("open divider")));
+            let mut output = Vec::new();
+            let mut writer =
+                SolidCraftWriter::new().target_version(Some(SolidCraftVersion::V0_44_0));
+            if verification_off {
+                writer = writer.verification(Verification::Off);
+            } else {
+                writer = writer.evaluator(Arc::new(Measurements {
+                    step: model.source_step.clone().unwrap(),
+                    calls: Mutex::default(),
+                    mismatch: "",
+                }));
+            }
+            writer.write(&model, &mut output, &mut report).unwrap();
+            let doc = document(&output);
+            assert!(doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["type"] != "extrude"));
+            assert!(doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "import"));
+            assert_eq!(
+                report.outcome().unwrap().features[1].status,
+                FeatureStatus::Blocked
+            );
+        }
+    }
+}

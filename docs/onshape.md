@@ -48,7 +48,10 @@ Assigned variables remain design parameters even if no sketch can be mapped and
 conversion falls back to the STEP body. Sketch dimensions and blind extrude depths
 that use `#name` retain the parameter dependency, including symmetric extrudes.
 The reader evaluates lengths in millimetres while keeping literal units in the
-written expression and a compatible display unit on design parameters.
+written expression and a compatible display unit on design parameters. Neutral
+parameter properties explicitly request retention without sketches, and feature
+properties identify symmetric parameters measured over the total span. Readers
+without these capabilities retain their previous default output.
 
 Onshape thin extrudes carry their selected sketch curves, wall thickness and side
 in CADIR v11's typed `design.features[].definition.operation.value.output.body`.
@@ -92,7 +95,22 @@ records identify their endpoints on solved chords in the source angular chart.
 The chords retain their own start/end parameters; neither input order nor nearest
 intersections supply an interval. An outside-face query using those intersections may list only witnesses,
 so the reader recovers its enclosing closed source loop and enclosed holes from
-the solved sketch. Open chains do not become region boundaries. Missing source
+the solved sketch. Open chains are refused before writing unless their straight
+segments lie wholly inside an excluded convex circular or elliptical hole, or an
+individual non-closing curve is proved disjoint from every other source curve.
+Isolation uses conservative projection intervals and bounds on conic equations;
+it does not sample curves or guess intersections. Uncertain contacts are refused.
+A divider
+meeting the interior of a frame edge must never expand the selected face, even
+with verification off. Curved ray crossings use the same endpoint-height rule as
+lines; tangencies do not count as crossings.
+
+Recovery caches source-loop topology per sketch and shares checked ceilings of
+1,000,000 work units, 20,000 emitted boundary uses and 8 MiB of serialized boundary bytes across the bundle. Source
+row scans, endpoint matching, containment and isolation comparisons, and every emitted boundary
+use consume that budget, including repeated consumers of cached loops. Exhaustion
+retains the final STEP shape and reports `onshape/history.not-supported`, asking
+you to simplify the sketch or split the bundle. Missing source
 curves, repeated intervals without disambiguation, tied boundary connections,
 and unsupported query encodings produce specific `onshape/history.not-supported`
 losses. Lines, circles, circular arcs, ellipses, and elliptical arcs have resolved boundary

@@ -111,6 +111,11 @@ pub(super) fn profile(
     model: &Model,
     inputs: &topology::Inputs<'_>,
 ) -> Mapping<Value> {
+    inputs
+        .regions
+        .try_borrow()
+        .map_err(|_| "the sketch-region recovery state is already in use")?
+        .check()?;
     let query = queries(feature, key)?;
     if query.iter().all(|q| {
         super::query::resolved(q)
@@ -376,10 +381,10 @@ pub(super) fn map(
                 .iter()
                 .filter(|p| p.owner.is_none())
                 .count();
-            let properties = evaluated
-                .display_unit
-                .as_ref()
-                .map_or_else(|| json!({}), |unit| json!({"display_unit": unit}));
+            let properties = evaluated.display_unit.as_ref().map_or_else(
+                || json!({"retain_without_sketches":"true"}),
+                |unit| json!({"display_unit": unit,"retain_without_sketches":"true"}),
+            );
             push(
                 &mut model.parameters,
                 json!({"id":id("parameter",text(feature,"featureId")?),"ordinal":ordinal,"name":name,

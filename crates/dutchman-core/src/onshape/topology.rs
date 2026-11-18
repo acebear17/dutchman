@@ -56,6 +56,7 @@ pub(super) struct Inputs<'a> {
     mid: &'a str,
     indices: BTreeSet<usize>,
     features: &'a [Value],
+    pub regions: std::cell::RefCell<super::regions::Recovery>,
 }
 
 impl<'a> Inputs<'a> {
@@ -96,6 +97,7 @@ impl<'a> Inputs<'a> {
             mid,
             indices,
             features,
+            regions: Default::default(),
         })
     }
 

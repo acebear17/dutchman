@@ -194,3 +194,15 @@ outside region with an unlisted hole. Thin-wall tests in `tests/onshape.rs` and
 `dutchman-solidcraft/tests/onshape.rs` rebuild the synthetic plate bundle in memory;
 the replay test uses a generic circle and checks analytic annulus volumes. No
 private bundle geometry or identifiers enter these tests.
+
+The `onshape_regions.rs` test helper builds a synthetic 20 mm square frame,
+circular hole and optional divider meeting the interiors of opposite frame edges.
+Reader and writer tests mutate the generated default-plane bundle in memory;
+repeated circles and consumers exercise cumulative recovery limits. Arc/ellipse
+endpoint and tangent tests construct neutral geometry in code. No private design
+geometry or identifiers are used.
+Long invented source identifiers also exercise the serialized boundary byte limit.
+The isolated-arc and attached-arc cases use invented circular arcs in that same
+frame. Disjoint arcs on one carrier and nested carriers exercise separation
+certificates; translated contacts use generic large coordinates in code. These
+are mathematical constructions, with no private dimensions or geometry copied.

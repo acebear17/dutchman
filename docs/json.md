@@ -22,6 +22,11 @@ outside-face witness lists use the existing history rows; unresolved intersectio
 and tied connections retain `onshape/history.not-supported`. Two-offset and distance-and-angle chamfers retain their dimensions in
 CADIR; asymmetric forms report missing input reference-face ordering in the existing
 history feature reason. Ellipses and variable expressions add no report fields.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
 Explicit `--solidcraft-version` and MCP `solidcraft_version` options keep their
 full `x.y.z` value during writer preparation; the report's minor-only target is
 display metadata and is not parsed back into the option.

@@ -30,6 +30,11 @@ older targets keep a named loss. Repeated ellipse trims use solved chord endpoin
 and intersection records; outside-face witnesses recover complete closed loops.
 Tied intersections remain named losses. Asymmetric chamfers need input reference-face
 ordering. Keep final geometry and explain a named loss rather than guessing a side.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
 Sketch-only Part Studios can omit STEP and convert to sketches alone. The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,

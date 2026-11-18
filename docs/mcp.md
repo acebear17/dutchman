@@ -35,6 +35,11 @@ newer (set `solidcraft_version` to `0.44.1`). Repeated ellipse trims use interse
 records and solved chord endpoints; outside-face witnesses recover complete closed
 source loops. Unresolved wall options retain `onshape/extrude.thin-not-supported`;
 asymmetric chamfers report missing input reference-face ordering.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
 An explicitly inconsistent bundle is refused with a request to fetch it again or
 use a version link. Legacy v1 bundles without consistency metadata remain readable.
 Default-plane frames and explicit sketch-region boundaries can be resolved from

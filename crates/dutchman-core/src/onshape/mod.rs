@@ -330,8 +330,12 @@ pub(super) fn read(
                 model.ir.model.feature_input_topologies.truncate(sizes.4);
                 model.ir.design.features.truncate(sizes.5);
                 if !suppressed {
-                    let code = if feature.get("featureType").and_then(Value::as_str)
-                        == Some("extrude")
+                    let region_budget_exhausted = inputs
+                        .regions
+                        .try_borrow()
+                        .is_ok_and(|recovery| recovery.exhausted());
+                    let code = if !region_budget_exhausted
+                        && feature.get("featureType").and_then(Value::as_str) == Some("extrude")
                         && features::value(feature, "bodyType") == Some("THIN")
                     {
                         "onshape/extrude.thin-not-supported"
@@ -361,7 +365,7 @@ pub(super) fn read(
             })
             .cloned()
             .collect();
-        push(&mut model.ir.model.features, json!({"id": feature_id, "ordinal": ordinal, "name": name, "suppressed": suppressed, "dependencies": dependencies, "source_properties": {}, "source_content": [], "outputs": outputs, "definition": definition})).map_err(Error::Decode)?;
+        push(&mut model.ir.model.features, json!({"id": feature_id, "ordinal": ordinal, "name": name, "suppressed": suppressed, "dependencies": dependencies, "source_properties": {"symmetric_distance_parameter":"total"}, "source_content": [], "outputs": outputs, "definition": definition})).map_err(Error::Decode)?;
         if !suppressed {
             previous = Some(feature_id);
         }

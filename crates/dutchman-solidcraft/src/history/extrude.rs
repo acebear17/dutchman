@@ -97,7 +97,16 @@ pub(crate) fn map(
         if let Some(expression) =
             first.and_then(|length| ctx.owned_parameter(feature, "AlongDistance", length))
         {
-            extent.insert("distance".to_owned(), json!(expression));
+            // Preserve native defaults. A neutral capability explicitly says
+            // that this reader's symmetric parameter measures the total span.
+            if extent.get("direction").and_then(Value::as_str) != Some("symmetric")
+                || feature
+                    .pointer("/source_properties/symmetric_distance_parameter")
+                    .and_then(Value::as_str)
+                    == Some("total")
+            {
+                extent.insert("distance".to_owned(), json!(expression));
+            }
         }
     }
     let mut start_height = 0.0;
