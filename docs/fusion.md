@@ -78,7 +78,7 @@ Bodies a Combine used up as a tool, or that a Remove step took out of the design
 | Stored geometry from any format (`stored_geometry`) with output bodies, solids and sheets. | The same Import, holding exactly the bodies it outputs. |
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
-| Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points); constraints and links to model edges are reported as not carried, and a later sweep path or rail picked from their curves follows them. |
+| Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points). On targets 0.44 and newer, neutral point joins, point distances, line lengths (including repeated lengths), principal-axis directions and line-to-line and line-to-arc endpoint tangencies carry across; dimensions keep their parameters and exact shared endpoints stay joined. Sweep paths and rails follow their selected curves. Other constraints and links to model edges are reported as not carried. |
 | Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. An absent designation is derived exactly from diameter and pitch; conflicting or nonmetric designations, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
@@ -430,3 +430,21 @@ Optional [diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-run
 member ids, sizes, actual decode starts/finishes/failures, and re-decode counts. Per-member
 records appear when the decoder reports them; they do not establish a unique design total
 for the progress bar. The pinned decoder's observer is installed on the decoding thread.
+
+### Spatial sketch profiles on SolidCraft 0.44
+
+An explicitly selected closed planar loop in a 3D sketch can supply an extrude.
+Lines, circles, arcs and NURBS with an exact planar representation are supported.
+Dutchman keeps the 3D sketch and writes a separate planar profile sketch in CADIR's
+resolved profile frame. Its source body check must confirm the extrusion before it
+is retained. Skew loops, curves with no exact planar representation and native selections without
+neutral boundaries remain blockers. The profile copy retains its initial geometry;
+line lengths and in-plane axis directions also carry into that copy. Other relations
+do not drive subsequent edits to the profile copy.
+
+The pinned decoder does not expose neutral fixed, parallel, perpendicular, collinear
+or equal spatial-line constraints, or spatial radius/angle dimensions. Those native
+relations remain reported losses. One sketch carries at most 400,000 wire constraints;
+additional relations are reported and their solved geometry is retained. An unresolved sketch binding cannot be replaced
+by guessed geometry. A nonplanar historical face boundary remains a separate face
+selection blocker. Targets before 0.44 keep their existing output and refusals.

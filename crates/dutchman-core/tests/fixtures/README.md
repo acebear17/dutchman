@@ -150,3 +150,8 @@ project root selection and recursive resolution; no third-party design supplied 
 `local_cubes.sldasm` uses that generator with an authored local sub-assembly holder
 and an embedded cube reference. It covers matching a local holder's neutral source name
 to a saved sub-assembly file when choosing project roots.
+
+The `spatial_044_*` history tests in `dutchman-solidcraft/tests/history.rs` build
+neutral CADIR in code on cadmpeg's public synthetic unit cube. They use a square,
+a skew quadrilateral, independent spatial lines, points and an arc; no native
+CAD file or third-party geometry was added for them.

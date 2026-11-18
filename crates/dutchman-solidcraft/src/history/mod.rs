@@ -392,16 +392,18 @@ impl History {
                     }
                 }
             }
-            if let Some(constraints) = fields
-                .get_mut("sketch")
-                .and_then(|sketch| sketch.get_mut("constraints"))
-                .and_then(Value::as_array_mut)
-            {
-                for constraint in constraints {
-                    let param = constraint.get("param").and_then(Value::as_str);
-                    if let Some(new) = param.and_then(|p| renamed.get(p)).cloned() {
-                        if let Some(fields) = constraint.as_object_mut() {
-                            fields.insert("param".to_owned(), Value::String(new));
+            for key in ["constraints", "wire_constraints"] {
+                if let Some(constraints) = fields
+                    .get_mut("sketch")
+                    .and_then(|sketch| sketch.get_mut(key))
+                    .and_then(Value::as_array_mut)
+                {
+                    for constraint in constraints {
+                        let param = constraint.get("param").and_then(Value::as_str);
+                        if let Some(new) = param.and_then(|p| renamed.get(p)).cloned() {
+                            if let Some(fields) = constraint.as_object_mut() {
+                                fields.insert("param".to_owned(), Value::String(new));
+                            }
                         }
                     }
                 }
@@ -1058,6 +1060,11 @@ fn map_into(
     ctx.source = Some(model);
     ctx.target_version = target_version;
     ctx.params = param_names;
+    let modern_spatial = target_version >= crate::SolidCraftVersion::V0_44_0;
+    let is_sketch = |feature: &Value| {
+        kind(feature) == "sketch"
+            || (modern_spatial && operation_kind(feature) == Some("spatial_sketch"))
+    };
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     let no_timeline = features.is_empty();
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
@@ -1067,7 +1074,7 @@ fn map_into(
         .iter()
         .filter(|feature| {
             let kind = kind(feature);
-            !(kind == "sketch"
+            !(is_sketch(feature)
                 || kind.starts_with("datum")
                 || matches!(kind.as_str(), "tree_node" | "reference_image")
                 || is_assembly_feature(feature)
@@ -1082,7 +1089,7 @@ fn map_into(
         let kind = kind(feature);
         feature.get("suppressed").and_then(Value::as_bool) != Some(true)
             && !unchanged_geometry(feature)
-            && !(kind == "sketch"
+            && !(is_sketch(feature)
                 || kind.starts_with("datum")
                 || matches!(kind.as_str(), "tree_node" | "reference_image")
                 || is_assembly_feature(feature)
@@ -1137,7 +1144,7 @@ fn map_into(
             ));
             continue;
         }
-        if !keep_sketches && blocked.is_some() && kind(feature) == "sketch" {
+        if !keep_sketches && blocked.is_some() && is_sketch(feature) {
             out.push(outcome(
                 FeatureStatus::LeftOut,
                 Some("reference sketch left out by choice".to_owned()),
@@ -1150,7 +1157,7 @@ fn map_into(
             Some("datum_principal_plane" | "tree_node" | "reference_image")
         ) || is_assembly_feature(feature)
             || helpers::is_helper(feature);
-        if blocked.is_some() && (kind(feature) != "sketch" || !keep_sketches) && !structural {
+        if blocked.is_some() && (!is_sketch(feature) || !keep_sketches) && !structural {
             out.push(outcome(
                 FeatureStatus::Blocked,
                 Some(
@@ -1210,10 +1217,18 @@ fn map_into(
                 }
                 if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
                     references.features.push(mapped.clone());
-                    let source = operation(feature)
-                        .pointer("/sketch/sketch")
-                        .and_then(Value::as_str)
-                        .and_then(|id| ctx.row("sketches", id));
+                    let source =
+                        if modern_spatial && operation_kind(feature) == Some("spatial_sketch") {
+                            operation(feature)
+                                .get("sketch")
+                                .and_then(Value::as_str)
+                                .and_then(|id| ctx.row("spatial_sketches", id))
+                        } else {
+                            operation(feature)
+                                .pointer("/sketch/sketch")
+                                .and_then(Value::as_str)
+                                .and_then(|id| ctx.row("sketches", id))
+                        };
                     if let (Some(source), Some(id)) =
                         (source, mapped.get("id").and_then(Value::as_u64))
                     {
@@ -1773,8 +1788,24 @@ pub(crate) fn shorten(mapping: &mut Mapping, source: usize, reason: String) {
                 .and_then(|id| history.sources.get(&id))
                 .is_some_and(|row| *row < source)
     });
-    for feature in mapping.features.iter_mut().skip(source) {
-        if feature.status == FeatureStatus::Mapped && feature.kind != "sketch" {
+    // Only the 0.44 writer emits wire_constraints. Keep its independent/repaired spatial
+    // sketches as reference rows, just like planar sketches, when body history stops.
+    let spatial: BTreeSet<usize> = history
+        .features
+        .iter()
+        .filter(|feature| feature.pointer("/sketch/wire_constraints").is_some())
+        .filter_map(|feature| {
+            feature
+                .get("id")
+                .and_then(Value::as_u64)
+                .and_then(|id| history.sources.get(&id))
+                .copied()
+        })
+        .collect();
+    for (index, feature) in mapping.features.iter_mut().enumerate().skip(source) {
+        let sketch = feature.kind == "sketch"
+            || (feature.kind == "spatial_sketch" && spatial.contains(&index));
+        if feature.status == FeatureStatus::Mapped && !sketch {
             feature.status = FeatureStatus::Blocked;
             feature.reason = Some(reason.clone());
         }
@@ -2342,6 +2373,25 @@ mod tests {
             name,
             json!({"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}),
         )
+    }
+
+    #[test]
+    fn spatial_dimension_parameters_follow_assembly_renaming() {
+        let mut history = History {
+            params: vec![json!({"name":"rise", "expr":"30 mm", "unit":"mm"})],
+            features: vec![
+                json!({"id":1, "type":"sketch", "sketch": {"wire_constraints": [{"id":"k1", "type":"distance", "a":{"wire":"w1","index":0}, "b":{"wire":"w1","index":1}, "param":"rise", "value":30.0}]}}),
+            ],
+            ..History::default()
+        };
+        let mut taken = ["rise".to_owned()].into_iter().collect();
+        history.relocate(10, 2, "Part", &mut taken);
+        assert_eq!(history.params[0]["name"], "Part_rise");
+        assert_eq!(
+            history.features[0]["sketch"]["wire_constraints"][0]["param"],
+            "Part_rise"
+        );
+        assert_eq!(history.features[0]["id"], 11);
     }
 
     #[test]
