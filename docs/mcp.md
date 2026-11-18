@@ -16,7 +16,9 @@ sketch, and keeps the feature only when SolidCraft's body check confirms it; the
 
 The desktop app's **Add link**, paste, and shortcut/URI drop flows and `dutchman convert <url>` accept
 public Fusion and Google Drive file links. Downloads are bounded to 200 MB and two minutes,
-follow only provider HTTPS hosts, and use temporary files that are cleaned up. Drive's
+follow only provider HTTPS hosts resolving to public addresses, and use temporary files
+that are cleaned up, including on CLI cancellation or a closed output pipe. The total
+deadline includes DNS, connection, TLS and body streaming. Drive's
 virus-scan confirmation is handled; Fusion needs a download exposed without login.
 Private, expired, or login-only shares ask for a manual download. See
 [Public share links](guide.md#public-share-links).
