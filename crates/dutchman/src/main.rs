@@ -450,6 +450,11 @@ fn main() -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     let yes = cli.yes;
+    // `contents` runs out of line from a reference: this function's frame is already near
+    // Windows' 1 MiB main-thread stack in debug builds, and must not grow.
+    if matches!(cli.command, Command::Contents { .. }) {
+        return contents_command(&cli.command, quiet, verbose);
+    }
     match cli.command {
         Command::Report {
             folder,
@@ -1044,8 +1049,8 @@ fn main() -> ExitCode {
             verbose,
             quiet,
         ),
-        // Handled out of line: this function's frame is already large in debug builds.
-        command @ Command::Contents { .. } => contents_command(command, quiet, verbose),
+        // Handled before this match, by reference (see above).
+        Command::Contents { .. } => ExitCode::from(2),
         Command::Formats { json, markdown } => {
             if json {
                 print_json(&formats::json());
@@ -1610,7 +1615,7 @@ fn inspect(
 
 /// Runs `dutchman contents`; any other command is a usage error.
 #[inline(never)]
-fn contents_command(command: Command, quiet: bool, verbose: bool) -> ExitCode {
+fn contents_command(command: &Command, quiet: bool, verbose: bool) -> ExitCode {
     let Command::Contents {
         input,
         project,
@@ -1623,10 +1628,10 @@ fn contents_command(command: Command, quiet: bool, verbose: bool) -> ExitCode {
     let search = dutchman::PartSearch {
         threads: 0,
         part_positions: dutchman_core::PartPositions::Smart,
-        project,
-        also: search,
+        project: project.clone(),
+        also: search.clone(),
     };
-    contents(&input, &search, json, quiet, verbose)
+    contents(input, &search, *json, quiet, verbose)
 }
 
 fn contents(
