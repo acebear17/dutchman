@@ -114,6 +114,12 @@ Final-body faces cannot establish that timeline state. Tilted plane ends and nat
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
+Planar historical face selections also search intervals between trim-loop crossings when
+corner-triangle picks all land in holes. Each new point must lie in the material region,
+clear of every loop and the error from sampling circular boundaries. This retains offsets
+on perforated frames without selecting a hole. SolidCraft 0.43 supports normal offsets,
+but has no face-translation or face-rotation feature; affine MoveFace motions stay refused.
+
 An extrude whose profile is a face of the model as it was earlier in the timeline
 (`historical_faces`, "extrude this face") is rebuilt from that face's boundary. CADIR carries
 no surface for such a face, but it keeps the ends, midpoint and tangent of every edge around a
