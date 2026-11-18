@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiResultTests(unittest.TestCase):
-    def check_results(self, event, release=False, failed=None, docs_only=False, docs_changed=True):
+    def check_results(self, event, release=False, failed=None, docs_only=False, docs_changed=True, failed_result="skipped"):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         script = workflow.split('echo "$RESULTS" | python3 -c \'\n', 1)[1]
         script = textwrap.dedent(script.rsplit("\n          '", 1)[0])
@@ -34,7 +34,7 @@ class CiResultTests(unittest.TestCase):
                 needs["changes"]["outputs"][key] = "false"
             needs["changes"]["outputs"]["docs"] = str(docs_changed).lower()
         if failed:
-            needs[failed] = {"result": "skipped"}
+            needs[failed] = {"result": failed_result}
         return subprocess.run(
             [sys.executable, "-c", script], input=json.dumps(needs), text=True,
             capture_output=True,
@@ -79,3 +79,15 @@ class CiResultTests(unittest.TestCase):
     def test_docs_only_queue_requires_focused_tests(self):
         result = self.check_results("merge_group", docs_only=True, failed="docs")
         self.assertNotEqual(result.returncode, 0)
+
+    def test_cancelled_pr_prerequisite_fails_with_rerun_instruction(self):
+        for job in ("release-notes", "fmt", "clippy", "test"):
+            result = self.check_results("pull_request", failed=job, failed_result="cancelled")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Required jobs were cancelled: " + job, result.stderr)
+            self.assertIn("Rerun CI for this commit", result.stderr)
+
+    def test_cancelled_queue_prerequisite_cannot_pass(self):
+        result = self.check_results("merge_group", failed="test", failed_result="cancelled")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cancelled (expected success)", result.stderr)

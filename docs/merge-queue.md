@@ -121,3 +121,8 @@ gh pr merge <n> --squash --auto
 
 With the ruleset active this adds the pull request to the queue. Remove it with
 `gh pr merge <n> --disable-auto` or from the pull request page.
+
+If a workflow is cancelled, its always-running `ci-result` rejects cancelled required
+jobs and reports which checks to rerun. A red `ci-result` in an overall cancelled run
+does not by itself mean a compilation, test or path-filter failure. Rerun CI for the
+commit after runner capacity is available; do not treat cancellation as a passing check.

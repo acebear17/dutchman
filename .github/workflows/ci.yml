@@ -509,5 +509,8 @@ jobs:
                   bad["changes"] = "full matrix filters must all be true"
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
+          cancelled = [job for job in bad if needs.get(job, {}).get("result") == "cancelled"]
+          if cancelled:
+              print("Required jobs were cancelled: " + ", ".join(sorted(cancelled)) + ". Rerun CI for this commit before queueing it.", file=sys.stderr)
           sys.exit(f"unexpected job results: {bad}" if bad else 0)
           '
