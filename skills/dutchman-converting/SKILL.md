@@ -90,7 +90,11 @@ Such features are marked `inferred` in the JSON report, never exact. A tie, or n
 the feature blocked. New inferences against the final shape also require a measured surface
 distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
 New measured regions are tried only at the last body-building feature, against the original
-solid with both face counts. Each feature shares a 120 s budget across candidate evaluations.
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 ## Conversion choices and memory
 

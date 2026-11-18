@@ -1008,6 +1008,56 @@ pub(crate) fn compare_with_progress(
     part: &str,
     consequence: &str,
 ) -> Outcome {
+    compare_measurements(
+        cli,
+        timeout,
+        history,
+        original,
+        bodies,
+        progress,
+        part,
+        consequence,
+        false,
+    )
+}
+
+/// New inference needs every body measurement; ordinary replay retains its permissive policy.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compare_complete(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    history: &[u8],
+    original: &[u8],
+    bodies: Expected,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    part: &str,
+    consequence: &str,
+) -> Outcome {
+    compare_measurements(
+        cli,
+        timeout,
+        history,
+        original,
+        bodies,
+        progress,
+        part,
+        consequence,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_measurements(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    timeout: Duration,
+    history: &[u8],
+    original: &[u8],
+    bodies: Expected,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    part: &str,
+    consequence: &str,
+    complete: bool,
+) -> Outcome {
     let evaluate = |timeout: Duration, name: &str, design: &[u8]| {
         let _checking = progress.map(|p| {
             p.step(
@@ -1046,7 +1096,11 @@ pub(crate) fn compare_with_progress(
             unsound.join("; ")
         ));
     }
-    match_bodies(&replayed.bodies, &expected.bodies)
+    if complete {
+        match_complete_bodies(&replayed.bodies, &expected.bodies)
+    } else {
+        match_bodies(&replayed.bodies, &expected.bodies)
+    }
 }
 
 /// Checks that retained features replay, without comparing an unfinished body to the final one.
@@ -1323,6 +1377,36 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
     } else {
         Shown::Short(problems.join("; "))
     }
+}
+
+/// Require finite, complete measurements of every source and replayed body for new inference.
+/// Keep `match_bodies` permissive for existing replay checks and the earlier two readings.
+fn match_complete_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
+    let complete = |body: &Measured| {
+        body.volume.is_finite()
+            && body
+                .area
+                .is_some_and(|area| area.is_finite() && area >= 0.0)
+            && body
+                .size
+                .is_some_and(|size| size.is_finite() && size >= 0.0)
+            && body
+                .center
+                .is_some_and(|at| at.iter().all(|v| v.is_finite()))
+            && body.bounds.is_some_and(|(min, max)| {
+                min.iter()
+                    .zip(max)
+                    .all(|(lo, hi)| lo.is_finite() && hi.is_finite() && *lo <= hi)
+            })
+    };
+    if replayed.is_empty() || expected.is_empty() || !replayed.iter().chain(expected).all(complete)
+    {
+        return Outcome::Unverified(
+            "inference requires finite volume, area, complete bounds and placement for every body"
+                .to_owned(),
+        );
+    }
+    match_bodies(replayed, expected)
 }
 
 /// Whether two sets of bodies match, regardless of body order: in position and box,
@@ -2418,6 +2502,71 @@ mod tests {
         .unwrap()
         .bodies
         .remove(0)
+    }
+
+    #[test]
+    fn new_inference_requires_complete_finite_measurements_on_every_body() {
+        let complete = boxed([0.0; 3], [10.0; 3]);
+        assert_eq!(
+            match_complete_bodies(
+                std::slice::from_ref(&complete),
+                std::slice::from_ref(&complete)
+            ),
+            Outcome::Matches
+        );
+        let mut missing = Vec::new();
+        for field in 0..10 {
+            let mut body = complete.clone();
+            match field {
+                0 => body.volume = f64::INFINITY,
+                1 => body.area = None,
+                2 => body.bounds = None,
+                3 => body.center = None,
+                4 => body.size = None,
+                5 => body.area = Some(f64::NAN),
+                6 => body.size = Some(f64::INFINITY),
+                7 => body.center = Some([f64::NAN; 3]),
+                8 => body.bounds = Some(([f64::NEG_INFINITY; 3], [10.0; 3])),
+                _ => body.bounds = Some(([10.0; 3], [0.0; 3])),
+            }
+            missing.push(body);
+        }
+        for body in &missing {
+            for (replay, source) in [(body, &complete), (&complete, body)] {
+                assert!(
+                    matches!(
+                        match_complete_bodies(
+                            std::slice::from_ref(replay),
+                            std::slice::from_ref(source)
+                        ),
+                        Outcome::Unverified(_)
+                    ),
+                    "{body:?}"
+                );
+            }
+        }
+        // Complete measurements are required for every body, not just the first pair.
+        assert!(matches!(
+            match_complete_bodies(
+                &[complete.clone(), missing[1].clone()],
+                &[complete.clone(), complete.clone()]
+            ),
+            Outcome::Unverified(_)
+        ));
+        // The ordinary comparison still deliberately accepts missing box and area.
+        let mut body = complete.clone();
+        body.area = None;
+        body.bounds = None;
+        body.center = None;
+        body.size = None;
+        assert_eq!(
+            match_bodies(std::slice::from_ref(&body), std::slice::from_ref(&complete)),
+            Outcome::Matches
+        );
+        assert_eq!(
+            match_bodies(std::slice::from_ref(&complete), std::slice::from_ref(&body)),
+            Outcome::Matches
+        );
     }
 
     #[test]

@@ -82,15 +82,6 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
         }
         "sketch_regions" => regions(value.get("regions"), ctx, sketch, mapped)?,
         "sketch_entities" => entities(value.get("entities"), mapped)?,
-        // A candidate measured inference builds from SolidCraft's own regions of the sketch.
-        super::infer::MEASURED_POINTS => {
-            let points = value
-                .get("points")
-                .and_then(Value::as_array)
-                .filter(|points| !points.is_empty())
-                .ok_or("its profile points are malformed")?;
-            json!({"type": "points", "points": points})
-        }
         // Native picks carry no neutral point or index. Infer only a single material
         // region, including a surrounding loop with holes under even-odd nesting.
         "sketch_selection" => {

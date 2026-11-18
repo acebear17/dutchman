@@ -223,10 +223,13 @@ sketch come from its loops, each loop with the loops directly inside it as holes
 disc inside it are two regions); a selection of one native pick tries each region, a selection of
 two tries each pair (under even-odd nesting a union is the loops in an odd number of them). When
 other curves divide those loops (a line across a circle, a loop cadmpeg does not list), the
-regions are the ones SolidCraft itself finds in the written sketch (`sketch.inspect`), each named
-by the centre of its area; a centre outside its own region names another region or none, which
-can only add a duplicate or a failed candidate, never a wrong match. At most 24 candidates and
-120 s of measuring per feature, shared across the source, replay and surface evaluations.
+regions SolidCraft finds in the written sketch (`sketch.inspect`) have no proven selectors yet.
+Their area centroids may lie outside their own regions; an annulus and its inner disc can share
+one. Dutchman refuses this fallback rather than omit a candidate and claim a unique match.
+Source-loop candidates retain their explicit boundaries, and deduplication uses those loop
+identities. At most 24 candidates and one 120 s budget per feature, covering region discovery,
+including `sketch.inspect`, mapping, source, replay and surface evaluations; late results are
+refused.
 Each candidate is mapped normally and replayed in
 SolidCraft against the original final shape: body count, box, volume and area within the check's
 tolerances, both face counts, and the largest distance between the two surfaces from
@@ -236,8 +239,9 @@ feature; stored body centres alone cannot prove an earlier region's shape. Exact
 `history/profile-region-measured`. Of several, the one alone with the source solid's face count is
 kept; otherwise it is a tie and the feature stays blocked, as it does when none matches or any
 candidate cannot be measured. New final-shape inferences require a one-body part and a successful
-surface comparison with both face counts; unavailable comparison commands or missing counts
-keep the refusal. A final shape that later differs from the source cuts the timeline
+surface comparison with both face counts. Every source and replayed body must also have
+finite volume, area, complete bounds and derived placement; unavailable comparisons or missing
+measurements keep the refusal. The earlier two-reading comparison stays permissive. A final shape that later differs from the source cuts the timeline
 before the first measured feature, so it never keeps fewer features than without measuring.
 
 The same applies to the last fillet or chamfer of a history when its input edges cannot be proven
