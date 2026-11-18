@@ -7345,6 +7345,98 @@ fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
     );
 }
 
+/// The based cube with a later shell of its body, which changes it, and, when `nested`, the
+/// base feature's own body as the source keeps it: a history body with a nest of its own.
+fn based_cube_changed_later(nested: bool) -> Model {
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Shell", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "shell", "value": {"bodies": cube_body(), "removed_faces": cube_faces(&["top"]), "thickness": 1.0, "outward": false}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [body]}));
+    if nested {
+        let renamed = |value: &Value| -> Value {
+            let text = serde_json::to_string(value).unwrap();
+            serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:nest:")).unwrap()
+        };
+        let mut topology = serde_json::Map::new();
+        topology.insert("body".to_owned(), renamed(&wire["geometry"]["bodies"][0]));
+        for arena in [
+            "regions", "shells", "faces", "loops", "coedges", "edges", "vertices", "surfaces",
+            "curves", "pcurves", "points",
+        ] {
+            let rows = wire["geometry"].get(arena).map_or(json!([]), renamed);
+            topology.insert(arena.to_owned(), rows);
+        }
+        wire["model"]["history_bodies"] = json!([{
+            "id": "synthetic:history-body:nest#h0",
+            "produced_by": "f3d:model:feature#1",
+            "state": {"ordinal": 1, "identifier": 7},
+            "topology": topology,
+        }]);
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_base_feature_imports_its_own_body_when_the_source_keeps_it() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let base = |report: &Report| {
+        report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .find(|f| f.name.as_deref() == Some("Base Feature 1"))
+            .cloned()
+            .unwrap()
+    };
+    // Without the base feature's own body, the shell after it would apply twice.
+    let (_, report) = convert(&based_cube_changed_later(false), &writer);
+    assert!(
+        base(&report)
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("stored only as the design ends")),
+        "{}",
+        history_line(&report)
+    );
+    // With it, the base feature imports that body and the shell is judged on its own.
+    let (document, report) = convert(&based_cube_changed_later(true), &writer);
+    let imported = base(&report);
+    assert_eq!(
+        imported.status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{}",
+        history_line(&report)
+    );
+    assert!(!imported.final_body && !imported.reapplied);
+    let first = &document["features"][0];
+    assert_eq!(first["type"], "import");
+    assert_eq!(first["name"], "Base Feature 1");
+    assert!(first["step_blob"]
+        .as_str()
+        .is_some_and(|blob| blob.starts_with("blobs/")));
+    assert!(first.get("_step").is_none() && first.get("_bodies").is_none());
+    // A second history body for the same base feature leaves it unclear which is its own.
+    let mut doubled = based_cube_changed_later(true);
+    let mut wire = serde_json::to_value(&doubled.ir).unwrap();
+    let mut second = wire["model"]["history_bodies"][0].clone();
+    second["id"] = json!("synthetic:history-body:nest#h1");
+    wire["model"]["history_bodies"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    doubled.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(&doubled, &writer);
+    assert!(base(&report)
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("stored only as the design ends")));
+}
+
 #[test]
 fn a_sketch_with_no_timeline_row_is_written_before_the_extrude_that_uses_it() {
     // The source keeps the cube's sketch only in its sketch arena: no sketch feature names it.
