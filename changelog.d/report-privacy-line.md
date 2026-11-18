@@ -2,3 +2,4 @@
 
 - The report panel again explains that shared designs stay private, are never published or
   used in public tests, and can be deleted on request.
+- The DM Dutchy card gives the same two short instructions for every file size.

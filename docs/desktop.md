@@ -242,7 +242,9 @@ card's file and brings the panel into view. Its numbered cards are the way to re
 first:
 
 1. **Join our Discord server**: **Open invite** opens the invite. Already in? Skip this step.
-2. **DM Dutchy**: **Copy and open DM** copies a message and opens Dutchy's DM. A file within
+2. **DM Dutchy**: **Copy and open DM** copies a message and opens Dutchy's DM. The hint always
+   reads "Paste the message, then drag the file in." followed by
+   "Big files: Dutchy replies with an upload link." on the next line. A file within
    Discord's upload limit is dragged in, and its folder opens for that; for a larger one, Dutchy
    replies with a private upload link. See
    [Send the file privately](troubleshooting.md#send-the-file-privately).

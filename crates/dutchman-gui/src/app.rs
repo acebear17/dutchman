@@ -2564,9 +2564,7 @@ impl App {
                 report_panel::Card {
                     title: present::SEND_DM_TITLE,
                     button: Some((present::SEND_DM_BUTTON, Step::Dm)),
-                    hint: steps
-                        .as_ref()
-                        .map_or(report_panel::DM_GENERAL, |steps| steps.dm_text.as_str()),
+                    hint: report_panel::DM_GENERAL,
                     done: done(Step::Dm),
                 },
             ];
@@ -3603,7 +3601,7 @@ mod tests {
                     h.state().rows[0].report.as_ref().unwrap(),
                     present::Surface::Desktop,
                 );
-                h.get_by_label(&steps.dm_text);
+                h.get_by_label(report_panel::DM_GENERAL);
                 if file.is_some() {
                     h.get_by_label("Private attachment: selected-bundle.zip (bundle)");
                 } else {

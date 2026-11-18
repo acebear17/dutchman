@@ -354,7 +354,7 @@ fn a_small_failed_file_is_dragged_into_the_dm_with_its_folder_open() {
         .query_by_label("Already in? Skip this step.")
         .is_some());
     assert!(harness
-        .query_by_label("Drag the file in (its folder is open).")
+        .query_by_label(dutchman_gui::report_panel::DM_GENERAL)
         .is_some());
     assert!(harness.query_by_label("Please add a STEP export").is_some());
     let (message, opened) = press_dm(&mut harness);
@@ -384,11 +384,11 @@ fn a_small_failed_file_is_dragged_into_the_dm_with_its_folder_open() {
 fn a_large_failed_file_takes_the_private_link_and_no_folder_opens() {
     let (mut harness, dir) = failed_card("large-broken.f3d", 11 << 20, 760.0);
     assert!(harness
-        .query_by_label_contains("Dutchy replies with a private upload link (up to 300 MB")
+        .query_by_label(dutchman_gui::report_panel::DM_GENERAL)
         .is_some());
-    assert!(harness
-        .query_by_label_contains("Drag the file in")
-        .is_none());
+    for limit in ["300 MB", "1.5 GB", "72 hours"] {
+        assert!(harness.query_by_label_contains(limit).is_none());
+    }
     let (message, _) = press_dm(&mut harness);
     assert!(message.contains("Size: 11 MB."), "{message}");
     assert!(!SHOWN
@@ -2636,7 +2636,11 @@ fn partial_report_privacy_fits() {
         std::fs::create_dir_all(dir).unwrap();
     }
     let mut index = String::from("# C2 partial history, Day\n\nSynthetic report data only.\n\n");
-    for size in [[1280.0, 800.0], [1600.0, 1000.0]] {
+    for (size, bytes, suffix) in [
+        ([1280.0, 800.0], 2048, ""),
+        ([1600.0, 1000.0], 2048, ""),
+        ([1280.0, 800.0], 11 << 20, "-big-file"),
+    ] {
         let mut h = Harness::builder()
             .with_size(egui::vec2(size[0], size[1]))
             .build_eframe(|cc| test_app(cc));
@@ -2651,7 +2655,7 @@ fn partial_report_privacy_fits() {
                 status: Status::Converted,
                 progress: None,
                 job: None,
-                size: Some(2048),
+                size: Some(bytes),
                 report: Some(serde_json::json!({
                     "ok": true, "mode": "partial_history",
                     "input": {"format": "fusion_archive"},
@@ -2665,6 +2669,7 @@ fn partial_report_privacy_fits() {
         h.run_steps(12);
         let footer = h.get_by_label("Convert").rect().top();
         for label in [
+            dutchman_gui::report_panel::DM_GENERAL,
             dutchman_gui::report_panel::QUESTION,
             dutchman::present::SEND_JOIN_BUTTON,
             dutchman_gui::report_panel::PRIVACY,
@@ -2677,12 +2682,19 @@ fn partial_report_privacy_fits() {
                 "{size:?}: {label}: {rect:?}"
             );
         }
+        let hint = h
+            .get_by_label(dutchman_gui::report_panel::DM_GENERAL)
+            .rect();
+        assert!(
+            hint.height() > 20.0 && hint.height() < 40.0,
+            "Hint must occupy two lines: {hint:?}"
+        );
         if let Some(dir) = &dir {
             shot(
                 &mut h,
                 dir,
                 &mut index,
-                &format!("C2-partial-{}x{}", size[0], size[1]),
+                &format!("C2-partial-{}x{}{suffix}", size[0], size[1]),
                 "day",
                 "The report panel before scrolling.",
             );
@@ -2890,7 +2902,7 @@ fn converted_report_screenshots() {
                 .scroll_to_me();
             h.run_steps(8);
             h.get_by_label(dutchman::present::SEND_DM_BUTTON);
-            h.get_by_label("Drag the file in (its folder is open).");
+            h.get_by_label(dutchman_gui::report_panel::DM_GENERAL);
             assert!(h.query_by_label("Diagnose this file").is_none());
             assert_eq!(h.query_all_by_label_contains("/home/").count(), 0);
             assert!(h.get_by_label("Converted").rect().top() > 70.0);

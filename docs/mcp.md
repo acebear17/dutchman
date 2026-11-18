@@ -912,3 +912,7 @@ and **GitHub issue** (a public issue under the user’s GitHub name).
 
 A muted line between the desktop report steps and these pills reassures users: "Only the
 Dutchman team sees it. It's never published or used in public tests, and we delete it on request."
+
+The desktop DM Dutchy card always says "Paste the message, then drag the file in." and
+"Big files: Dutchy replies with an upload link." on two lines. File size still determines
+whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.

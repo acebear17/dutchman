@@ -661,3 +661,7 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+The desktop DM Dutchy card always says "Paste the message, then drag the file in." and
+"Big files: Dutchy replies with an upload link." on two lines. File size still determines
+whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.
