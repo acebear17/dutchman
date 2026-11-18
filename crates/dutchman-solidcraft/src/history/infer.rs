@@ -55,9 +55,9 @@ pub(crate) trait Host {
         self.fit(prefix, stored, final_state, true)
     }
 
-    /// The regions SolidCraft finds in the sketch feature `sketch` of `prefix`: each one's
-    /// area and the point it names it by. `None` when SolidCraft cannot say.
-    fn regions(&mut self, _prefix: &History, _sketch: u64) -> Option<Vec<SketchRegion>> {
+    /// Count SolidCraft's regions within the feature's remaining discovery budget.
+    /// Centroids alone cannot prove selections for these regions.
+    fn regions(&mut self, _prefix: &History, _sketch: u64, _budget: Duration) -> Option<usize> {
         None
     }
 }
@@ -80,14 +80,6 @@ impl Host for Unmeasured {
 /// The measuring host, as the mapper takes it.
 pub(crate) type Check<'a> = dyn Host + 'a;
 
-/// One region of a sketch as SolidCraft finds it: its area (mm²) and a point (in the sketch's
-/// own coordinates) that names it, the centre of its area.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SketchRegion {
-    pub(crate) area: f64,
-    pub(crate) point: [f64; 2],
-}
-
 const UNCONFIRMED: &str =
     "its inferred profile region could not be confirmed by the source body check";
 
@@ -95,8 +87,8 @@ const UNCONFIRMED: &str =
 /// up to the feature; the pull request that set this gives the measurements.
 pub(crate) const MAX_CANDIDATES: usize = 24;
 
-/// The time measuring the candidates of one feature may take, beyond which the feature keeps
-/// its refusal.
+/// The time discovering, mapping and measuring candidates of one feature may take,
+/// beyond which the feature keeps its refusal.
 pub(crate) const MEASURE_BUDGET: Duration = Duration::from_secs(120);
 
 /// None means the ordinary mapping applies. Every trial has its own mapping state and
@@ -251,12 +243,14 @@ fn measured(
     if !final_state {
         return None;
     }
-    let features = match regions(feature, ctx, history, params, check)? {
+    let started = Instant::now();
+    let features = match discover(started, MEASURE_BUDGET, |_| {
+        regions(feature, ctx, history, params, check, started)
+    })? {
         Ok(features) => features,
         Err(why) => return Some(Err(why)),
     };
     let total = features.len();
-    let started = Instant::now();
     let mut found: Vec<(Trial, Measure)> = Vec::new();
     let mut measured = 0usize;
     let mut unknown = false;
@@ -272,13 +266,16 @@ fn measured(
         let Some(trial) = Trial::map(candidate, ctx, history, params, &mut mapping_failure) else {
             continue;
         };
+        let remaining = MEASURE_BUDGET.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Some(Err(deadline_reason()));
+        }
         measured += 1;
-        match check.fit_bounded(
-            &trial.prefix,
-            stored.as_deref(),
-            final_state,
-            MEASURE_BUDGET.saturating_sub(started.elapsed()),
-        ) {
+        let fit = check.fit_bounded(&trial.prefix, stored.as_deref(), final_state, remaining);
+        if started.elapsed() >= MEASURE_BUDGET {
+            return Some(Err(deadline_reason()));
+        }
+        match fit {
             Fit::Matches(measure) if measure.deviation.is_none_or(|d| d.within()) => {
                 found.push((trial, measure));
             }
@@ -287,6 +284,9 @@ fn measured(
             Fit::Unknown if measured == 1 => return None,
             Fit::Unknown => unknown = true,
         }
+    }
+    if started.elapsed() >= MEASURE_BUDGET {
+        return Some(Err(deadline_reason()));
     }
     if unknown {
         return Some(Err(
@@ -340,6 +340,28 @@ fn measured(
     Some(Ok(mapped))
 }
 
+fn deadline_reason() -> String {
+    "its profile region could not be inferred: region discovery and candidate measurements exhausted the feature's time allowance".to_owned()
+}
+
+/// Start discovery on the same clock as mapping and measurements; discard late answers even
+/// when a host does not respect its supplied timeout. Kept separate to exercise short budgets.
+fn discover<T>(
+    started: Instant,
+    budget: Duration,
+    inspect: impl FnOnce(Duration) -> Option<Result<T, String>>,
+) -> Option<Result<T, String>> {
+    let remaining = budget.saturating_sub(started.elapsed());
+    if remaining.is_zero() {
+        return Some(Err(deadline_reason()));
+    }
+    let result = inspect(remaining);
+    if started.elapsed() >= budget {
+        return Some(Err(deadline_reason()));
+    }
+    result
+}
+
 /// The regions an unresolved native pick can name, as features selecting them: every choice of
 /// as many loop regions as the pick has selections (one or two), the whole sketch aside, which
 /// the first two readings already tried. `None` when the feature has no single unresolved
@@ -351,6 +373,7 @@ fn regions(
     history: &History,
     params: &[Value],
     check: &mut Check<'_>,
+    started: Instant,
 ) -> Option<Result<Vec<Value>, String>> {
     let refs = unresolved(feature, ctx)?;
     let [(path, selection)] = refs.as_slice() else {
@@ -364,9 +387,9 @@ fn regions(
     let row = ctx.row("sketches", sketch)?;
     let entities = profile::sketch_entities(ctx, sketch);
     let Some(loops) = super::crossing::loop_regions(row, &entities) else {
-        // Other curves divide the loops cadmpeg lists: SolidCraft's own regions of the
-        // written sketch, each named by a point, are the candidates.
-        return solidcraft_regions(feature, path, sketch, picks, ctx, history, params, check);
+        // Other curves divide the source loops. SolidCraft reports centroids, which may
+        // select a different region (an annulus and its inner disc share one), so refuse.
+        return solidcraft_regions(sketch, ctx, history, params, check, started);
     };
     let count = loops.len();
     if count <= picks {
@@ -431,19 +454,15 @@ fn choices(count: usize, picks: usize) -> Result<Vec<Vec<usize>>, String> {
     Ok(choices)
 }
 
-/// Candidates from the regions SolidCraft finds in the written sketch, each named by the
-/// centre of its area. A centre outside its own region names another region or none: that
-/// candidate then rebuilds another region's shape, or fails, and cannot add a wrong match.
-#[allow(clippy::too_many_arguments)]
+/// Refuse discovery without a proven selection for every region. Do not deduplicate
+/// centroid points: equal points need not identify equal regions.
 fn solidcraft_regions(
-    feature: &Value,
-    path: &str,
     sketch: &str,
-    picks: usize,
     ctx: &Context,
     history: &History,
     params: &[Value],
     check: &mut Check<'_>,
+    started: Instant,
 ) -> Option<Result<Vec<Value>, String>> {
     let id = ctx.sketches.get(sketch)?.feature;
     let mut prefix = history.clone();
@@ -457,38 +476,16 @@ fn solidcraft_regions(
         .iter()
         .map(|(thickness, name)| super::sheet::rule(name, *thickness))
         .collect();
-    let found = check.regions(&prefix, id)?;
-    let count = found.len();
-    if count <= picks {
-        return None;
+    let remaining = MEASURE_BUDGET.saturating_sub(started.elapsed());
+    if remaining.is_zero() {
+        return Some(Err(deadline_reason()));
     }
-    let choices = match choices(count, picks) {
-        Ok(choices) => choices,
-        Err(why) => return Some(Err(why)),
-    };
-    let mut features = Vec::new();
-    let mut seen: Vec<Vec<[f64; 2]>> = Vec::new();
-    for choice in choices {
-        let points: Vec<[f64; 2]> = choice
-            .iter()
-            .filter_map(|&index| found.get(index))
-            .map(|region| region.point)
-            .collect();
-        if points.len() != picks || seen.contains(&points) {
-            continue;
-        }
-        let mut candidate = feature.clone();
-        let slot = candidate.pointer_mut(path)?;
-        *slot = json!({"kind": MEASURED_POINTS, "value": {"sketch": sketch, "points": points}});
-        seen.push(points);
-        features.push(candidate);
-    }
-    (!features.is_empty()).then_some(Ok(features))
+    let count = check.regions(&prefix, id, remaining)?;
+    Some(Err(format!(
+        "its profile region could not be inferred: the sketch has {count} regions without \
+         proven interior selections; region centroids do not prove a unique selection"
+    )))
 }
-
-/// The profile form of a measured candidate named by points in the written sketch: Dutchman's
-/// own, never read from a source file.
-pub(super) const MEASURED_POINTS: &str = "dutchman_measured_points";
 
 /// The feature's unresolved sketch picks: each one's JSON pointer and its selection. `None`
 /// when it has none, or a pick names no earlier mapped sketch.
@@ -685,7 +682,34 @@ pub(super) fn edges(
 
 #[cfg(test)]
 mod tests {
-    use super::{choices, MAX_CANDIDATES};
+    use super::{choices, discover, MAX_CANDIDATES};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn delayed_region_discovery_cannot_renew_the_feature_budget_or_admit_a_late_result() {
+        let budget = Duration::from_millis(10);
+        let started = Instant::now();
+        let result = discover(started, budget, |remaining| {
+            assert!(remaining <= budget && !remaining.is_zero());
+            std::thread::sleep(Duration::from_millis(20));
+            Some(Ok(vec!["candidate"]))
+        });
+        assert!(result.unwrap().unwrap_err().contains("time allowance"));
+        // A new discovery on the same feature cannot start after the allowance is spent.
+        let result = discover::<()>(started, budget, |_| panic!("expired discovery started"));
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn region_discovery_receives_only_the_remaining_feature_budget() {
+        let budget = Duration::from_millis(100);
+        let started = Instant::now() - Duration::from_millis(25);
+        let result = discover(started, budget, |remaining| {
+            assert!(remaining <= Duration::from_millis(75));
+            Some(Ok(()))
+        });
+        assert_eq!(result, Some(Ok(())));
+    }
 
     #[test]
     fn oversized_region_sets_are_refused_before_enumeration() {

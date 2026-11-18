@@ -310,7 +310,11 @@ the proof's reason. Features kept this way, and the inferred profiles above, are
 New measured regions are tried only at the last body-building feature. Final-shape inferences
 require a measured surface distance and both face counts for a one-body part. If that
 comparison is unavailable, the earlier refusal stands and no `inferred` object is added.
-A feature's 120 s measurement budget is shared across its candidate evaluations.
+Every source and replayed body must supply finite volume, area, complete bounds and derived
+placement. A region without a proven selection is refused, including centroid-only results from
+`sketch.inspect`; the reason says `without proven interior selections`. One 120 s feature budget
+covers discovery, mapping and candidate evaluations, and late results are refused. These stricter
+requirements apply to new measured inference; the earlier two-reading comparison is unchanged.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face

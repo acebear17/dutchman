@@ -110,8 +110,10 @@ that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
 `model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and
 lengths; face results include names, areas, sample points and optional planar normals.
 Measured inference also runs `timeline.suppress`, `inspect.compare` and `sketch.inspect`; a
-host without surface comparison results and both face counts refuses new final-shape inferences, and without
-`sketch.inspect` finds no regions beyond the source's loops. It must enforce deadlines, bound responses, isolate evaluations from the user's open
+host without complete finite body measurements, surface comparison results and both face counts
+refuses new final-shape inferences. `sketch.inspect` reports region centroids without proven
+interior selections, so inference beyond the source's explicit loop boundaries is refused.
+The host must enforce deadlines, bound responses, isolate evaluations from the user's open
 design and serialize engine access if needed. The `Send + Sync` contract also permits
 native assembly workers to share an evaluator.
 
@@ -255,7 +257,9 @@ and the whole carrier. A writer callback admits each only after the existing sou
 or the complete shape comparison at the final body-building feature, confirms its replay;
 planning has no callback and keeps the blocker. Every admitted candidate has a named loss. When
 neither is confirmed, measured inference (`history/infer.rs`) maps every region of the sketch the
-pick can name (bounded, see fusion.md) and asks the same callback to measure each; exactly one
+pick can name by explicit loop boundaries (bounded, see fusion.md) and asks the same callback to
+measure each; discovery with only centroid selectors is refused. One 120 s feature deadline covers
+discovery, mapping and evaluation, including `sketch.inspect`, and discards late results. Exactly one
 match is kept and the feature's outcome carries `Inferred`. The callback loads the source's solid
 beside a one-body replay at the last body-building feature for `inspect.compare`'s surface
 distance. The last blend whose input edges fail their proof is measured the same way over nearby

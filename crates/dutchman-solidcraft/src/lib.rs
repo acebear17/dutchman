@@ -578,12 +578,14 @@ impl SolidCraftWriter {
         budget: Duration,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> history::infer::Fit {
+        let started = std::time::Instant::now();
         let Ok(evaluator) = self.selected_evaluator(&self.verification) else {
             return history::infer::Fit::Unknown;
         };
         let mut writer = self.clone();
         writer.evaluator = Some(std::sync::Arc::new(evaluator::Budgeted::new(
-            evaluator, budget,
+            evaluator,
+            budget.saturating_sub(started.elapsed()),
         )));
         writer.profile_check(model, prefix, step, stored, final_state, true, progress)
     }
@@ -615,7 +617,7 @@ impl SolidCraftWriter {
             return Fit::Unknown;
         };
         if final_state {
-            return match self.check(model, prefix, step, &design, progress) {
+            return match self.check_measurements(model, prefix, step, &design, progress, compare) {
                 Ok(verify::Outcome::Matches) => {
                     let one_body = solid_bodies(model) == 1 && sheet_bodies(model) == 0;
                     let deviation = if compare {
@@ -665,20 +667,22 @@ impl SolidCraftWriter {
         }
     }
 
-    /// The regions SolidCraft finds in the sketch feature `sketch` of `prefix`, as it lists
-    /// them (`sketch.inspect`): each one's area and the centre of that area. `None` when
-    /// SolidCraft cannot say, or lists more than measured inference would try.
+    /// Count the regions the written sketch has. `sketch.inspect` supplies centroids,
+    /// which do not prove interior selections, so these regions cannot yet be inferred.
     fn sketch_regions(
         &self,
         model: &Model,
         prefix: &history::History,
         step: &str,
         sketch: u64,
-    ) -> Option<Vec<history::infer::SketchRegion>> {
+        budget: Duration,
+    ) -> Option<usize> {
+        let started = std::time::Instant::now();
         if self.memory_refusal().is_some() {
             return None;
         }
         let cli = self.selected_evaluator(&self.verification).ok()?;
+        let cli = evaluator::Budgeted::new(cli, budget.saturating_sub(started.elapsed()));
         let design = self
             .history_design(model, prefix, step, Live::History)
             .ok()?;
@@ -686,25 +690,7 @@ impl SolidCraftWriter {
         let results = cli
             .run(&design, &script, self.timeout, "sketch regions")
             .ok()?;
-        let profiles = results.first()?.get("profiles")?.as_array()?;
-        // Pairs of more regions than this would exceed the candidates measured anyway.
-        if profiles.len() > history::infer::MAX_CANDIDATES {
-            return None;
-        }
-        profiles
-            .iter()
-            .map(|profile| {
-                let point = profile.get("centroid_sketch")?.as_array()?;
-                let (x, y) = (point.first()?.as_f64()?, point.get(1)?.as_f64()?);
-                let area = profile.get("area_mm2")?.as_f64()?;
-                (x.is_finite() && y.is_finite() && area.is_finite()).then_some(
-                    history::infer::SketchRegion {
-                        area,
-                        point: [x, y],
-                    },
-                )
-            })
-            .collect()
+        Some(results.first()?.get("profiles")?.as_array()?.len())
     }
 
     /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
@@ -917,6 +903,19 @@ impl SolidCraftWriter {
         written: &[u8],
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<verify::Outcome, Error> {
+        self.check_measurements(model, history, step, written, progress, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_measurements(
+        &self,
+        model: &Model,
+        history: &history::History,
+        step: &str,
+        written: &[u8],
+        progress: Option<&dutchman_core::Progress<'_>>,
+        complete: bool,
+    ) -> Result<verify::Outcome, Error> {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
@@ -928,7 +927,12 @@ impl SolidCraftWriter {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
-        let result = verify::compare_with_progress(
+        let compare = if complete {
+            verify::compare_complete
+        } else {
+            verify::compare_with_progress
+        };
+        let result = compare(
             cli.as_ref(),
             self.timeout,
             written,
@@ -945,7 +949,9 @@ impl SolidCraftWriter {
             ),
         );
         Ok(match result {
-            verify::Outcome::Unverified(why) if history.pattern_replay_required => {
+            // New inference must retain Unknown so an unmeasured candidate cannot be
+            // treated as a nonmatch when proving uniqueness.
+            verify::Outcome::Unverified(why) if history.pattern_replay_required && !complete => {
                 verify::Outcome::Differs(format!(
                     "the pattern instance set could not be verified: {why}"
                 ))
@@ -1004,9 +1010,10 @@ impl history::infer::Host for Measuring<'_, '_> {
         &mut self,
         prefix: &history::History,
         sketch: u64,
-    ) -> Option<Vec<history::infer::SketchRegion>> {
+        budget: Duration,
+    ) -> Option<usize> {
         self.writer
-            .sketch_regions(self.model, prefix, self.step, sketch)
+            .sketch_regions(self.model, prefix, self.step, sketch, budget)
     }
 }
 
