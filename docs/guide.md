@@ -659,3 +659,7 @@ the source body check confirms it. A message saying its planar 3D sketch profile
 has not been confirmed means the original shape is retained. Earlier targets
 keep their existing output. See [Fusion conversion](fusion.md) for the
 remaining spatial constraints and profile limits.
+
+A planar 3D sketch profile copy carries at most 400,000 constraints, including
+repeated line occurrences across all relations. If it exceeds that copy limit,
+reduce repeated relations and convert again; the original shape is retained.

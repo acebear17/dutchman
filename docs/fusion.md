@@ -440,7 +440,10 @@ resolved profile frame. Its source body check must confirm the extrusion before 
 is retained. Skew loops, curves with no exact planar representation and native selections without
 neutral boundaries remain blockers. The profile copy retains its initial geometry;
 line lengths and in-plane axis directions also carry into that copy. Other relations
-do not drive subsequent edits to the profile copy.
+do not drive subsequent edits to the profile copy. The copy has a total budget of
+400,000 constraints, counting every repeated line occurrence across all rows.
+Exceeding that budget refuses the profile with a constraint copy limit reason;
+reduce repeated relations and convert again. The original shape is retained.
 
 The pinned decoder does not expose neutral fixed, parallel, perpendicular, collinear
 or equal spatial-line constraints, or spatial radius/angle dimensions. Those native
