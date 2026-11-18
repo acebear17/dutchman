@@ -20,15 +20,20 @@ class CiResultTests(unittest.TestCase):
         if full:
             active |= {"wasm", "msrv", "solidcraft-roundtrip", "test-macos",
                        "docker", "test-arm", "placements"}
-        if event == "workflow_dispatch" and release:
+        opt_in = "RELEASE_BUILDS:" in workflow
+        packaging = (event == "workflow_dispatch" and release) if opt_in else event in ("merge_group", "workflow_dispatch")
+        if packaging:
             active.add("release-build")
         if gui_only:
             active -= {"wasm", "solidcraft-roundtrip", "placements", "docker"}
         if docs_only:
             active = {"changes", "release-notes"} | ({"docs"} if docs_changed else set())
+        if packaging:
+            active.add("release-build")
         jobs = active | {"docs", "test-arm-again", "release-build", "wasm", "msrv",
                          "solidcraft-roundtrip", "test-macos", "docker", "test-arm", "placements", "fmt", "clippy", "test"}
         needs = {job: {"result": "success" if job in active else "skipped"} for job in jobs}
+        needs["release-build"]["outputs"] = {"required": "success" if packaging else "skipped"}
         needs["changes"]["outputs"] = {key: "true" for key in ("code", "rust", "conversion", "docker", "docs")}
         needs["changes"]["outputs"]["full"] = str(full).lower()
         if docs_only:
@@ -47,7 +52,7 @@ class CiResultTests(unittest.TestCase):
                  "GITHUB_REF": "refs/heads/test"},
         )
 
-    def test_queue_does_not_require_release_packaging(self):
+    def test_queue_release_contract(self):
         result = self.check_results("merge_group")
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -56,7 +61,7 @@ class CiResultTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("test", result.stderr)
 
-    def test_dispatch_without_release_packaging(self):
+    def test_dispatch_release_contract(self):
         result = self.check_results("workflow_dispatch")
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -97,9 +102,10 @@ class CiResultTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cancelled (expected success)", result.stderr)
 
-    def test_gui_only_queue_skips_conversion_checks(self):
+    def test_queue_cannot_skip_conversion_checks_for_gui(self):
         result = self.check_results("merge_group", gui_only=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non-docs merge group filters must all be true", result.stderr)
 
     def test_gui_only_queue_still_requires_workspace_tests(self):
         result = self.check_results("merge_group", gui_only=True, failed="test")

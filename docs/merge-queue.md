@@ -127,7 +127,10 @@ jobs and reports which checks to rerun. A red `ci-result` in an overall cancelle
 does not by itself mean a compilation, test or path-filter failure. Rerun CI for the
 commit after runner capacity is available; do not treat cancellation as a passing check.
 
-Groups changing only `crates/dutchman-gui/` retain workspace tests on every OS and
-MSRV, while skipping the conversion-only WebAssembly, placement, round-trip and image
-checks. A Cargo manifest/lockfile, conversion source or unknown build path in the group
-turns those checks back on. Tags and manual full runs always include them.
+Merge groups skip code jobs only for explicitly allowlisted guidance and changelog
+files that no build, test or package consumes. The selector greps crates, tests,
+build scripts, packaging scripts and workflows at run time, resolves relative file
+references, and expands referenced directories and globs. All packaged `docs/` and
+`skills/` files are excluded from the shortcut. An asset, GUI implementation,
+unknown file or referenced document forces every merge-group selector true.
+Mixed groups run the full matrix; tags and manual full runs always do so.

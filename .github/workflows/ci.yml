@@ -30,7 +30,7 @@ env:
 # runs started by hand on main) save, so pull requests and merge queue groups never evict each other's or main's cache.
 
 jobs:
-  # Diff the complete queue group against its base, so mixed groups retain all code checks.
+  # Only proven docs-only queue groups may skip jobs; every other group runs all checks.
   # Tags and manual full runs always exercise every job; an unknown base fails open.
   changes:
     runs-on: ubuntu-latest
@@ -506,6 +506,12 @@ jobs:
               bad["changes"] = "missing or unexpected filter outputs"
           if event == "merge_group" and not full:
               bad["changes"] = "merge group must set full=true"
+          if event == "merge_group" and code:
+              if any(outputs.get(key) != "true" for key in ("rust", "conversion", "docker", "docs")):
+                  bad["changes"] = "non-docs merge group filters must all be true"
+          if event == "merge_group" and not code:
+              if any(outputs.get(key) != "false" for key in ("rust", "conversion", "docker")):
+                  bad["changes"] = "docs-only merge group filters must skip all code checks"
           if event == "workflow_dispatch" or os.environ["GITHUB_REF"].startswith("refs/tags/"):
               if not full or not code or outputs.get("rust") != "true" or outputs.get("docker") != "true" or outputs.get("conversion") != "true":
                   bad["changes"] = "full matrix filters must all be true"
