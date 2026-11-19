@@ -45,6 +45,8 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 ## How to use it
 
 1. **Drop files or folders in.** Or choose **Add files…**, then choose an output folder.
+   For a public Fusion or Google Drive file, paste its share link and choose **Add link**.
+   Saved `.url` and `.webloc` shortcuts can be dropped too; see the [share link guide](docs/guide.md#public-share-links).
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-drop-day.png&alt=Start%20screen%20with%20the%20drop%20area%20and%20Add%20files%20button"><img alt="Start screen with the drop area and Add files button" src="docs/images/readme-drop-day.png" width="100%"></a>
 
@@ -66,6 +68,21 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 - **Linux AppImage and Arch package:** each release has an AppImage for x86_64 and ARM64 that updates itself, an Arch Linux package, and a Docker image that includes SolidCraft's checker.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
+
+## How Dutchman checks a history
+
+When `solidcraft-cli` is available, Dutchman replays the written history in it and compares the
+result with the original body, both measured by the same SolidCraft. The numbers are fixed:
+
+- **Bodies:** the same count.
+- **Volume:** within 0.01% (1e-4) of the larger volume, or the most SolidCraft's measuring mesh can miss, whichever is more.
+- **Area:** within 0.1% (1e-3) of the larger area.
+- **Position and bounding box:** the box centre and each box corner within the larger of 0.01 mm and 0.02% (2e-4) of the larger box diagonal.
+- **Face count and centre of mass:** not compared. SolidCraft merges faces that share a surface, and the centre used is the box centre.
+- **Edges, faces and extrude caps the source names:** an input edge must sit within 1e-6 mm of exactly one rebuilt edge; a profile face within 1e-5 mm, with area within 0.01% (2% when an edge is curved).
+
+Every conversion report states the numbers its check used in `verification_tolerances`. The full
+list is in [How a history is checked](docs/history.md#verification-tolerances).
 
 ## Command line
 
@@ -117,7 +134,7 @@ FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimensi
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.43; 0.43 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.44; 0.44 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
@@ -218,3 +235,5 @@ For other clients:
 ## Licence
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
+
+[Dutchman in SolidCraft](docs/solidcraft-plugin.md): a plugin that opens Fusion, Inventor, SolidWorks, and FreeCAD files in SolidCraft with editable history (SolidCraft 0.44 or newer, desktop only for now); [how it is built](docs/plugin.md).
