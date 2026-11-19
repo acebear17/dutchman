@@ -217,8 +217,8 @@ invitation; JSON and MCP reports never include it.
 Directory conversion keeps the highest numbered `.prt.N` revision per part, reports older
 saves as skipped, and uses the part's base output name without replacing an existing file.
 After a refused conversion (except IGES) or a history that did not fully map, the invitation
-links to test-file recipes and offers private help: send the file and its STEP export to
-Dutchy in Discord.
+links to test-file recipes at <https://dutchmancad.xyz/fixtures/> and offers private help:
+send the file and its STEP export to Dutchy in Discord.
 
 What the installed build converts is what its `formats` says; check it rather than this
 list when unsure.

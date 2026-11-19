@@ -1716,6 +1716,9 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
             stdout.matches("Want to help").count(),
             usize::from(option.is_none())
         );
+        if option.is_none() {
+            assert!(stdout.contains("https://dutchmancad.xyz/fixtures/"));
+        }
         assert!(!stdout.contains("unknown format"));
         assert!(!output.exists());
         let mut args = vec![
@@ -1739,6 +1742,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
                 .find(|l| l.starts_with("Want to help"))
                 .unwrap();
             assert!(pitch.starts_with("Want to help Dutchman read Creo better?"));
+            assert!(pitch.contains("https://dutchmancad.xyz/fixtures/"));
             assert!(!pitch.contains("first") && !pitch.contains("second"));
         }
     }
