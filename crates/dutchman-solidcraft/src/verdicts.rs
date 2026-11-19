@@ -59,6 +59,37 @@ pub struct PartVerdicts<'a> {
     pub history: Option<String>,
 }
 
+/// Lists every feature whose profile region or blend edges would be inferred: each candidate is
+/// taken as matching, as the source body check would take a match, so later features map as a
+/// conversion maps them. Nothing is measured; the ids say which features were inferred.
+#[derive(Default)]
+struct AcceptEvery {
+    inferred: Vec<u64>,
+}
+
+impl history::infer::Host for AcceptEvery {
+    fn fit(
+        &mut self,
+        prefix: &history::History,
+        _: Option<&[crate::verify::StoredBody]>,
+        _: bool,
+        _: bool,
+    ) -> history::infer::Fit {
+        if let Some(id) = prefix
+            .features
+            .last()
+            .and_then(|feature| feature.get("id"))
+            .and_then(Value::as_u64)
+        {
+            self.inferred.push(id);
+        }
+        history::infer::Fit::Matches(history::infer::Measure {
+            against: dutchman_core::InferredAgainst::OriginalShape,
+            deviation: None,
+        })
+    }
+}
+
 impl SolidCraftWriter {
     /// What mapping says of each source feature of `model`, part by part, without running
     /// SolidCraft or writing anything. Parts an assembly repeats are listed once, as
@@ -158,25 +189,16 @@ impl SolidCraftWriter {
     ) -> PartVerdicts<'a> {
         // Each inferred profile candidate is accepted as SolidCraft's check would accept it,
         // so later features are mapped as converting maps them; the ids say which ones.
-        let mut inferred = Vec::new();
+        let mut host = AcceptEvery::default();
         let mapping = history::map_with_profile_check(
             mapped,
             &mut Report::default(),
             self.target_version.unwrap_or_default(),
             self.sketches,
-            &mut |prefix, _, _| {
-                if let Some(id) = prefix
-                    .features
-                    .last()
-                    .and_then(|feature| feature.get("id"))
-                    .and_then(Value::as_u64)
-                {
-                    inferred.push(id);
-                }
-                true
-            },
+            &mut host,
             None,
         );
+        let inferred = host.inferred;
         let mut checks: BTreeMap<usize, &'static str> = BTreeMap::new();
         if let Ok(history) = &mapping.result {
             for pending in &history.blends {
