@@ -175,6 +175,7 @@ impl SolidCraftWriter {
                 }
                 true
             },
+            None,
         );
         let mut checks: BTreeMap<usize, &'static str> = BTreeMap::new();
         if let Ok(history) = &mapping.result {
