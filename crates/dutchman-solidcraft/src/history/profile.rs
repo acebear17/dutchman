@@ -520,7 +520,7 @@ fn needs_split(ctx: &Context, sketch: &str, index: &Value, ring: &[String]) -> b
 }
 
 /// Source entities belonging to this sketch.
-fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
+pub(super) fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
     ctx.arena("sketch_entities")
         .iter()
         .filter(|entity| entity.get("sketch").and_then(Value::as_str) == Some(sketch))
