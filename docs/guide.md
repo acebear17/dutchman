@@ -130,7 +130,7 @@ dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthro
 dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
 dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
-Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
@@ -452,6 +452,19 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact

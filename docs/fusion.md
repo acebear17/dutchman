@@ -246,6 +246,17 @@ whole curves, including the two halves of a circle split by a diameter. Boundari
 unambiguously; a missing interior point blocks the feature with a named reason. Angular carriers
 whose stored chart differs from the solved sketch still require consistent directed closure.
 
+Narrow regions use a finer search only when the existing point search cannot select them.
+It samples curves more closely, scans between boundary crossings in both directions, and
+scales the preferred clearance to the room inside the region, capped at 0.001 mm. The point
+must still pass the even-odd boundary test inside that region and outside its holes and
+smaller selected regions, with clearance greater than the sampled curves' sagitta and
+measured endpoint gaps, plus displacement from merging defining sketch points. Regions
+narrower than that combined bound are refused. Successful existing point selections keep
+their exact coordinates.
+Legacy angular readings that agree only within the existing 0.001 mm tolerance retain
+that uncertainty in the clearance proof; narrow regions cannot settle an ambiguous chart.
+
 When a native profile selection cannot resolve to a region, Dutchman tries its selected neutral
 curve identities, when available, and then its carrier sketch. Each candidate runs the normal
 feature mapping and is kept only when the existing source body comparison confirms its replay.
@@ -253,6 +264,40 @@ At the last body-building feature, the complete rebuilt shape must match the ori
 features need usable stored source bodies at that same state. Unknown or failed checks block the
 feature. Every accepted inference adds `history/profile-region-inferred`; the original geometry
 remains available as before.
+
+When neither candidate is confirmed, measured inference takes over. The regions of the carrier
+sketch come from its loops, each loop with the loops directly inside it as holes (a ring and the
+disc inside it are two regions); a selection of one native pick tries each region, a selection of
+two tries each pair (under even-odd nesting a union is the loops in an odd number of them). When
+other curves divide those loops (a line across a circle, a loop cadmpeg does not list), the
+regions SolidCraft finds in the written sketch (`sketch.inspect`) have no proven selectors yet.
+Their area centroids may lie outside their own regions; an annulus and its inner disc can share
+one. Dutchman refuses this fallback rather than omit a candidate and claim a unique match.
+Source-loop candidates retain their explicit boundaries, and deduplication uses those loop
+identities. At most 24 candidates and one 120 s budget per feature, covering region discovery,
+including `sketch.inspect`, mapping, source, replay and surface evaluations; late results are
+refused.
+Each candidate is mapped normally and replayed in
+SolidCraft against the original final shape: body count, box, volume and area within the check's
+tolerances, both face counts, and the largest distance between the two surfaces from
+`inspect.compare` with the source loaded beside the replay, within the box allowance of 0.01 mm
+or 2e-4 of the body's diagonal. New measured regions are tried only at the last body-building
+feature; stored body centres alone cannot prove an earlier region's shape. Exactly one match is kept, with
+`history/profile-region-measured`. Of several, the one alone with the source solid's face count is
+kept; otherwise it is a tie and the feature stays blocked, as it does when none matches or any
+candidate cannot be measured. New final-shape inferences require a one-body part and a successful
+surface comparison with both face counts. Every source and replayed body must also have
+finite volume, area, complete bounds and derived placement; unavailable comparisons or missing
+measurements keep the refusal. The earlier two-reading comparison stays permissive. A final shape that later differs from the source cuts the timeline
+before the first measured feature, so it never keeps fewer features than without measuring.
+
+The same applies to the last fillet or chamfer of a history when its input edges cannot be proven
+on the rebuilt body (a midpoint off every edge, or an edge with other ends or length). For each
+source edge the candidates are the up to three nearest rebuilt edges of its kind (straight or
+curved) within 2 mm of its midpoint; every combination using distinct edges, up to 24, is written
+and the complete replay compared with the original final shape. Blends before the last stay
+refused: the bodies the source stores after them barely move with a fillet, so they cannot tell
+candidate edges apart.
 
 ## Assembly placements
 

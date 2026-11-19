@@ -11,6 +11,19 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 Local CLI and desktop progress can name the current timeline feature, such as
 “Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
@@ -342,7 +355,8 @@ Batch results retain that refusal; IGES does not trigger the CLI or GUI fixtures
 Numbered `.prt.N` saves are identified by contents too; a directory conversion keeps only
 the highest revision per part and returns older saves in `skipped_revisions` (`path`, `newer`).
 Numbered saves use the part's base output name and keep existing output files.
-The CLI and desktop volunteer invitation is absent from MCP and `--json` output.
+The CLI and desktop volunteer invitation links to <https://dutchmancad.xyz/fixtures/>
+and is absent from MCP and `--json` output.
 
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.

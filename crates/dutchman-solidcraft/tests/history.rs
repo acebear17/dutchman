@@ -4643,6 +4643,187 @@ fn solidcraft_replays_a_whole_region_beside_a_notch_of_the_same_source_sketch() 
     assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
 }
 
+/// Synthetic belt-tooth gap beside a normal region. The normal point must retain its
+/// original bytes even when the other region needs the refined search.
+fn narrow_gap_history(width: f64) -> Model {
+    let boundary = |key: u32| {
+        json!({"entity": format!("f3d:model:sketch-entity#{key}"),
+        "parameter_range": [0.0, 1.0], "reversed": false})
+    };
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+    "regions": [
+        {"kind": "trimmed", "outer_boundary": [boundary(1), boundary(2), boundary(3), boundary(4)], "hole_boundaries": []},
+        {"kind": "trimmed", "outer_boundary": [boundary(5), boundary(6), boundary(7), boundary(8)], "hole_boundaries": []}
+    ]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            line(5, [20.0, 0.0], [20.0 + width, 0.0]),
+            line(6, [20.0 + width, 0.0], [20.0 + width, 10.0]),
+            line(7, [20.0 + width, 10.0], [20.0, 10.0]),
+            line(8, [20.0, 10.0], [20.0, 0.0]),
+        ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn trimmed_belt_tooth_gap_maps_without_changing_existing_point_bytes() {
+    let writer = || SolidCraftWriter::new().verification(Verification::Off);
+    let (wide, wide_report) = convert(&narrow_gap_history(1.0), &writer());
+    let (narrow, narrow_report) = convert(&narrow_gap_history(0.0005), &writer());
+    for report in [wide_report, narrow_report] {
+        assert!(
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
+            "{report:?}"
+        );
+    }
+    let points = &narrow["features"][1]["profiles"]["points"];
+    assert_eq!(points.as_array().unwrap().len(), 2);
+    assert_eq!(
+        serde_json::to_vec(&points[0]).unwrap(),
+        serde_json::to_vec(&wide["features"][1]["profiles"]["points"][0]).unwrap()
+    );
+    let point = points[1].as_array().unwrap();
+    let (x, y) = (point[0].as_f64().unwrap(), point[1].as_f64().unwrap());
+    assert!(x > 20.0 && x < 20.0005 && y > 0.0 && y < 10.0, "{point:?}");
+}
+
+fn narrow_annulus_history(width: f64) -> Model {
+    let boundary = |key: u32| {
+        json!({"entity": format!("f3d:model:sketch-entity#{key}"),
+        "parameter_range": [0.0, std::f64::consts::TAU], "reversed": false})
+    };
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+    "regions": [
+        {"kind": "trimmed", "outer_boundary": [boundary(5)], "hole_boundaries": [[boundary(6)]]},
+        {"kind": "trimmed", "outer_boundary": [boundary(6)], "hole_boundaries": []}
+    ]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            circle(5, [20.0, 0.0], 1.0),
+            circle(6, [20.0, 0.0], 1.0 - width),
+        ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn trimmed_narrow_annulus_and_its_disc_select_exactly_their_own_interiors() {
+    let (document, report) = convert(
+        &narrow_annulus_history(0.0005),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{report:?}"
+    );
+    let points = document["features"][1]["profiles"]["points"]
+        .as_array()
+        .unwrap();
+    assert_eq!(points.len(), 2);
+    let radius =
+        |point: &Value| (point[0].as_f64().unwrap() - 20.0).hypot(point[1].as_f64().unwrap());
+    assert!(
+        radius(&points[0]) > 0.9995 && radius(&points[0]) < 1.0,
+        "{points:?}"
+    );
+    assert!(radius(&points[1]) < 0.9995, "{points:?}");
+}
+
+/// Synthetic construction point precedes both circles, so their written centres merge
+/// to it even though the source annulus stays centred at (20, 0).
+fn merged_centre_annulus_history(width: f64) -> Model {
+    let mut model = narrow_annulus_history(width);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
+    entities.retain(|e| {
+        e["id"] != "f3d:model:sketch-entity#5" && e["id"] != "f3d:model:sketch-entity#6"
+    });
+    let mut point = entity(
+        7,
+        json!({"kind": "point",
+        "position": {"u": 20.0000009, "v": 0.0}}),
+    );
+    point["construction"] = json!(true);
+    entities.extend([
+        point,
+        circle(5, [20.0, 0.0], 0.01),
+        circle(6, [20.0, 0.0], 0.01 - width),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn trimmed_annulus_narrower_than_merged_boundary_displacement_is_refused() {
+    let (document, report) = convert(
+        &merged_centre_annulus_history(0.0000005),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        format!("{report:?}").contains("no unambiguous interior point"),
+        "{report:?}"
+    );
+    assert!(!document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "extrude"));
+    assert_merged_circle_centres(&document);
+}
+
+fn assert_merged_circle_centres(document: &Value) {
+    let sketch = &document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "sketch")
+        .unwrap()["sketch"];
+    let circles: Vec<_> = sketch["curves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["type"] == "circle")
+        .collect();
+    assert_eq!(circles.len(), 2);
+    for circle in circles {
+        let index = usize::try_from(circle["c"].as_u64().unwrap()).unwrap();
+        assert_eq!(sketch["points"][index]["pos"], json!([20.0000009, 0.0]));
+    }
+}
+
+#[test]
+fn wider_trimmed_annulus_with_merged_centres_is_inside_source_and_written_regions() {
+    let (document, report) = convert(
+        &merged_centre_annulus_history(0.00001),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{report:?}"
+    );
+    assert_merged_circle_centres(&document);
+    let points = document["features"][1]["profiles"]["points"]
+        .as_array()
+        .unwrap();
+    for center in [20.0, 20.0000009] {
+        let radius = |p: &Value| (p[0].as_f64().unwrap() - center).hypot(p[1].as_f64().unwrap());
+        assert!(
+            radius(&points[0]) > 0.00999 && radius(&points[0]) < 0.01,
+            "{points:?}"
+        );
+        assert!(radius(&points[1]) < 0.00999, "{points:?}");
+    }
+}
+
 fn shared_circle_regions() -> Model {
     let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
     let pi = std::f64::consts::PI;
@@ -14142,4 +14323,435 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
         history_line(&report).contains("ordered selections and evaluation states"),
         "{report:?}"
     );
+}
+
+/// The cube's sketch with a second 10 mm square beside the first, 20 mm along X, and an opaque
+/// native pick of one of the two: the first two readings (the whole sketch) build two bodies.
+fn two_square_selection() -> Model {
+    let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
+        "selections": ["synthetic:native:selection#one"]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    m["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [10.0, 0.0]),
+        line(2, [10.0, 0.0], [10.0, 10.0]),
+        line(3, [10.0, 10.0], [0.0, 10.0]),
+        line(4, [0.0, 10.0], [0.0, 0.0]),
+        line(5, [20.0, 0.0], [30.0, 0.0]),
+        line(6, [30.0, 0.0], [30.0, 10.0]),
+        line(7, [30.0, 10.0], [20.0, 10.0]),
+        line(8, [20.0, 10.0], [20.0, 0.0]),
+    ]);
+    let ring = |first: u32| -> Vec<Value> {
+        (first..first + 4)
+            .map(|key| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": false}))
+            .collect()
+    };
+    m["sketches"][0]["profiles"] = json!([ring(1), ring(5)]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+/// Measures a design by the profile its extrude sweeps, as SolidCraft would: the first square
+/// is the source's cube, the second the same cube 20 mm along X, the whole sketch both. With
+/// `tie`, either square measures as the cube. `faces` gives `inspect.compare` face counts:
+/// the first square's replay has the source's six faces, the second's seven.
+#[derive(Debug, Default)]
+struct MeasuringEvaluator {
+    calls: std::sync::Mutex<Vec<String>>,
+    tie: bool,
+    faces: bool,
+    /// Lists the halves of a square split down the middle as its sketch's regions.
+    halves: bool,
+    unavailable_comparison: bool,
+    missing_face_counts: bool,
+    missing_measurement: Option<(&'static str, &'static str)>,
+    missing_only_second: bool,
+    concentric: bool,
+}
+
+impl MeasuringEvaluator {
+    /// Which square the live extrude sweeps: `Some(true)` the first, `Some(false)` the
+    /// second, `None` both or none (the original geometry alone).
+    fn swept(design: &[u8]) -> Option<Option<bool>> {
+        let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let extrude = document["features"].as_array().unwrap().iter().find(|f| {
+            f["type"] == "extrude" && f.get("suppressed").and_then(Value::as_bool) != Some(true)
+        })?;
+        let text = extrude["profiles"].to_string();
+        if extrude["profiles"]["type"] == "points" {
+            // The left half named by its centre is the source's shape; the right half is not.
+            return Some(Some(text.contains("[2.5,5.0]")));
+        }
+        Some(match (text.contains("\"l1\""), text.contains("\"l5\"")) {
+            (true, false) => Some(true),
+            (false, true) => Some(false),
+            _ => None,
+        })
+    }
+
+    fn body(min_x: f64) -> Value {
+        json!({"volume_mm3": 1000.0, "area_mm2": 600.0, "faces": 6,
+            "bbox": {"min": [min_x, 0, 0], "max": [min_x + 10.0, 10, 10]}})
+    }
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for MeasuringEvaluator {
+    fn evaluate(
+        &self,
+        design: &[u8],
+        _: std::time::Duration,
+        label: &str,
+    ) -> Result<Value, String> {
+        self.calls.lock().unwrap().push(label.to_owned());
+        let bodies = match Self::swept(design) {
+            None => vec![Self::body(0.0)],
+            Some(Some(true)) => vec![Self::body(0.0)],
+            Some(Some(false)) if self.tie => vec![Self::body(0.0)],
+            Some(Some(false)) => vec![Self::body(20.0)],
+            Some(None) => vec![Self::body(0.0), Self::body(20.0)],
+        };
+        let mut result = json!({"bodies": bodies, "timeline": [], "total": {"faces": 6}});
+        if let Some((_, field)) = self.missing_measurement.filter(|(side, _)| {
+            *side == label
+                && (!self.missing_only_second || Self::swept(design) == Some(Some(false)))
+        }) {
+            for body in result["bodies"].as_array_mut().unwrap() {
+                match field {
+                    "min" | "max" => {
+                        body["bbox"].as_object_mut().unwrap().remove(field);
+                    }
+                    "coordinate" => {
+                        body["bbox"]["min"].as_array_mut().unwrap().pop();
+                    }
+                    _ => {
+                        body.as_object_mut().unwrap().remove(field);
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        _: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        self.calls.lock().unwrap().push(label.to_owned());
+        if self.concentric && commands[0]["command"] == "sketch.inspect" {
+            // An annulus and its inner disc have the same centroid but distinct identities.
+            return Ok(vec![json!({"profiles": [
+                {"index": 0, "area_mm2": 12.0, "centroid_sketch": [2.5, 5.0]},
+                {"index": 1, "area_mm2": 12.0, "centroid_sketch": [2.5, 5.0]},
+                {"index": 2, "area_mm2": 50.0, "centroid_sketch": [30.0, 5.0]},
+            ]})]);
+        }
+        if self.halves && commands[0]["command"] == "sketch.inspect" {
+            return Ok(vec![json!({"profiles": [
+                {"index": 0, "area_mm2": 50.0, "centroid_sketch": [2.5, 5.0]},
+                {"index": 1, "area_mm2": 50.0, "centroid_sketch": [7.5, 5.0]},
+            ]})]);
+        }
+        if self.unavailable_comparison {
+            return Err("the host has no such command".to_owned());
+        }
+        let first = Self::swept(design) == Some(Some(true));
+        commands
+            .iter()
+            .map(|command| {
+                Ok(match command["command"].as_str().unwrap() {
+                    "timeline.suppress" => json!({"suppressed": false}),
+                    "inspect.compare" => json!({
+                        "a": {"faces": (!self.missing_face_counts).then_some(if self.faces && !first { 7 } else { 6 })},
+                        "b": {"faces": (!self.missing_face_counts).then_some(6), "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}},
+                        "deviation": {"max_mm": 0.0001},
+                    }),
+                    other => return Err(format!("Unexpected command: {other}")),
+                })
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn a_profile_region_is_inferred_when_only_one_candidate_measures_as_the_source() {
+    let host = std::sync::Arc::new(MeasuringEvaluator {
+        faces: true,
+        ..MeasuringEvaluator::default()
+    });
+    let (document, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().evaluator(host.clone()),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.check, Check::Verified, "{report:?}");
+    let extrude = &outcome.features[1];
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+    let inferred = extrude.inferred.unwrap();
+    assert_eq!(
+        inferred.selection,
+        dutchman_core::InferredSelection::ProfileRegion
+    );
+    assert_eq!(
+        inferred.against,
+        dutchman_core::InferredAgainst::OriginalShape
+    );
+    assert_eq!((inferred.candidates, inferred.matches), (2, 1));
+    assert_eq!(inferred.deviation_nm, Some(100));
+    let loops = document["features"][1]["profiles"].to_string();
+    assert!(
+        loops.contains("\"l1\"") && !loops.contains("\"l5\""),
+        "{loops}"
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.code.as_deref() == Some("history/profile-region-measured")));
+}
+
+#[test]
+fn candidates_that_measure_alike_are_a_tie_unless_one_alone_has_the_source_faces() {
+    for (faces, mapped) in [(false, false), (true, true)] {
+        let host = std::sync::Arc::new(MeasuringEvaluator {
+            tie: true,
+            faces,
+            ..MeasuringEvaluator::default()
+        });
+        let (document, report) = convert(
+            &two_square_selection(),
+            &SolidCraftWriter::new().evaluator(host),
+        );
+        let extrude = &report.outcome().unwrap().features[1];
+        if mapped {
+            assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+            assert_eq!(extrude.inferred.unwrap().matches, 2);
+            assert!(document["features"][1]["profiles"]
+                .to_string()
+                .contains("\"l1\""));
+        } else {
+            assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+            assert!(
+                extrude
+                    .reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("2 of 2 candidate regions match the source equally"),
+                "{extrude:?}"
+            );
+            assert!(extrude.inferred.is_none());
+            assert_reference_sketches(&document, 1);
+        }
+    }
+}
+
+#[test]
+fn measured_regions_are_not_tried_without_a_solidcraft_check() {
+    let (_, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(extrude.inferred.is_none());
+    // The first readings' refusal stands: nothing measured, so nothing claims an inference.
+    assert!(!extrude
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("could not be inferred"));
+}
+
+#[test]
+fn solidcraft_measures_the_one_region_that_rebuilds_the_source() {
+    let Some(cli) = solidcraft() else { return };
+    let (_, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.check, Check::Verified, "{report:?}");
+    let inferred = outcome.features[1].inferred.unwrap();
+    assert_eq!(inferred.matches, 1);
+    assert!(
+        inferred.deviation_nm.is_some_and(|nm| nm < 10_000),
+        "{inferred:?}"
+    );
+}
+
+/// The cube's square with a loose line down its middle, which cadmpeg's one loop does not
+/// show: SolidCraft's own regions of the sketch are the candidates.
+fn split_square_selection() -> Model {
+    let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
+        "selections": ["synthetic:native:selection#half"]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    m["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(line(5, [5.0, -1.0], [5.0, 11.0]));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn solidcraft_region_centroids_are_refused_without_proven_interior_selections() {
+    let host = std::sync::Arc::new(MeasuringEvaluator {
+        halves: true,
+        ..MeasuringEvaluator::default()
+    });
+    let (_, report) = convert(
+        &split_square_selection(),
+        &SolidCraftWriter::new().evaluator(host.clone()),
+    );
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(
+        extrude.status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    assert!(extrude.inferred.is_none());
+    assert!(extrude
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("without proven interior selections"));
+    assert!(host
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| call == "sketch regions"));
+    assert!(!host
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| call == "deviation"));
+}
+
+#[test]
+fn an_annulus_disc_and_remote_region_cannot_claim_uniqueness_from_shared_centroids() {
+    let host = std::sync::Arc::new(MeasuringEvaluator {
+        concentric: true,
+        ..MeasuringEvaluator::default()
+    });
+    let mut model = two_square_selection();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_entities"] = json!([
+        circle(1, [2.5, 5.0], (24.0 / std::f64::consts::PI).sqrt()),
+        circle(2, [2.5, 5.0], (12.0 / std::f64::consts::PI).sqrt()),
+        circle(3, [30.0, 5.0], (50.0 / std::f64::consts::PI).sqrt()),
+        // A nonconstruction curve absent from the profile table forces discovery.
+        line(4, [40.0, 0.0], [40.0, 10.0]),
+    ]);
+    let ring = |id| json!([{"entity": format!("f3d:model:sketch-entity#{id}"), "reversed": false}]);
+    m["sketches"][0]["profiles"] = json!([ring(1), ring(2), ring(3)]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(&model, &SolidCraftWriter::new().evaluator(host.clone()));
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(
+        extrude.status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    assert!(extrude.inferred.is_none());
+    assert!(
+        extrude
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("3 regions without proven interior selections"),
+        "{extrude:?}"
+    );
+    assert!(host
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| call == "sketch regions"));
+    assert!(!host
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| call == "deviation"));
+}
+
+#[test]
+fn measured_regions_require_every_body_measurement_on_both_sides() {
+    for side in ["original", "history"] {
+        for field in ["volume_mm3", "area_mm2", "bbox", "min", "max", "coordinate"] {
+            let host = std::sync::Arc::new(MeasuringEvaluator {
+                missing_measurement: Some((side, field)),
+                ..MeasuringEvaluator::default()
+            });
+            let (_, report) = convert(
+                &two_square_selection(),
+                &SolidCraftWriter::new().evaluator(host),
+            );
+            let extrude = &report.outcome().unwrap().features[1];
+            assert_eq!(
+                extrude.status,
+                dutchman_core::FeatureStatus::Blocked,
+                "{side} {field}: {report:?}"
+            );
+            assert!(extrude.inferred.is_none(), "{side} {field}: {extrude:?}");
+        }
+    }
+}
+
+#[test]
+fn an_incomplete_alternative_cannot_make_a_matching_region_look_unique() {
+    let host = std::sync::Arc::new(MeasuringEvaluator {
+        missing_measurement: Some(("history", "area_mm2")),
+        missing_only_second: true,
+        ..MeasuringEvaluator::default()
+    });
+    let (_, report) = convert(
+        &two_square_selection(),
+        &SolidCraftWriter::new().evaluator(host),
+    );
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(
+        extrude.status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+    assert!(extrude.inferred.is_none());
+    assert!(
+        extrude
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("some candidate regions could not be measured"),
+        "{extrude:?}"
+    );
+}
+
+#[test]
+fn measured_regions_require_complete_surface_comparisons_when_checking_the_final_shape() {
+    for missing_face_counts in [false, true] {
+        let host = std::sync::Arc::new(MeasuringEvaluator {
+            unavailable_comparison: !missing_face_counts,
+            missing_face_counts,
+            ..MeasuringEvaluator::default()
+        });
+        let (_, report) = convert(
+            &two_square_selection(),
+            &SolidCraftWriter::new().evaluator(host),
+        );
+        let extrude = &report.outcome().unwrap().features[1];
+        assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+        assert!(extrude.inferred.is_none());
+    }
 }

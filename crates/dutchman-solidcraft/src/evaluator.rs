@@ -223,3 +223,105 @@ mod tests {
 
     use crate::DEFAULT_TIMEOUT;
 }
+
+/// One inference candidate's remaining allowance, shared across all its engine calls.
+#[derive(Debug)]
+pub(crate) struct Budgeted {
+    evaluator: std::sync::Arc<dyn SolidCraftEvaluator>,
+    started: std::time::Instant,
+    budget: Duration,
+}
+
+impl Budgeted {
+    pub(crate) fn new(
+        evaluator: std::sync::Arc<dyn SolidCraftEvaluator>,
+        budget: Duration,
+    ) -> Self {
+        Self {
+            evaluator,
+            started: std::time::Instant::now(),
+            budget,
+        }
+    }
+
+    fn remaining(&self, timeout: Duration) -> Result<Duration, String> {
+        let remaining = timeout.min(self.budget.saturating_sub(self.started.elapsed()));
+        if remaining.is_zero() {
+            Err("the inference measurement time allowed has elapsed".to_owned())
+        } else {
+            Ok(remaining)
+        }
+    }
+}
+
+impl SolidCraftEvaluator for Budgeted {
+    fn evaluate(&self, design: &[u8], timeout: Duration, label: &str) -> Result<Value, String> {
+        let result = self
+            .evaluator
+            .evaluate(design, self.remaining(timeout)?, label)?;
+        self.remaining(timeout)?;
+        Ok(result)
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        let result = self
+            .evaluator
+            .run(design, commands, self.remaining(timeout)?, label)?;
+        self.remaining(timeout)?;
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct Recording(Mutex<Vec<Duration>>);
+
+    impl SolidCraftEvaluator for Recording {
+        fn evaluate(&self, _: &[u8], timeout: Duration, _: &str) -> Result<Value, String> {
+            self.0.lock().unwrap().push(timeout);
+            Ok(Value::Null)
+        }
+
+        fn run(
+            &self,
+            _: &[u8],
+            _: &[Value],
+            timeout: Duration,
+            _: &str,
+        ) -> Result<Vec<Value>, String> {
+            self.0.lock().unwrap().push(timeout);
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn engine_calls_share_the_remaining_inference_budget() {
+        let host = Arc::new(Recording::default());
+        let budget = Duration::from_secs(120);
+        let limited = Budgeted::new(host.clone(), budget);
+        limited
+            .evaluate(&[], Duration::from_secs(300), "original")
+            .unwrap();
+        limited
+            .run(&[], &[], Duration::from_secs(300), "distance")
+            .unwrap();
+        let timeouts = host.0.lock().unwrap();
+        assert_eq!(timeouts.len(), 2);
+        assert!(timeouts[1] <= timeouts[0] && timeouts[0] <= budget);
+        drop(timeouts);
+        let expired = Budgeted::new(host.clone(), Duration::ZERO);
+        assert!(expired.evaluate(&[], budget, "original").is_err());
+        assert!(expired.run(&[], &[], budget, "distance").is_err());
+        assert_eq!(host.0.lock().unwrap().len(), 2);
+    }
+}
