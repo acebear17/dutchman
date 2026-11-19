@@ -234,6 +234,13 @@ threads, and entry recesses with drill points block history: explain the reporte
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
 
+Planar hole-entry faces can have rounded corners or existing circular holes. Their own
+source boundary and SolidCraft replay must prove the face before drilling; placements must
+stay inside the filled face and drill inward. A blocked boundary or replay reason means the
+original geometry is retained. Straight-cap holes keep their existing conversion path.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 Tell the user what to expect in one or two sentences before converting, for example: "This
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),
 so you'll get the solid shape without the feature history."
@@ -280,9 +287,9 @@ are not present in the pinned CADIR version.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
   0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
-  (currently 0.43), even with CLI `--no-verify` or MCP `verify: false`.
+  (currently 0.44), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
-  0.18.2–0.43); older targets get simplified features with a named reason.
+  0.18.2–0.44); older targets get simplified features with a named reason.
 - `preset: "fast"` when the user wants only the shape. `history: false` (also
   `import_only: true`) removes history while keeping the preset's reference sketches and
   joints. Leave `verify` at its default.
@@ -361,7 +368,9 @@ Never remove or change the quarantine attribute.
   original in body position, box, area, and volume (area and volume alone when a box is
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
   the larger box diagonal for the centre distance and each minimum/maximum coordinate;
-  area and volume retain their measuring mesh tolerances. `unverified`: written
+  area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
+  report states every number the check used; face count and centre of mass are not compared.
+  `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
   sketches are hidden beside the visible imported shape; the reason says whether retained
@@ -635,7 +644,7 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](../../docs/json.md).
 
 SolidCraft names and report targets use minors: `solidcraft.target` and
-`solidcraft.known_newest` are `x.y` strings such as `"0.43"`. `solidcraft.found`
+`solidcraft.known_newest` are `x.y` strings such as `"0.44"`. `solidcraft.found`
 retains the full installed version. All patches of the newest minor count as current;
 writer gates still use full versions internally. Explicit target inputs remain `x.y.z`.
 
@@ -874,7 +883,10 @@ that moves, and is reported. Smart also keeps the first placement of a displayed
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
-CLI and desktop progress includes the running part or stage and its elapsed time. “Still …”
+CLI and desktop progress includes the running part or stage and its elapsed time, and while
+a history is built, the feature it is on ("Feature 29 of 37 · Extrude 1"; `running.feature`
+in `dutchman.progress/1`), noting when SolidCraft checks a feature by measurement, which takes
+longer. “Still …”
 means the usual duration has passed, not a deadline. A check-limit notice states the actual
 retention or stop policy in a full sentence. Durations use a single format such as `1 min 1 s`
 or `2 min`. Desktop folder runs keep the longest-running file, stage and step visible below

@@ -176,6 +176,7 @@ pub struct Report {
     part_positions: Option<(crate::PartPositions, crate::PartPositionCounts)>,
     placement_assumptions: Vec<(String, crate::PlacementAssumption)>,
     history_check_skipped: Option<(u64, u64)>,
+    verification_tolerances: Option<serde_json::Value>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
@@ -337,6 +338,16 @@ impl Report {
     /// Record a history check skipped for memory; the converted design is still usable.
     pub fn skip_history_check(&mut self, needed: u64, available: u64) {
         self.history_check_skipped = Some((needed, available));
+    }
+
+    /// The tolerances the writer's history check used, as it states them, when it ran one.
+    pub fn verification_tolerances(&self) -> Option<&serde_json::Value> {
+        self.verification_tolerances.as_ref()
+    }
+
+    /// Records the tolerances the writer's history check used.
+    pub fn set_verification_tolerances(&mut self, tolerances: serde_json::Value) {
+        self.verification_tolerances = Some(tolerances);
     }
 
     /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
@@ -553,6 +564,9 @@ impl Report {
         self.placement_assumptions
             .extend(other.placement_assumptions);
         self.merge_history_check(other.history_check_skipped);
+        if self.verification_tolerances.is_none() {
+            self.verification_tolerances = other.verification_tolerances;
+        }
         self.losses.extend(other.losses);
         self.names.extend(other.names);
     }
@@ -566,6 +580,9 @@ impl Report {
         self.placement_assumptions
             .extend(other.placement_assumptions);
         self.merge_history_check(other.history_check_skipped);
+        if self.verification_tolerances.is_none() {
+            self.verification_tolerances = other.verification_tolerances;
+        }
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {
                 subject: format!("{prefix}: {}", loss.subject),
