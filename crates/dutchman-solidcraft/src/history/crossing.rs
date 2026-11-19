@@ -178,7 +178,7 @@ pub(super) fn trimmed_region_curves(sketch: &Value, features: &[Value]) -> BTree
                         .into_iter()
                         .flatten()
                         .filter(|region| {
-                            region.get("region").and_then(Value::as_str) == Some("trimmed")
+                            region.get("kind").and_then(Value::as_str) == Some("trimmed")
                         })
                     {
                         let rings = region
@@ -235,7 +235,7 @@ fn whole_loop_uses(
     let mut identities = vec![id];
     identities.extend(features.iter().filter_map(|feature| {
         let definition = super::operation(feature);
-        if definition.get("definition").and_then(Value::as_str) != Some("sketch")
+        if super::operation_kind(feature) != Some("sketch")
             || definition.pointer("/sketch/sketch").and_then(Value::as_str) != Some(id)
         {
             return None;
@@ -249,7 +249,7 @@ fn whole_loop_uses(
             continue;
         }
         let definition = super::operation(feature);
-        if definition.get("definition").and_then(Value::as_str) == Some("sketch") {
+        if super::operation_kind(feature) == Some("sketch") {
             continue;
         }
         let found = region_uses(definition, id, &identities, sketch, entities, &mut used, 0)?;
@@ -304,15 +304,76 @@ pub(super) fn stray_curves(
     // A consumer that names a curve itself (a path, a rail, a reference) keeps it real.
     let mut named = BTreeSet::new();
     for feature in features {
-        if super::operation(feature)
-            .get("definition")
-            .and_then(Value::as_str)
-            != Some("sketch")
-        {
+        if super::operation_kind(feature) != Some("sketch") {
             named_in(feature, &strays, &mut named, 0);
         }
     }
     strays.difference(&named).cloned().collect()
+}
+
+/// The curves among `ids` that touch, enter or cross a loop `feature` selects whole from the
+/// sketch. Solid, such a curve divides the region and SolidCraft finds no profile with the
+/// source's boundary. A curve or selected loop that cannot be followed counts as dividing.
+pub(super) fn dividing(
+    sketch: &Value,
+    entities: &[&Value],
+    feature: &Value,
+    ids: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let Some(id) = sketch.get("id").and_then(Value::as_str) else {
+        return ids.clone();
+    };
+    let mut used = BTreeSet::new();
+    if ids.len() > MAX_LINES
+        || region_uses(
+            super::operation(feature),
+            id,
+            &[id],
+            sketch,
+            entities,
+            &mut used,
+            0,
+        ) != Some(true)
+    {
+        return ids.clone();
+    }
+    let selected: Vec<&[Value]> = loops(sketch)
+        .into_iter()
+        .filter(|members| {
+            members.iter().all(|member| {
+                member
+                    .get("entity")
+                    .and_then(Value::as_str)
+                    .is_some_and(|entity| used.contains(entity))
+            })
+        })
+        .collect();
+    let Some(polygons) = selected
+        .iter()
+        .map(|members| polygon(members, entities))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return ids.clone();
+    };
+    ids.iter()
+        .filter(|id| {
+            entity_named(entities, id)
+                .and_then(samples)
+                .is_none_or(|points| polygons.iter().any(|polygon| meets(&points, polygon)))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether a curve, as points along it, lies on or inside the polygon or crosses its edges.
+fn meets(points: &[P2], polygon: &[P2]) -> bool {
+    let tolerance = tolerance(polygon);
+    points
+        .iter()
+        .any(|&p| inside(p, polygon) || on_boundary(p, polygon, tolerance))
+        || points.iter().zip(points.iter().skip(1)).any(|(&c, &d)| {
+            edges(polygon).any(|(a, b)| !matches!(intersection(a, b, c, d), Ok(None)))
+        })
 }
 
 /// Adds to `found` each of `ids` that a string inside `value` names.
@@ -488,7 +549,7 @@ fn region_uses(
         let profiles = sketch.get("profiles")?.as_array()?;
         let mut members = 0usize;
         for region in regions {
-            match region.get("region").and_then(Value::as_str) {
+            match region.get("kind").and_then(Value::as_str) {
                 Some("loops") => {}
                 // A trimmed region is bounded by pieces of its curves: each is used.
                 Some("trimmed") => {
@@ -1004,7 +1065,7 @@ fn inside(p: P2, polygon: &[P2]) -> bool {
 
 /// A line arrangement is deliberately bounded: intersections and directed edges grow
 /// quadratically. Larger arrangements keep the existing refusal.
-const MAX_LINES: usize = 128;
+pub(super) const MAX_LINES: usize = 128;
 const MAX_SELECTION_DEPTH: usize = 64;
 const MAX_EDGES: usize = 16_384;
 const MAX_POINTS: usize = 2048;
@@ -1107,6 +1168,62 @@ pub(super) fn rings_cross(a: &[P2], b: &[P2]) -> bool {
     edges(a).any(|(p, q)| {
         edges(b).any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
     })
+}
+
+/// Follow one simple perimeter of exact emitted lines. Share the bounded arrangement
+/// limits and intersection checks with profile selection. Collinear neighbours are refused
+/// because SolidCraft can merge them into one edge, changing the historical edge endpoints.
+pub(super) fn line_ring(lines: &[(P2, P2)]) -> Option<Vec<P2>> {
+    if !(3..=MAX_LINES).contains(&lines.len()) {
+        return None;
+    }
+    let &(first, mut end) = lines.first()?;
+    let mut remaining: Vec<_> = lines.iter().copied().skip(1).collect();
+    let mut ring = vec![first];
+    while !remaining.is_empty() {
+        ring.push(end);
+        let mut matches = remaining.iter().enumerate().filter_map(|(i, &(a, b))| {
+            if super::sketch::distance(end, a) <= EPS {
+                Some((i, b))
+            } else if super::sketch::distance(end, b) <= EPS {
+                Some((i, a))
+            } else {
+                None
+            }
+        });
+        let (index, next) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        remaining.swap_remove(index);
+        end = next;
+    }
+    if super::sketch::distance(end, first) > EPS || self_crossing(&ring) {
+        return None;
+    }
+    for ((a, b), &c) in edges(&ring).zip(ring.iter().cycle().skip(2)) {
+        let u = subtract(b, a);
+        let v = subtract(c, b);
+        if super::sketch::distance(a, b) <= EPS
+            || determinant(u, v).abs() <= EPS * u[0].hypot(u[1]) * v[0].hypot(v[1])
+        {
+            return None;
+        }
+    }
+    (signed_area(edges(&ring)).abs() > EPS * EPS).then_some(ring)
+}
+
+/// Signed area relative to the first vertex, avoiding cancellation when a small
+/// perimeter is far from the sketch origin. The edge order determines the sign.
+pub(super) fn signed_area(lines: impl IntoIterator<Item = (P2, P2)>) -> f64 {
+    let mut lines = lines.into_iter();
+    let Some((origin, _)) = lines.next() else {
+        return 0.0;
+    };
+    lines
+        .map(|(a, b)| determinant(subtract(a, origin), subtract(b, origin)))
+        .sum::<f64>()
+        / 2.0
 }
 
 fn self_crossing(ring: &[P2]) -> bool {
@@ -1759,18 +1876,78 @@ mod tests {
     use super::*;
 
     #[test]
+    fn translated_line_perimeters_keep_their_area_and_winding() {
+        for (points, area) in [
+            (vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], 1.0),
+            (
+                vec![
+                    [0.0, 0.0],
+                    [3.0, 0.0],
+                    [3.0, 1.0],
+                    [1.0, 1.0],
+                    [1.0, 3.0],
+                    [0.0, 3.0],
+                ],
+                5.0,
+            ),
+        ] {
+            for offset in [0.0, 100_000_000.0, 100_000_001.0] {
+                for reverse in [false, true] {
+                    let mut translated: Vec<_> = points
+                        .iter()
+                        .map(|[x, y]| [x + offset, y + offset])
+                        .collect();
+                    if reverse {
+                        translated.reverse();
+                    }
+                    let lines: Vec<_> = edges(&translated).collect();
+                    let ring = line_ring(&lines).unwrap();
+                    assert_eq!(
+                        signed_area(edges(&ring)),
+                        if reverse { -area } else { area }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn emitted_line_perimeters_are_bounded_closed_and_unambiguous() {
+        // Out-of-order, reversed segments still describe the same concave perimeter.
+        let lines = [
+            ([0.0, 0.0], [30.0, 0.0]),
+            ([10.0, 10.0], [30.0, 10.0]),
+            ([0.0, 30.0], [10.0, 30.0]),
+            ([30.0, 10.0], [30.0, 0.0]),
+            ([10.0, 30.0], [10.0, 10.0]),
+            ([0.0, 0.0], [0.0, 30.0]),
+        ];
+        let ring = line_ring(&lines).unwrap();
+        assert_eq!(ring.len(), 6);
+        assert_eq!(ring_area(&ring), 500.0);
+        assert!(line_ring(&lines[..5]).is_none());
+        let mut branched = lines.to_vec();
+        branched.push(([30.0, 0.0], [40.0, 0.0]));
+        assert!(line_ring(&branched).is_none());
+        let mut zero_edge = lines.to_vec();
+        zero_edge.push(([30.0, 0.0], [30.0, 0.0]));
+        assert!(line_ring(&zero_edge).is_none());
+        assert!(line_ring(&[lines[0]; MAX_LINES + 1]).is_none());
+    }
+
+    #[test]
     fn curves_bounding_a_selected_trimmed_region_are_named() {
         let sketch = json!({"id": "s"});
         let features = vec![
-            json!({"id": "e", "definition": {"definition": "extrude", "profile": {
+            json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
                 "kind": "sketch_regions", "value": {"sketch": "s", "regions": [
-                    {"region": "trimmed",
-                     "outer_boundary": [{"entity": "top"}, {"entity": "divider"}],
-                     "hole_boundaries": [[{"entity": "circle"}]]},
-                    {"region": "loops", "outer": 0}]}}}}),
-            json!({"id": "f", "definition": {"definition": "extrude", "profile": {
+                    {"kind": "trimmed",
+                     "outer_boundary": [{"entity": "top", "reversed": false}, {"entity": "divider", "reversed": false}],
+                     "hole_boundaries": [[{"entity": "circle", "reversed": false}]]},
+                    {"kind": "loops", "outer": 0, "holes": []}]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}),
+            json!({"id": "f", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
                 "kind": "sketch_regions", "value": {"sketch": "other", "regions": [
-                    {"region": "trimmed", "outer_boundary": [{"entity": "elsewhere"}]}]}}}}),
+                    {"kind": "trimmed", "outer_boundary": [{"entity": "elsewhere", "reversed": false}], "hole_boundaries": []}]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}),
         ];
         let found = trimmed_region_curves(&sketch, &features);
         assert_eq!(
@@ -1936,8 +2113,8 @@ mod tests {
     }
 
     fn extrude(regions: Value) -> Value {
-        json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}}}})
+        json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0})
     }
 
     fn strays(sketch: &Value, entities: &[Value], features: &[Value]) -> Vec<String> {
@@ -1948,14 +2125,14 @@ mod tests {
     #[test]
     fn a_loop_no_feature_takes_is_construction_with_the_curves_in_no_loop() {
         let (sketch, entities) = square_and_tab();
-        let features = [extrude(json!([{"region": "loops", "outer": 0}]))];
+        let features = [extrude(json!([{"kind": "loops", "outer": 0, "holes": []}]))];
         assert_eq!(
             strays(&sketch, &entities, &features),
             ["t1", "t2", "t3", "t4", "x"]
         );
         // Both loops taken: only the line in no loop.
         let features = [extrude(
-            json!([{"region": "loops", "outer": 0}, {"region": "loops", "outer": 1}]),
+            json!([{"kind": "loops", "outer": 0, "holes": []}, {"kind": "loops", "outer": 1, "holes": []}]),
         )];
         assert_eq!(strays(&sketch, &entities, &features), ["x"]);
     }
@@ -1963,16 +2140,16 @@ mod tests {
     #[test]
     fn a_list_of_loops_counts_its_loops_and_the_whole_sketch_keeps_every_curve() {
         let (sketch, entities) = square_and_tab();
-        let listed = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}});
+        let listed = json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert_eq!(
             strays(&sketch, &entities, &[listed]),
             ["t1", "t2", "t3", "t4", "x"]
         );
         // The whole sketch takes every region its curves bound, which the profile table may
         // not list in full: nothing is inferred.
-        let whole = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch", "value": "s"}}});
+        let whole = json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch", "value": "s"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert!(strays(&sketch, &entities, &[whole]).is_empty());
     }
 
@@ -1981,13 +2158,13 @@ mod tests {
         let (sketch, entities) = square_and_tab();
         // Line ranges are fractions of the line: the tab's three outer sides whole, and the
         // stretch of the square's side between them.
-        let trimmed = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "t1", "parameter_range": [0.0, 1.0]},
-            {"entity": "t2", "parameter_range": [0.0, 1.0]},
-            {"entity": "t3", "parameter_range": [0.0, 1.0]},
-            {"entity": "b", "parameter_range": [0.3, 0.7], "reversed": true}]});
+        let trimmed = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "t3", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "b", "parameter_range": [0.3, 0.7], "reversed": true}], "hole_boundaries": []});
         let features = [
-            extrude(json!([{"region": "loops", "outer": 0}])),
+            extrude(json!([{"kind": "loops", "outer": 0, "holes": []}])),
             extrude(json!([trimmed])),
         ];
         assert_eq!(strays(&sketch, &entities, &features), ["t4", "x"]);
@@ -1995,12 +2172,14 @@ mod tests {
         // it are not named), says nothing about which curves it needs.
         for boundary in [
             json!([]),
-            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 1.0]}]),
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false}]),
         ] {
             let features = [
-                extrude(json!([{"region": "loops", "outer": 0}])),
-                extrude(json!([{"region": "trimmed", "outer_boundary": boundary}])),
+                extrude(json!([{"kind": "loops", "outer": 0, "holes": []}])),
+                extrude(
+                    json!([{"kind": "trimmed", "outer_boundary": boundary, "hole_boundaries": []}]),
+                ),
             ];
             assert!(strays(&sketch, &entities, &features).is_empty());
         }
@@ -2011,9 +2190,9 @@ mod tests {
         let (_, entities) = square_and_tab();
         let refs: Vec<&Value> = entities.iter().collect();
         let tab = |piece: [f64; 2]| {
-            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t3", "parameter_range": [0.0, 1.0]},
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t3", "parameter_range": [0.0, 1.0], "reversed": false},
                    {"entity": "b", "parameter_range": piece, "reversed": true}])
         };
         // 30% to 70% of the square's 10 mm side closes the 4 mm tab.

@@ -795,13 +795,7 @@ mod map_tests {
     use crate::testing::{cube, with};
 
     fn parameter(key: u32, name: &str, expression: &str, value: Value, owned: bool) -> Value {
-        let mut row = json!({
-            "id": format!("f3d:model:parameter#{key}"),
-            "ordinal": key,
-            "name": name,
-            "expression": expression,
-            "value": value,
-        });
+        let mut row = json!({"id": format!("f3d:model:parameter#{key}"), "ordinal": key, "name": name, "expression": expression, "value": value, "dependencies": [], "properties": {}});
         if row["value"].is_null() {
             row.as_object_mut().unwrap().remove("value");
         }
@@ -817,7 +811,7 @@ mod map_tests {
             1,
             0,
             "XY",
-            json!({"definition": "datum_principal_plane", "plane": "top"})
+            json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
         )]);
         let parameters = json!([
             parameter(
@@ -952,13 +946,13 @@ mod map_tests {
                 1,
                 0,
                 "Sheet",
-                json!({"definition": "datum_principal_plane", "plane": "top"})
+                json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
             ),
             crate::testing::feature(
                 2,
                 1,
                 "Pad",
-                json!({"definition": "datum_principal_plane", "plane": "top"})
+                json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
             ),
         ]);
         let model = with(cube(), features, parameters);
@@ -974,6 +968,7 @@ mod map_tests {
             .collect();
         wire["model"]["spreadsheets"] = json!([{
             "id": "f3d:model:spreadsheet#1", "feature": "f3d:model:feature#1", "cells": cells,
+            "column_widths": [], "row_heights": [], "merged_ranges": [],
         }]);
         dutchman_core::Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -1231,7 +1226,7 @@ mod map_tests {
                 1,
                 0,
                 "Feature",
-                json!({"definition": "datum_principal_plane", "plane": "top"})
+                json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
             )]),
             json!([
                 parameter(1, "width", "10 mm", value.clone(), false),
@@ -1249,7 +1244,7 @@ mod map_tests {
     fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
         let wire =
             json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
-        let mut ctx = super::super::Context::new(&wire);
+        let mut ctx = super::super::Context::testing(&wire);
         ctx.params
             .insert("negative".to_owned(), "offset".to_owned());
         let mut history = super::super::History {

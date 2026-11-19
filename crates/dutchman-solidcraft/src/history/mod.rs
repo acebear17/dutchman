@@ -45,9 +45,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
 use serde_json::{json, Value};
 
-/// The CADIR wire versions the mapping reads. Version 7 adds only assembly joint kinds and a
-/// sheet-metal thickness side, neither of which the mapping uses. Version 11 adds
-/// fragment/reproduction metadata without changing the complete-model feature mapping.
+/// Accepted document versions. In-memory models use cadmpeg's current v11 serializer;
+/// topology homes and enum payloads are read in that serializer's wire layout.
 const IR_VERSIONS: [&str; 6] = ["6", "7", "8", "9", "10", "11"];
 
 /// A replayable history: SolidCraft parameters and features in timeline order.
@@ -118,9 +117,10 @@ fn compared_state(
 /// doesn't say which of them such a reference takes: a cut that took them all can remove
 /// the body Fusion keeps.
 fn whole_of_several(feature: &Value, ctx: &Context) -> bool {
-    let Some(profile) = feature.pointer("/definition/profile") else {
+    let Some(profile) = operation(feature).get("profile") else {
         return false;
     };
+    let profile = profile::planar(profile);
     profile.get("kind").and_then(Value::as_str) == Some("sketch")
         && profile
             .get("value")
@@ -227,11 +227,12 @@ pub(crate) fn imported(
     }
     let wire = serde_json::to_value(&model.ir)
         .map_err(|err| dutchman_core::Error::Encode(format!("cannot map appearances: {err}")))?;
-    let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null));
+    let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null))
+        .with_geometry(wire.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
     let ids: Vec<_> = model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .map(|body| body.id.as_str())
@@ -580,6 +581,7 @@ impl FromIterator<String> for BodyNames {
 }
 
 type RowIndex<'a> = OnceCell<HashMap<&'a str, &'a Value>>;
+type ChildIndex<'a> = OnceCell<HashMap<&'a str, Vec<&'a Value>>>;
 
 /// The model and what has been mapped so far.
 #[derive(Clone)]
@@ -588,12 +590,15 @@ struct Context<'a> {
     source: Option<&'a Model>,
     /// The CADIR `model` object.
     model: &'a Value,
+    /// Current topology, separate from the model records on CADIR v11.
+    geometry: &'a Value,
     /// The arenas `model` holds when it is a subset of the whole; reading another is a bug,
     /// which a debug build panics on.
     reading_only: Option<&'static [&'static str]>,
     /// Borrowed rows, indexed once on the first lookup in each arena. Geometry walks
     /// otherwise scan whole arenas for every edge, vertex and point they visit.
     rows: BTreeMap<&'a str, RowIndex<'a>>,
+    children: BTreeMap<&'static str, ChildIndex<'a>>,
     target_version: crate::SolidCraftVersion,
     next_id: u64,
     /// SolidCraft parameter names by CADIR parameter id.
@@ -644,11 +649,20 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    #[cfg(test)]
+    fn testing(model: &'a Value) -> Self {
+        Self::new(model).with_geometry(model)
+    }
+
     fn new(model: &'a Value) -> Self {
         Context {
             source: None,
             model,
+            geometry: &Value::Null,
             reading_only: None,
+            children: [("regions", OnceCell::new()), ("faces", OnceCell::new())]
+                .into_iter()
+                .collect(),
             rows: model
                 .as_object()
                 .into_iter()
@@ -703,6 +717,36 @@ impl<'a> Context<'a> {
                     .any(|feature| feature.get("name").and_then(Value::as_str) == Some(name))
         };
         numbered_name(&base, taken)
+    }
+
+    fn with_geometry(mut self, geometry: &'a Value) -> Self {
+        self.geometry = geometry;
+        self.rows.extend(
+            geometry
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(_, rows)| rows.is_array())
+                .map(|(name, _)| (name.as_str(), OnceCell::new())),
+        );
+        self
+    }
+
+    /// Unordered topology children, indexed from their authoritative parent pointers.
+    fn children(&self, arena: &str, parent: &str, id: &str) -> &[&'a Value] {
+        let Some(index) = self.children.get(arena) else {
+            return &[];
+        };
+        let rows = index.get_or_init(|| {
+            let mut rows: HashMap<&str, Vec<&Value>> = HashMap::new();
+            for row in self.arena(arena) {
+                if let Some(parent) = row.get(parent).and_then(Value::as_str) {
+                    rows.entry(parent).or_default().push(row);
+                }
+            }
+            rows
+        });
+        rows.get(id).map_or(&[], Vec::as_slice)
     }
 
     /// A row of a CADIR arena by id.
@@ -803,8 +847,14 @@ impl<'a> Context<'a> {
             "arena {name:?} is read from a model that holds only {:?}",
             self.reading_only,
         );
-        self.model
-            .get(name)
+        let home = if cadmpeg_ir::document::ArenaName::parse(name)
+            .is_some_and(|arena| arena.home() == cadmpeg_ir::document::ArenaHome::Geometry)
+        {
+            self.geometry
+        } else {
+            self.model
+        };
+        home.get(name)
             .and_then(Value::as_array)
             .map_or(&[], Vec::as_slice)
     }
@@ -860,17 +910,20 @@ pub(crate) fn map_with_sketches(
         target_version,
         keep_sketches,
         &mut |_, _, _| false,
+        None,
     )
 }
 
 /// Mapping with a host check for otherwise unresolved sketch-selection candidates.
-/// Planning has no check and retains the original profile refusal.
+/// Planning has no check and retains the original profile refusal. `progress` hears of
+/// each timeline feature as mapping reaches it.
 pub(crate) fn map_with_profile_check(
     model: &Model,
     report: &mut Report,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
@@ -882,6 +935,7 @@ pub(crate) fn map_with_profile_check(
         target_version,
         keep_sketches,
         check,
+        progress,
     );
     let mut mapping = Mapping {
         result,
@@ -1010,6 +1064,7 @@ fn hidden_bodies(ctx: &Context) -> Vec<String> {
     names
 }
 
+#[allow(clippy::too_many_arguments)]
 fn map_into(
     model: &Model,
     report: &mut Report,
@@ -1018,14 +1073,21 @@ fn map_into(
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<History, String> {
+    if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
+        return Err(
+            "CADIR v11 design-only history is not mapped yet: its ordered selections and evaluation states have no model-history projection".to_owned(),
+        );
+    }
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
-    let wire = document.get("model").cloned().unwrap_or(Value::Null);
+    let wire = document.get("model").unwrap_or(&Value::Null);
     let (params, param_names) = params::map(model, report);
     references.params = params.clone();
-    let mut ctx = Context::new(&wire);
+    let mut ctx =
+        Context::new(wire).with_geometry(document.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
     ctx.target_version = target_version;
     ctx.params = param_names;
@@ -1072,7 +1134,11 @@ fn map_into(
                 .map(str::to_owned)
         })
         .collect();
+    let timeline = progress.map(|p| p.features(features.len() as u64));
     for (position, feature) in features.into_iter().enumerate() {
+        if let Some(timeline) = &timeline {
+            timeline.at(position as u64 + 1, name(feature));
+        }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             name: name(feature).map(str::to_owned),
             kind: kind(feature),
@@ -1116,9 +1182,8 @@ fn map_into(
             continue;
         }
         history.total += 1;
-        let definition = operation(feature);
         let structural = matches!(
-            definition.get("definition").and_then(Value::as_str),
+            operation_kind(feature),
             Some("datum_principal_plane" | "tree_node" | "reference_image")
         ) || is_assembly_feature(feature)
             || helpers::is_helper(feature);
@@ -1268,7 +1333,7 @@ fn map_into(
             continue;
         }
         let feature = serde_json::json!({"name": sketch.get("name")});
-        let definition = serde_json::json!({"sketch": {"space": "planar", "sketch": id}});
+        let definition = serde_json::json!({"sketch": {"kind": "planar", "sketch": id}});
         match sketch::map(&feature, &definition, &mut ctx, report) {
             Ok(mut mapped) => {
                 let name = ctx.unique_name(&mapped, history.features.iter());
@@ -1355,7 +1420,7 @@ pub(crate) fn sketches_where(
     if count == 0 {
         return (kept, 0);
     }
-    if model.ir.check_decode_depth().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
+    if model.ir.check_scope().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
         return (kept, count);
     }
     // Reference sketches read only the neutral arenas in `wire::SKETCH_ARENAS`. Keep those
@@ -1378,7 +1443,7 @@ pub(crate) fn sketches_where(
         }
         let feature = serde_json::json!({ "name": sketch.get("name") });
         let definition = serde_json::json!({
-            "sketch": { "space": "planar", "sketch": sketch.get("id") },
+            "sketch": { "kind": "planar", "sketch": sketch.get("id") },
         });
         // A sketch that does not map is counted, and leaves no notes of its own behind.
         let mut notes = Report::default();
@@ -1531,6 +1596,8 @@ enum Proven {
     Bodies(usize),
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
+    /// A hole axis signed to enter the proven face.
+    Hole(sketch::V3),
 }
 
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
@@ -1593,7 +1660,9 @@ pub(crate) fn prove_blends(
                             Ok(Proven::Bodies(added))
                         }),
                         Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
-                            if mirrored {
+                            if let Some(direction) = face.entry_direction(mirrored)? {
+                                Ok(Proven::Hole(direction))
+                            } else if mirrored {
                                 face.sketch(true)
                                     .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
                             } else {
@@ -1663,6 +1732,30 @@ pub(crate) fn prove_blends(
                     }
                 }
             }
+            Ok(Proven::Hole(direction)) => {
+                let target = history
+                    .features
+                    .get_mut(pending.feature.saturating_add(inserted));
+                let value = serde_json::json!(direction);
+                if let Some(fields) = target.and_then(Value::as_object_mut) {
+                    let changed = fields.get("direction") != Some(&value);
+                    fields.insert("direction".to_owned(), value);
+                    if changed && index.saturating_add(1) < blends.len() {
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|p| p.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
+                }
+            }
             Err(reason) => {
                 if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
                     outcome.status = FeatureStatus::Blocked;
@@ -1700,7 +1793,7 @@ fn map_unbound_sketches(
             continue;
         };
         let source = serde_json::json!({"name": sketch.get("name")});
-        let definition = serde_json::json!({"sketch": {"space": "planar", "sketch": id}});
+        let definition = serde_json::json!({"sketch": {"kind": "planar", "sketch": id}});
         let Ok(mut mapped) = sketch::map(&source, &definition, ctx, report) else {
             continue;
         };
@@ -1836,7 +1929,7 @@ fn map_feature(
 ) -> Result<Mapped, String> {
     let definition = operation(feature);
     if matches!(
-        definition.get("definition").and_then(Value::as_str),
+        operation_kind(feature),
         Some("datum_principal_plane" | "datum_plane" | "datum_offset_plane")
     ) {
         return datum::map(feature, ctx).map(|()| Mapped::Nothing);
@@ -1847,7 +1940,7 @@ fn map_feature(
     if helpers::is_helper(feature) {
         return helpers::map(feature, ctx, report);
     }
-    match definition.get("definition").and_then(Value::as_str) {
+    match operation_kind(feature) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
         Some("tree_node") => Ok(Mapped::Nothing),
         // A raster image placed for reference (a Fusion Canvas): it builds no geometry.
@@ -1943,7 +2036,7 @@ fn map_feature(
 /// component transfer copies an occurrence or moves it to another owner: the occurrence
 /// tree places the result, whether or not cadmpeg resolves which occurrence it was.
 fn is_assembly_feature(feature: &Value) -> bool {
-    match operation(feature).get("definition").and_then(Value::as_str) {
+    match operation_kind(feature) {
         Some("insert_component" | "component_transfer" | "assembly_joint") => true,
         // cadmpeg retains unresolved As-built joints as native operations with a stable
         // source tag. Display names may be edited and must never identify an operation.
@@ -1955,22 +2048,30 @@ fn is_assembly_feature(feature: &Value) -> bool {
     }
 }
 
-/// The feature's operation, looking through a post-processing wrapper.
-fn operation(feature: &Value) -> &Value {
+/// The tagged operation enum, looking through the definition wrapper.
+fn operation_enum(feature: &Value) -> &Value {
     let definition = feature.get("definition").unwrap_or(&Value::Null);
-    match definition.get("definition").and_then(Value::as_str) {
-        Some("post_process") => definition.get("operation").unwrap_or(&Value::Null),
-        _ => definition,
+    match definition.get("kind").and_then(Value::as_str) {
+        Some("post_process") => definition
+            .pointer("/value/operation")
+            .unwrap_or(&Value::Null),
+        Some("operation") => definition.get("value").unwrap_or(&Value::Null),
+        _ => &Value::Null,
     }
+}
+
+/// The payload of the feature's operation on the CADIR v11 wire.
+fn operation(feature: &Value) -> &Value {
+    operation_enum(feature).get("value").unwrap_or(&Value::Null)
+}
+
+fn operation_kind(feature: &Value) -> Option<&str> {
+    operation_enum(feature).get("kind").and_then(Value::as_str)
 }
 
 /// The CADIR operation name of a feature (`extrude`, `fillet`, …).
 fn kind(feature: &Value) -> String {
-    operation(feature)
-        .get("definition")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_owned()
+    operation_kind(feature).unwrap_or("unknown").to_owned()
 }
 
 /// The message for an input selection of a form that is not mapped, naming that form:
@@ -2047,7 +2148,7 @@ pub(crate) fn variant(feature: &Value) -> Option<String> {
         }
         "hole" => {
             let form = op
-                .pointer("/shape/construction/kind/kind")
+                .pointer("/shape/construction/value/kind/kind")
                 .and_then(Value::as_str)
                 .unwrap_or("other");
             parts.push(form.replace('_', " "));
@@ -2232,25 +2333,22 @@ mod tests {
 
     #[test]
     fn variants_describe_the_form_without_sizes() {
-        let extrude = json!({"definition": {"definition": "extrude",
-            "start": {"kind": "from_face"},
-            "extent": {"kind": "one_sided", "side": {"termination": {"kind": "to_plane"}}}}});
+        let extrude = json!({"definition": {"kind":"operation", "value": {"kind": "extrude", "value": {"start": {"kind": "from_face"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "to_plane"}}}}}}});
         assert_eq!(
             variant(&extrude).as_deref(),
             Some("extrude, to a plane, start from a face")
         );
-        let hole = json!({"definition": {"definition": "hole",
-            "shape": {"construction": {"kind": {"kind": "counterbore"}}, "diameter": 5.0},
-            "extent": {"kind": "through_all"}}});
+        let hole = json!({"definition": {"kind":"operation", "value": {"kind": "hole", "value": {"shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "counterbore"}}}, "diameter": 5.0}, "extent": {"kind": "through_all"}}}}});
         assert_eq!(
             variant(&hole).as_deref(),
             Some("hole, counterbore, through all")
         );
-        let fillet = json!({"definition": {"definition": "fillet",
-            "groups": [{"radius": 1.0}, {"radius": 2.0}]}});
+        let fillet = json!({"definition": {"kind":"operation", "value": {"kind": "fillet", "value": {"groups": [{"radius": 1.0}, {"radius": 2.0}]}}}});
         assert_eq!(variant(&fillet).as_deref(), Some("fillet, 2 radius groups"));
         assert_eq!(
-            variant(&json!({"definition": {"definition": "native"}})),
+            variant(
+                &json!({"definition": {"kind":"operation", "value": {"kind": "native", "value": {"parameters": {}}}}})
+            ),
             None
         );
     }
@@ -2261,7 +2359,7 @@ mod tests {
             .map(|i| json!({"id": format!("synthetic:face:{i}"), "ordinal": i}))
             .collect();
         let model = json!({"faces": faces, "points": [{"id": "point"}]});
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         assert!(ctx.rows.values().all(|index| index.get().is_none()));
         for row in ctx.arena("faces").iter().rev() {
             let id = row["id"].as_str().unwrap();
@@ -2286,12 +2384,14 @@ mod tests {
             "points": [{"id": "same", "value": 3}],
             "metadata": {"id": "same"}
         });
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         assert_eq!(ctx.row("faces", "same").unwrap()["value"], 1);
         assert_eq!(ctx.row("points", "same").unwrap()["value"], 3);
         assert!(ctx.row("metadata", "same").is_none());
         assert!(ctx.row("faces", "7").is_none());
-        assert!(Context::new(&Value::Null).row("faces", "same").is_none());
+        assert!(Context::testing(&Value::Null)
+            .row("faces", "same")
+            .is_none());
     }
 
     fn datum(key: u32, ordinal: u64) -> Value {
@@ -2299,7 +2399,7 @@ mod tests {
             key,
             ordinal,
             "XY Plane",
-            json!({"definition": "datum_principal_plane", "plane": "top"}),
+            json!({"kind": "datum_principal_plane", "value": {"plane": "top"}}),
         )
     }
 
@@ -2308,7 +2408,7 @@ mod tests {
             key,
             ordinal,
             name,
-            json!({"definition": "native", "kind": "Mystery", "parameters": {}}),
+            json!({"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}),
         )
     }
 
@@ -2425,17 +2525,10 @@ mod tests {
             "reference_image",
             "cosmetic_thread",
         ] {
-            let feature = json!({
-                "source_properties": {"transition_geometry": "unchanged"},
-                "definition": {"definition": kind},
-            });
+            let feature = json!({"source_properties": {"transition_geometry": "unchanged"}, "definition": {"kind":"operation", "value": {"kind": kind, "value": {}}}});
             assert!(!unchanged_geometry(&feature), "{kind}");
         }
-        let empty_base = json!({
-            "source_properties": {"transition_geometry": "unchanged"},
-            "definition": {"definition": "base_feature",
-                "bodies": {"kind": "resolved", "value": {"bodies": []}}},
-        });
+        let empty_base = json!({"source_properties": {"transition_geometry": "unchanged"}, "definition": {"kind":"operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": []}}}}}});
         assert!(!unchanged_geometry(&empty_base));
     }
 
@@ -2455,9 +2548,8 @@ mod tests {
     #[test]
     fn a_reference_image_builds_nothing() {
         let model = json!({"features": []});
-        let mut ctx = Context::new(&model);
-        let canvas = json!({"id": "f3d:model:feature#7", "ordinal": 7, "name": "Canvas 1",
-            "definition": {"definition": "reference_image", "asset": "f3d:model:asset#1"}});
+        let mut ctx = Context::testing(&model);
+        let canvas = json!({"id": "f3d:model:feature#7", "ordinal": 7, "name": "Canvas 1", "definition": {"kind": "operation", "value": {"kind": "reference_image", "value": {"asset": "f3d:model:asset#1"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
         let mut features = Vec::new();
         let mapped = map_feature(&canvas, &mut ctx, &mut Report::default(), &mut features);
         assert!(matches!(mapped, Ok(Mapped::Nothing)));
@@ -2470,7 +2562,7 @@ mod tests {
             2,
             1,
             "Body",
-            json!({"definition": "tree_node", "role": "history"}),
+            json!({"kind": "tree_node", "value": {"role": "history", "children": {"children": []}}}),
         );
         let model = with(cube(), json!([datum(1, 0), body]), json!([]));
         let mapping = map(
@@ -2496,13 +2588,13 @@ mod tests {
             2,
             1,
             "Component Insert 1",
-            json!({"definition": "insert_component", "occurrence": "f3d:model:occurrence#1"}),
+            json!({"kind": "insert_component", "value": {"occurrence": "f3d:model:occurrence#1"}}),
         );
         let joint = feature(
             3,
             2,
             "Joint 1",
-            json!({"definition": "assembly_joint", "joint": "f3d:model:joint#1"}),
+            json!({"kind": "assembly_joint", "value": {"joint": "f3d:model:joint#1"}}),
         );
         let model = with(cube(), json!([datum(1, 0), insert, joint]), json!([]));
         let mapping = map(
@@ -2524,15 +2616,14 @@ mod tests {
             2,
             1,
             "CopyPaste 1",
-            json!({"definition": "component_transfer", "mode": "copy",
-                "occurrence": "f3d:model:occurrence#1"}),
+            json!({"kind": "component_transfer", "value": {"mode": "copy", "occurrence": "f3d:model:occurrence#1"}}),
         );
         // An unresolved source still builds no part geometry.
         let moved = feature(
             3,
             2,
             "CutPaste 1",
-            json!({"definition": "component_transfer", "mode": "reparent"}),
+            json!({"kind": "component_transfer", "value": {"mode": "reparent"}}),
         );
         let model = with(cube(), json!([datum(1, 0), copy, moved]), json!([]));
         let mapping = map(
@@ -2556,7 +2647,7 @@ mod tests {
             2,
             1,
             "DatumPlane",
-            json!({"definition": "datum_plane", "frame": frame}),
+            json!({"kind": "datum_plane", "value": {"frame": frame}}),
         );
         let model = with(cube(), json!([datum(1, 0), placed]), json!([]));
         let mapping = map(
@@ -2599,7 +2690,7 @@ mod tests {
         source.ir = cadmpeg_ir::examples::unit_cube().unwrap();
         source.fidelity = None;
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        let template = wire["model"].clone();
+        let template = wire["geometry"].clone();
         for (prefix, label) in [("skin", "Skin"), ("other", "Other")] {
             let text = serde_json::to_string(&template)
                 .unwrap()
@@ -2611,16 +2702,16 @@ mod tests {
                 "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces",
                 "shells", "regions", "bodies",
             ] {
-                wire["model"][arena]
+                wire["geometry"][arena]
                     .as_array_mut()
                     .unwrap()
                     .extend(copy[arena].as_array().unwrap().iter().cloned());
             }
         }
-        wire["model"]["bodies"][0]["name"] = json!("Solid");
+        wire["geometry"]["bodies"][0]["name"] = json!("Solid");
         source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let model = &wire["model"];
-        let mut ctx = Context::new(model);
+        let mut ctx = Context::new(model).with_geometry(&wire["geometry"]);
         ctx.source = Some(&source);
         let outputs: Value = serde_json::from_str(
             &outputs
@@ -2630,11 +2721,7 @@ mod tests {
                 .replace("b#3", "synthetic:other:body#0"),
         )
         .unwrap();
-        let stored = json!({
-            "id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false,
-            "outputs": outputs,
-            "definition": {"definition": "stored_geometry"},
-        });
+        let stored = json!({"id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false, "outputs": outputs, "definition": {"kind": "operation", "value": {"kind": "stored_geometry", "value": {}}}, "dependencies": [], "source_properties": {}, "source_content": []});
         match map_feature(&stored, &mut ctx, &mut Report::default(), &mut Vec::new())? {
             Mapped::Feature(mapped) => Ok(mapped),
             Mapped::Nothing | Mapped::Consumed => Err("mapped to nothing".to_owned()),
@@ -2681,16 +2768,31 @@ mod tests {
     #[test]
     fn a_whole_sketch_of_several_profiles_waits_for_confirmation() {
         let model = json!({"sketches": [
-            {"id": "two", "profiles": [[{"entity": "a"}], [{"entity": "b"}]]},
-            {"id": "one", "profiles": [[{"entity": "a"}]]},
+            {"id": "two", "profiles": [[{"entity": "a", "reversed": false}], [{"entity": "b", "reversed": false}]]},
+            {"id": "one", "profiles": [[{"entity": "a", "reversed": false}]]},
         ]});
-        let ctx = Context::new(&model);
-        let whole =
-            |sketch: &str| json!({"definition": {"profile": {"kind": "sketch", "value": sketch}}});
+        let ctx = Context::testing(&model);
+        let whole = |sketch: &str| {
+            feature(
+                1,
+                0,
+                "Extrude",
+                json!({"kind": "extrude", "value": {
+                    "profile": {"kind": "planar", "value": {"kind": "sketch", "value": sketch}}
+                }}),
+            )
+        };
         assert!(whole_of_several(&whole("two"), &ctx));
         assert!(!whole_of_several(&whole("one"), &ctx));
-        let picked = json!({"definition": {"profile": {"kind": "sketch_profiles",
-            "value": {"sketch": "two", "profiles": [0]}}}});
+        let picked = feature(
+            1,
+            0,
+            "Extrude",
+            json!({"kind": "extrude", "value": {
+                "profile": {"kind": "planar", "value": {"kind": "sketch_profiles",
+                    "value": {"sketch": "two", "profiles": [0]}}}
+            }}),
+        );
         assert!(!whole_of_several(&picked, &ctx));
 
         let mut history = History {

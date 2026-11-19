@@ -121,6 +121,9 @@ explicitly for a plugin. Native advisory snapshot rendering remains native-only.
 
 ## Depending on cadmpeg
 
+[CADIR v11](cadir-v11.md) records the pinned wire layout and the homes used by
+conversion, history mapping, and component extraction.
+
 - From cadmpeg's git repository, pinned to one tested commit of its `main` (`cadmpeg-ir`,
   `cadmpeg-core`, `cadmpeg-registry`, the same `rev` for each); Cargo fetches it, so CI and
   `cargo install --git` work without a cadmpeg checkout. docs/releasing.md says when the pin
@@ -164,7 +167,7 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.43), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.44), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
@@ -252,7 +255,8 @@ planning has no callback and keeps the blocker. Every admitted candidate has a n
 Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
 area around it. Complete-loop extrudes whose regions those curves subdivide use an editable
-copy with unused splitters as construction; the original sketch's geometry, constraints, and
+copy with unused splitters as construction: any solid curve the extrude does not use that
+touches, enters or crosses one of its selected loops, a curve it cannot follow included; the original sketch's geometry, constraints, and
 parameters are preserved. Boundary matching remains exact and unique. Trimmed boundary rings
 sharing a curved carrier resolve their parameter reading together, retaining the refusal when
 the surviving readings disagree. One-sided extrudes may

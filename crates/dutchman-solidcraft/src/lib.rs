@@ -25,6 +25,8 @@ mod placements;
 mod repeats;
 mod replay;
 mod step;
+mod tolerances;
+pub use tolerances::report as verification_tolerances;
 #[cfg(test)]
 mod testing;
 mod verify;
@@ -308,6 +310,7 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// replaying geometry in SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        document::report_scoped_attributes(model, report);
         if let Some(flat) = flattened_assembly(model) {
             report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
             return self.plan(&flat, report);
@@ -573,6 +576,7 @@ impl SolidCraftWriter {
         let Ok(cli) = self.selected_evaluator(&self.verification) else {
             return false;
         };
+        let _measuring = progress.map(|p| p.measuring());
         let Ok(design) = self.history_design(model, prefix, step, Live::History) else {
             return false;
         };
@@ -944,7 +948,7 @@ fn sheet_bodies(model: &Model) -> usize {
     use cadmpeg_ir::topology::BodyKind;
     model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| matches!(body.kind, BodyKind::Sheet | BodyKind::General))
@@ -1010,7 +1014,7 @@ const FLATTENED_ASSEMBLY: &str = "the assembly's placed parts hold no geometry S
 /// one part instead of failing the conversion.
 fn flattened_assembly(model: &Model) -> Option<Model> {
     let assembly = model.assembly.as_ref()?;
-    if assembly.placements.is_empty() || model.ir.model.bodies.is_empty() || any_part(assembly) {
+    if assembly.placements.is_empty() || model.ir.geometry.bodies.is_empty() || any_part(assembly) {
         return None;
     }
     // Restating reads only the design's own geometry, never its assembly.
@@ -1059,7 +1063,7 @@ fn count(n: usize, one: &str, many: &str) -> String {
 fn solid_bodies(model: &Model) -> usize {
     model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| body.kind == cadmpeg_ir::topology::BodyKind::Solid)
@@ -1180,6 +1184,7 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        document::report_scoped_attributes(model, report);
         let _preparing = progress
             .filter(|_| model.assembly.is_none())
             .map(|p| p.stage_step(dutchman_core::StepKind::Preparing, Some(&model.name)));
@@ -1268,6 +1273,7 @@ impl Writer for SolidCraftWriter {
                 &mut |prefix, stored, final_state| {
                     self.profile_check(model, prefix, &step, stored, final_state, progress)
                 },
+                progress,
             );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {
@@ -1446,9 +1452,23 @@ impl Writer for SolidCraftWriter {
         if outcome.mode == Mode::Import {
             self.check_import(model, &bytes, report, progress);
         }
+        state_tolerances(report, &outcome);
         report.set_outcome(outcome);
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
+    }
+}
+
+/// Records the tolerances of a history check that ran: the history verified, partly kept, or
+/// rebuilt and found to differ. Nothing is recorded when no replay was compared.
+pub(crate) fn state_tolerances(report: &mut Report, outcome: &Outcome) {
+    let compared = match &outcome.check {
+        Check::Verified | Check::Partial(_) => true,
+        Check::Flattened(reason) => reason.starts_with("replay differs ("),
+        _ => false,
+    };
+    if outcome.mode != Mode::Import && compared {
+        report.set_verification_tolerances(verification_tolerances());
     }
 }
 

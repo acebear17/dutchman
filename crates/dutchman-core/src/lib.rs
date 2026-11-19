@@ -40,7 +40,8 @@ pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
 pub use memory::available_memory;
 pub use progress::{
-    elapsed, MemberEvent, MemberObserver, Progress, ProgressEvent, RunningStep, StepGuard, StepKind,
+    elapsed, FeatureGuard, FeatureStep, MeasureGuard, MemberEvent, MemberObserver, Progress,
+    ProgressEvent, RunningStep, StepGuard, StepKind,
 };
 
 /// The neutral model every conversion passes through.
@@ -70,24 +71,29 @@ impl Model {
         binding: &cadmpeg_ir::appearance::AppearanceBinding,
     ) -> AppearanceLoss {
         use cadmpeg_ir::appearance::AppearanceTarget;
-        match &binding.target {
-            AppearanceTarget::Body(id) => match self.ir.model.bodies.iter().find(|b| b.id == *id) {
-                None => AppearanceLoss::TargetAbsent,
-                Some(body) if body.kind == cadmpeg_ir::topology::BodyKind::Wire => {
-                    AppearanceLoss::Wire
+        if binding.target.path.is_some() || binding.target.state.is_some() {
+            return AppearanceLoss::Other;
+        }
+        match &binding.target.entity {
+            AppearanceTarget::Body(id) => {
+                match self.ir.geometry.bodies.iter().find(|b| b.id == *id) {
+                    None => AppearanceLoss::TargetAbsent,
+                    Some(body) if body.kind == cadmpeg_ir::topology::BodyKind::Wire => {
+                        AppearanceLoss::Wire
+                    }
+                    Some(_) => AppearanceLoss::Other,
                 }
-                Some(_) => AppearanceLoss::Other,
-            },
-            AppearanceTarget::Face(id) if !self.ir.model.faces.iter().any(|f| f.id == *id) => {
+            }
+            AppearanceTarget::Face(id) if !self.ir.geometry.faces.iter().any(|f| f.id == *id) => {
                 AppearanceLoss::TargetAbsent
             }
             AppearanceTarget::Edge(id)
                 if self
                     .ir
-                    .model
+                    .geometry
                     .shells
                     .iter()
-                    .any(|s| s.wire_edges().contains(id)) =>
+                    .any(|s| s.wire_edges().any(|edge| edge == id)) =>
             {
                 AppearanceLoss::Wire
             }
@@ -102,16 +108,26 @@ impl Model {
         binding: &cadmpeg_ir::appearance::AppearanceBinding,
     ) -> String {
         use cadmpeg_ir::appearance::AppearanceTarget;
-        let (kind, id, exists) = match &binding.target {
+        let scope = if binding.target.state.is_some() {
+            Some("appearance bindings for an evaluation state are not supported yet")
+        } else if binding.target.path.is_some() {
+            Some("appearance bindings for one placed instance are not supported yet")
+        } else {
+            None
+        };
+        if let Some(reason) = scope {
+            return format!("Appearance binding {} is left out: {reason}", binding.id);
+        }
+        let (kind, id, exists) = match &binding.target.entity {
             AppearanceTarget::Body(id) => (
                 "body",
                 id.as_str(),
-                self.ir.model.bodies.iter().any(|body| body.id == *id),
+                self.ir.geometry.bodies.iter().any(|body| body.id == *id),
             ),
             AppearanceTarget::Face(id) => (
                 "face",
                 id.as_str(),
-                self.ir.model.faces.iter().any(|face| face.id == *id),
+                self.ir.geometry.faces.iter().any(|face| face.id == *id),
             ),
             _ => {
                 return format!(
