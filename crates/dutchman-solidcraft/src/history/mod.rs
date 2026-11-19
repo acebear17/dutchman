@@ -1139,6 +1139,7 @@ fn map_into(
             timeline.at(position as u64 + 1, name(feature));
         }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
+            output: Default::default(),
             name: name(feature).map(str::to_owned),
             kind: kind(feature),
             status,
@@ -1274,6 +1275,12 @@ fn map_into(
                 }
                 history.features.push(mapped);
                 let mut kept = outcome(FeatureStatus::Mapped, None);
+                kept.output.ids = history
+                    .features
+                    .iter()
+                    .skip(before)
+                    .filter_map(|feature| feature.get("id").and_then(Value::as_u64))
+                    .collect();
                 kept.profile_unverified = std::mem::take(&mut ctx.profile_unverified);
                 kept.final_body = std::mem::take(&mut ctx.final_body);
                 kept.inferred = ctx.inferred.take();
@@ -2304,6 +2311,25 @@ mod tests {
         assert_eq!(history.features[1]["radius"], history.features[2]["radius"]);
         assert_eq!(history.sources.get(&4), Some(&1));
         assert_eq!(history.sources.get(&2), Some(&1));
+        let mut rows: Vec<FeatureOutcome> = (0..3)
+            .map(|_| FeatureOutcome {
+                output: Default::default(),
+                name: None,
+                kind: "fillet".to_owned(),
+                status: FeatureStatus::Mapped,
+                reason: None,
+                ordinal: None,
+                variant: None,
+                profile_unverified: false,
+                reapplied: false,
+                final_body: false,
+                inferred: None,
+            })
+            .collect();
+        crate::output_links::history(&mut rows, &history, 10);
+        assert_eq!(rows[1].output.ids, [14, 12]);
+        assert_eq!(rows[1].output.method, dutchman_core::OutputMatch::Emitted);
+
         assert_eq!(
             history.stored_bodies.keys().copied().collect::<Vec<_>>(),
             [2]
@@ -2965,6 +2991,7 @@ mod tests {
         let feature = json!({"name": "Base Feature 1",
             "source_properties": {"body_centers": "1:0,0,10"}});
         let outcome = |final_body: bool| FeatureOutcome {
+            output: Default::default(),
             name: Some("Base Feature 1".to_owned()),
             kind: "base_feature".to_owned(),
             status: FeatureStatus::Mapped,

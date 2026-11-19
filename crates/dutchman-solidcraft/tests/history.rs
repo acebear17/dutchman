@@ -1576,7 +1576,9 @@ fn convert(model: &Model, writer: &SolidCraftWriter) -> (Value, Report) {
         .unwrap()
         .read_to_string(&mut text)
         .unwrap();
-    (serde_json::from_str(&text).unwrap(), report)
+    let document = serde_json::from_str(&text).unwrap();
+    assert_output_links(&document, &report);
+    (document, report)
 }
 
 fn history_line(report: &Report) -> String {
@@ -2404,6 +2406,10 @@ fn written_with(model: &Model, writer: &SolidCraftWriter) -> (Vec<u8>, Report) {
     let mut report = Report::default();
     let mut bytes = Vec::new();
     writer.write(model, &mut bytes, &mut report).unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let document: Value =
+        serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+    assert_output_links(&document, &report);
     (bytes, report)
 }
 
@@ -6082,6 +6088,7 @@ fn composite_mirrors_chain_multiple_reflections_and_circular_copies() {
         let model = patterned(json!({"kind": "composite", "stages": stages}));
         let (_, report) = convert(&model, &composite_writer());
         assert!(history_line(&report).starts_with("3 of 3 features rebuilt"));
+        assert!(report.outcome().unwrap().features[2].output.ids.len() > 1);
         if let Some(cli) = composite_cli() {
             let v = volumes(&cli, &written_with(&model, &composite_writer()).0);
             assert_eq!(v.len(), count);
@@ -7718,7 +7725,21 @@ fn stored_geometry_alone_becomes_an_import_without_lost_history() {
         .iter()
         .all(|loss| !loss.detail.contains("not mapped yet") && !loss.detail.contains("flattened")));
     let mut planned = Report::default();
-    assert_eq!(writer.plan(&model, &mut planned), *outcome);
+    assert_eq!(
+        outcome.features[0].output.ids,
+        [base["id"].as_u64().unwrap()]
+    );
+    assert_eq!(
+        outcome.features[0].output.method,
+        dutchman_core::OutputMatch::Emitted
+    );
+    // Inspection saves no design; all existing outcome fields still agree.
+    let mut expected_plan = outcome.clone();
+    expected_plan.features[0].output = dutchman_core::FeatureOutput {
+        ids: Vec::new(),
+        method: dutchman_core::OutputMatch::NotWritten,
+    };
+    assert_eq!(writer.plan(&model, &mut planned), expected_plan);
     assert!(planned
         .losses()
         .iter()
@@ -11115,6 +11136,8 @@ fn solidcraft_splits_multibody_blends_and_continues_history() {
             assert_eq!(blends[2]["body"], "unit cube");
             let outcomes = &report.outcome().unwrap().features;
             assert_eq!(outcomes.len(), 5);
+            assert_eq!(outcomes[3].output.ids.len(), 2);
+            assert_output_links(&document, &report);
             assert!(
                 outcomes
                     .iter()
@@ -15186,6 +15209,73 @@ fn an_incomplete_alternative_cannot_make_a_matching_region_look_unique() {
             .contains("some candidate regions could not be measured"),
         "{extrude:?}"
     );
+}
+
+fn assert_output_links(document: &Value, report: &Report) {
+    let features = document["features"].as_array().unwrap();
+    for row in &report.outcome().unwrap().features {
+        assert_eq!(
+            row.output.method,
+            if row.output.ids.is_empty() {
+                dutchman_core::OutputMatch::NoOutput
+            } else {
+                dutchman_core::OutputMatch::Emitted
+            }
+        );
+        for id in &row.output.ids {
+            let feature = features.iter().find(|feature| feature["id"] == *id);
+            assert!(feature.is_some(), "missing output {id} for {row:?}");
+            let feature = feature.unwrap();
+            assert_eq!(row.status, dutchman_core::FeatureStatus::Mapped);
+            assert_eq!(row.output.method, dutchman_core::OutputMatch::Emitted);
+            if row.kind == "sketch" {
+                assert_eq!(feature["type"], "sketch");
+            }
+        }
+    }
+}
+
+#[test]
+fn output_links_name_saved_features_and_inspection_writes_nothing() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(&model, &writer);
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(rows.len(), 2);
+    for (row, feature) in rows.iter().zip(document["features"].as_array().unwrap()) {
+        assert_eq!(row.output.ids, vec![feature["id"].as_u64().unwrap()]);
+    }
+    let plan = writer.plan(&model, &mut Report::default());
+    assert!(plan.features.iter().all(|row| row.output.ids.is_empty()
+        && row.output.method == dutchman_core::OutputMatch::NotWritten));
+}
+
+#[test]
+fn fallback_links_only_the_saved_reference_sketch() {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Both rows deliberately have the same name; links must follow emission.
+    for feature in wire["model"]["features"].as_array_mut().unwrap() {
+        feature["name"] = json!("Same");
+    }
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"]["value"] =
+        json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [99]}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+    let sketch = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["type"] == "sketch")
+        .unwrap();
+    assert_eq!(rows[0].output.ids, vec![sketch["id"].as_u64().unwrap()]);
+    assert!(rows[1].output.ids.is_empty());
+    assert_eq!(rows[1].output.method, dutchman_core::OutputMatch::NoOutput);
 }
 
 #[test]

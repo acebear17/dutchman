@@ -670,6 +670,12 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
                 "reason": refusal.as_ref().map_or(feature.reason.as_deref(), |r| Some(r.text.as_str())),
                 "ordinal": feature.ordinal,
                 "variant": feature.variant,
+                "output_ids": feature.output.ids,
+                "output_match": match feature.output.method {
+                    dutchman_core::OutputMatch::Emitted => "emitted",
+                    dutchman_core::OutputMatch::NoOutput => "no_output",
+                    dutchman_core::OutputMatch::NotWritten => "not_written",
+                },
             });
             if let (true, Some(fields)) = (feature.profile_unverified, row.as_object_mut()) {
                 fields.insert("profile_unverified".to_owned(), json!(true));
@@ -1532,6 +1538,7 @@ mod tests {
             mode: Mode::PartialHistory,
             check: Check::Partial(format!("history stopped at {raw} (2 of 3 features kept)")),
             features: vec![FeatureOutcome {
+                output: Default::default(),
                 name: Some("Fillet3".to_owned()),
                 kind: "fillet".to_owned(),
                 status: FeatureStatus::Blocked,
@@ -1721,6 +1728,7 @@ mod tests {
 
     fn feature(kind: &str, status: FeatureStatus) -> FeatureOutcome {
         FeatureOutcome {
+            output: Default::default(),
             name: Some(format!("{kind}1")),
             kind: kind.to_owned(),
             status,
@@ -2116,5 +2124,59 @@ mod running_progress_tests {
             .unwrap()
             .feature
             .is_none());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod output_link_tests {
+    use super::*;
+
+    #[test]
+    fn public_history_output_fixture_preserves_existing_fields() {
+        let expected: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/history-output.json")).unwrap();
+        for (index, (ids, method)) in [
+            (vec![7], dutchman_core::OutputMatch::Emitted),
+            (vec![12, 8], dutchman_core::OutputMatch::Emitted),
+            (vec![], dutchman_core::OutputMatch::NoOutput),
+            (vec![], dutchman_core::OutputMatch::NotWritten),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let report = Outcome {
+                mode: Mode::History,
+                check: Check::Unverified("not checked".into()),
+                features: vec![dutchman_core::FeatureOutcome {
+                    output: dutchman_core::FeatureOutput { ids, method },
+                    name: Some("Feature".into()),
+                    kind: "extrude".into(),
+                    status: if method == dutchman_core::OutputMatch::NoOutput {
+                        FeatureStatus::Blocked
+                    } else {
+                        FeatureStatus::Mapped
+                    },
+                    reason: None,
+                    ordinal: Some(0),
+                    variant: None,
+                    profile_unverified: false,
+                    reapplied: false,
+                    final_body: false,
+                    inferred: None,
+                }],
+            };
+            let mut source = Report::default();
+            source.set_outcome(report);
+            let schema = if method == dutchman_core::OutputMatch::NotWritten {
+                INSPECT
+            } else {
+                CONVERT
+            };
+            let fields = Value::Object(success(schema, Value::Null, &source));
+            for key in ["schema", "ok", "input", "mode", "verification", "history"] {
+                assert_eq!(fields[key], expected[index][key]);
+            }
+        }
     }
 }
