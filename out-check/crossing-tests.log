@@ -1,0 +1,44 @@
+   Compiling cadmpeg-ir v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-asm v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-protein v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-parasolid v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-sldprt v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-rhino v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-creo v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-iges v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-f3d v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-nx v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-inventor v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-step v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-sat v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-freecad v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-pvz v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-codec-catia v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-measure v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling cadmpeg-registry v0.6.12 (https://github.com/cadmpeg/cadmpeg?rev=f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a#f1338aa2)
+   Compiling dutchman-core v0.2.10 (/var/home/ray/xpswork/buildq-workers/dutchman/narrow-region-interior-8a14a3cc/crates/dutchman-core)
+   Compiling dutchman-solidcraft v0.2.10 (/var/home/ray/xpswork/buildq-workers/dutchman/narrow-region-interior-8a14a3cc/crates/dutchman-solidcraft)
+    Finished `test` profile [unoptimized] target(s) in 13m 54s
+     Running unittests src/lib.rs (/home/ray/xpswork/buildq-workers/dutchman/narrow-region-interior-8a14a3cc-target/debug/deps/dutchman_solidcraft-0158674e363dbd47)
+
+running 17 tests
+test history::crossing::tests::a_line_already_construction_or_bounding_a_profile_is_left_alone ... ok
+test history::crossing::tests::a_chord_across_a_circle_taken_whole_is_construction ... ok
+test history::crossing::tests::a_bow_tie_loop_is_several_regions_merged_and_a_square_is_not ... ok
+test history::crossing::tests::a_list_of_loops_counts_its_loops_and_the_whole_sketch_keeps_every_curve ... ok
+test history::crossing::tests::a_loop_no_feature_takes_is_construction_with_the_curves_in_no_loop ... ok
+test history::crossing::tests::arcs_that_cross_a_line_of_their_own_loop_are_found ... ok
+test history::crossing::tests::circle_crossings_require_a_proper_secant ... ok
+test history::crossing::tests::curves_bounding_a_selected_trimmed_region_are_named ... ok
+test history::crossing::tests::a_line_range_is_a_fraction_of_the_line ... ok
+test history::crossing::tests::diagonals_of_a_square_taken_whole_are_construction ... ok
+test history::crossing::tests::retraced_cut_lines_are_not_merged_regions ... ok
+test history::crossing::tests::the_curves_of_a_trimmed_region_taken_stay_solid ... ok
+test history::crossing::tests::existing_interior_pick_keeps_its_exact_coordinates ... ok
+test history::crossing::tests::measured_endpoint_gap_still_limits_narrow_region_proof ... ok
+test history::crossing::tests::narrow_search_refuses_coincident_regions_and_excessive_boundaries ... ok
+test history::crossing::tests::narrow_gap_points_stay_strictly_inside_in_both_scan_directions ... ok
+test history::crossing::tests::narrow_annulus_and_disc_have_separate_proven_points ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 274 filtered out; finished in 0.56s
+

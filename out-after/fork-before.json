@@ -1,0 +1,33 @@
+[
+  {
+    "case": "public-26",
+    "exit": 0,
+    "ok": true,
+    "mode": "import",
+    "verification": "flattened",
+    "mapped": 1,
+    "rebuilt": 1,
+    "total": 2,
+    "features": [
+      {
+        "ordinal": 0,
+        "kind": "sketch",
+        "status": "mapped",
+        "reapplied": null,
+        "trimmed_blocker": false
+      },
+      {
+        "ordinal": 1,
+        "kind": "extrude",
+        "status": "blocked",
+        "reapplied": null,
+        "trimmed_blocker": true
+      }
+    ],
+    "document_sha256": "b821cd972e45b08b3f074b547871a4371f627c7b9777cf861933d04b32121489",
+    "point_profile_sizes": [],
+    "narrow_proofs": [],
+    "original_picks": [],
+    "preserved_picks": []
+  }
+]

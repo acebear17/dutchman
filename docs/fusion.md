@@ -210,6 +210,15 @@ whole curves, including the two halves of a circle split by a diameter. Boundari
 unambiguously; a missing interior point blocks the feature with a named reason. Angular carriers
 whose stored chart differs from the solved sketch still require consistent directed closure.
 
+Narrow regions use a finer search only when the existing point search cannot select them.
+It samples curves more closely, scans between boundary crossings in both directions, and
+scales the preferred clearance to the room inside the region, capped at 0.001 mm. The point
+must still pass the even-odd boundary test inside that region and outside its holes and
+smaller selected regions, with clearance greater than the sampled curves' sagitta and
+measured endpoint gaps. Successful existing point selections keep their exact coordinates.
+Legacy angular readings that agree only within the existing 0.001 mm tolerance retain
+that uncertainty in the clearance proof; narrow regions cannot settle an ambiguous chart.
+
 When a native profile selection cannot resolve to a region, Dutchman tries its selected neutral
 curve identities, when available, and then its carrier sketch. Each candidate runs the normal
 feature mapping and is kept only when the existing source body comparison confirms its replay.

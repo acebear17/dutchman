@@ -912,6 +912,32 @@ fn region_points(
     sketch: &str,
     mapped: &Mapped,
 ) -> Option<Vec<P2>> {
+    let original = region_points_at(regions, ctx, sketch, mapped, false);
+    if let Some(points) = &original {
+        if let Some(points) = points.iter().copied().collect::<Option<Vec<_>>>() {
+            return Some(points);
+        }
+    }
+    let refined = region_points_at(regions, ctx, sketch, mapped, true)?;
+    refined
+        .into_iter()
+        .enumerate()
+        .map(|(index, point)| {
+            original
+                .as_ref()
+                .and_then(|points| points.get(index).copied().flatten())
+                .or(point)
+        })
+        .collect()
+}
+
+fn region_points_at(
+    regions: &[Value],
+    ctx: &Context,
+    sketch: &str,
+    mapped: &Mapped,
+    refined: bool,
+) -> Option<Vec<Option<P2>>> {
     let entities = sketch_entities(ctx, sketch);
     fn boundary(region: &Value) -> Option<&[Value]> {
         region
@@ -966,13 +992,15 @@ fn region_points(
                 .is_some_and(|id| used.contains(id))
         })
         .collect();
-    let error = super::crossing::boundary_error(&used_entities)?;
-    let mut resolved = if boundaries.is_empty() {
-        Vec::new()
+    let (resolved, mut error) = if boundaries.is_empty() {
+        (Vec::new(), 0.0)
     } else {
-        super::crossing::trimmed_rings(&boundaries, &entities)?
+        super::crossing::sampled_trimmed_rings(&boundaries, &entities, refined)?
+    };
+    if !refined {
+        error = super::crossing::boundary_error(&used_entities)?;
     }
-    .into_iter();
+    let mut resolved = resolved.into_iter();
     let mut rings = Vec::with_capacity(regions.len());
     let mut holes = Vec::with_capacity(regions.len());
     for region in regions {
@@ -991,7 +1019,12 @@ fn region_points(
             }
             Some("loops") => {
                 let members = source_members(ctx, sketch, region.get("outer")?).ok()?;
-                rings.push(super::crossing::loop_ring(members, &entities)?);
+                let (ring, bound) =
+                    super::crossing::sampled_loop_ring(members, &entities, refined)?;
+                if refined {
+                    error = error.max(bound);
+                }
+                rings.push(ring);
                 holes.push(
                     region
                         .get("holes")
@@ -1000,7 +1033,12 @@ fn region_points(
                         .flatten()
                         .map(|hole| {
                             let members = source_members(ctx, sketch, hole).ok()?;
-                            super::crossing::loop_ring(members, &entities)
+                            let (ring, bound) =
+                                super::crossing::sampled_loop_ring(members, &entities, refined)?;
+                            if refined {
+                                error = error.max(bound);
+                            }
+                            Some(ring)
                         })
                         .collect::<Option<Vec<_>>>()?,
                 );
@@ -1021,8 +1059,12 @@ fn region_points(
                 .filter(|other| super::crossing::ring_area(other) < area)
                 .map(Vec::as_slice),
         );
-        let point = super::crossing::interior_point(ring, &others, error)?;
-        points.push(frame(point));
+        let point = if refined {
+            super::crossing::narrow_interior_point(ring, &others, error)
+        } else {
+            super::crossing::interior_point(ring, &others, error)
+        };
+        points.push(point.map(&frame));
     }
     Some(points)
 }

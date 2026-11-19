@@ -4369,6 +4369,101 @@ fn solidcraft_replays_a_whole_region_beside_a_notch_of_the_same_source_sketch() 
     assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
 }
 
+/// Synthetic belt-tooth gap beside a normal region. The normal point must retain its
+/// original bytes even when the other region needs the refined search.
+fn narrow_gap_history(width: f64) -> Model {
+    let boundary = |key: u32| {
+        json!({"entity": format!("f3d:model:sketch-entity#{key}"),
+        "parameter_range": [0.0, 1.0], "reversed": false})
+    };
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+    "regions": [
+        {"kind": "trimmed", "outer_boundary": [boundary(1), boundary(2), boundary(3), boundary(4)], "hole_boundaries": []},
+        {"kind": "trimmed", "outer_boundary": [boundary(5), boundary(6), boundary(7), boundary(8)], "hole_boundaries": []}
+    ]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            line(5, [20.0, 0.0], [20.0 + width, 0.0]),
+            line(6, [20.0 + width, 0.0], [20.0 + width, 10.0]),
+            line(7, [20.0 + width, 10.0], [20.0, 10.0]),
+            line(8, [20.0, 10.0], [20.0, 0.0]),
+        ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn trimmed_belt_tooth_gap_maps_without_changing_existing_point_bytes() {
+    let writer = || SolidCraftWriter::new().verification(Verification::Off);
+    let (wide, wide_report) = convert(&narrow_gap_history(1.0), &writer());
+    let (narrow, narrow_report) = convert(&narrow_gap_history(0.0005), &writer());
+    for report in [wide_report, narrow_report] {
+        assert!(
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
+            "{report:?}"
+        );
+    }
+    let points = &narrow["features"][1]["profiles"]["points"];
+    assert_eq!(points.as_array().unwrap().len(), 2);
+    assert_eq!(
+        serde_json::to_vec(&points[0]).unwrap(),
+        serde_json::to_vec(&wide["features"][1]["profiles"]["points"][0]).unwrap()
+    );
+    let point = points[1].as_array().unwrap();
+    let (x, y) = (point[0].as_f64().unwrap(), point[1].as_f64().unwrap());
+    assert!(x > 20.0 && x < 20.0005 && y > 0.0 && y < 10.0, "{point:?}");
+}
+
+fn narrow_annulus_history(width: f64) -> Model {
+    let boundary = |key: u32| {
+        json!({"entity": format!("f3d:model:sketch-entity#{key}"),
+        "parameter_range": [0.0, std::f64::consts::TAU], "reversed": false})
+    };
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+    "regions": [
+        {"kind": "trimmed", "outer_boundary": [boundary(5)], "hole_boundaries": [[boundary(6)]]},
+        {"kind": "trimmed", "outer_boundary": [boundary(6)], "hole_boundaries": []}
+    ]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            circle(5, [20.0, 0.0], 1.0),
+            circle(6, [20.0, 0.0], 1.0 - width),
+        ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn trimmed_narrow_annulus_and_its_disc_select_exactly_their_own_interiors() {
+    let (document, report) = convert(
+        &narrow_annulus_history(0.0005),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{report:?}"
+    );
+    let points = document["features"][1]["profiles"]["points"]
+        .as_array()
+        .unwrap();
+    assert_eq!(points.len(), 2);
+    let radius =
+        |point: &Value| (point[0].as_f64().unwrap() - 20.0).hypot(point[1].as_f64().unwrap());
+    assert!(
+        radius(&points[0]) > 0.9995 && radius(&points[0]) < 1.0,
+        "{points:?}"
+    );
+    assert!(radius(&points[1]) < 0.9995, "{points:?}");
+}
+
 fn shared_circle_regions() -> Model {
     let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
     let pi = std::f64::consts::PI;
