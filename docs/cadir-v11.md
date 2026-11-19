@@ -133,3 +133,18 @@ is never expanded by the adapter. Shared placements retain their source frames.
 Cycles and depth/count overflows are refused. Instance body overrides, occurrence
 overrides and alternate representations are not supported yet; conversion keeps
 the original geometry and reports the reason. This adapter reads only CADIR.
+
+## Sketch arc direction
+
+Planar sketch arcs use `start_angle` and `end_angle` in sketch coordinates;
+their difference retains the signed sweep. SolidCraft planar arcs travel
+counterclockwise, so a negative source sweep reverses the written endpoints.
+Source endpoint references and constraint start/end loci retain their original
+meaning. Plane remapping transforms the signed interval without wrapping its
+ends independently; profile sampling and intersections use the same source arc.
+
+Spatial sketch arcs also carry a `normal` defining positive angular travel and
+a `reference_direction` defining parameter zero. Negative sweeps keep their
+source start, midpoint and end samples and reverse the written arc normal.
+Projection onto a planar profile accounts for opposing curve and plane normals.
+Multi-turn 3D sketch arcs are not supported yet and leave history reported.

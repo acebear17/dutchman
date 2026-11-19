@@ -53,17 +53,21 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-Pull requests run the fast checks: path filtering, formatting, Linux Clippy and x86_64 tests
-(or the focused docs tests for a docs-only change), release notes, changelog and version gates.
-The merge queue runs the full matrix once per group of up to five entries: Windows, macOS,
-ARM64, Rust 1.88, WebAssembly, Docker, SolidCraft round trips (including 0.18.2), all placements. Full release archives and installers build on tags, in the
-main nightly, and by explicit dispatch. The required `ci-result` checks the fast jobs on a PR and the full
-set in the queue; an unexpected skip fails it. Candidate and stable tags also run the full
-matrix. To run everything on a PR branch before queueing, use
-`gh workflow run ci.yml --ref <branch>` (add `-F release-builds=true` to check packaging) (Actions → CI → Run workflow also works).
-Packaging paths and the former `release-build` label no longer start full builds on PRs.
-Main and scheduled checks keep their existing behavior; SolidCraft round trips remain
-informational on main. To run a round trip locally, put a SolidCraft release's `solidcraft-cli`
+Pull requests and merge groups run formatting, Linux Clippy and x86_64 tests (or the
+focused docs tests), release notes, changelog and version gates. Code merge groups also build
+the shared Linux CLI/server programs and run the small railcore and robot-arm placement checks.
+Windows, macOS, ARM64, Rust 1.88, WebAssembly, SolidCraft round trips (including 0.18.2),
+Voron placements and Docker images run after merge on main, nightly, on tags and by hand.
+Platform-only breaks are caught on main right after merge instead of before.
+The required `ci-result` enforces the Linux set before merge and the full matrix elsewhere;
+unexpected skips fail it. A failing main check opens or updates one main CI issue, which closes
+when a newer main run is green. Reports follow the newest completed push run of this workflow;
+moving main ahead while a run is still running does not discard its result. Release tags must
+pass the full CI matrix on their exact commit before packaging or creating a release. To run
+everything on a branch before queueing,
+use `gh workflow run ci.yml --ref <branch>`; opt into release archives with `-f release-builds=true`.
+Packaging paths and the former `release-build` label do not start full builds on PRs.
+To run a round trip locally, put a SolidCraft release's `solidcraft-cli`
 where `SOLIDCRAFT_CLI` points:
 
 ```sh
