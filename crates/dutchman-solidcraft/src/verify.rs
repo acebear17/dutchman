@@ -3233,7 +3233,8 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3249,7 +3250,8 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3265,7 +3267,8 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3281,7 +3284,8 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3323,7 +3327,10 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(!target_loses_history(after));
+        // Both lose the 0.44 scoped bodies; the patch release still adds its own gate.
+        assert!(target_loses_history(after));
+        assert!(!VersionGate::SketchProfileCoil.supported(before));
+        assert!(VersionGate::SketchProfileCoil.supported(after));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());
