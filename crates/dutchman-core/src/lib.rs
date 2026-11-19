@@ -151,8 +151,9 @@ impl Model {
     }
 }
 pub use report::{
-    AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureStatus, Inferred, InferredAgainst,
-    InferredSelection, LeftOutGroup, Loss, Mode, Outcome, PartHistory, Report, Severity, Stage,
+    AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
+    InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
+    PartHistory, Report, Severity, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
