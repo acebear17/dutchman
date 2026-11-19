@@ -32,6 +32,8 @@ const TOLERANCE: f64 = crate::tolerances::EDGE_POSITION_MM;
 const ANGLE: f64 = crate::tolerances::EDGE_DIRECTION;
 const INPUT: &str =
     "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet";
+/// How every failed edge proof's reason starts.
+pub(crate) const UNPROVEN: &str = INPUT;
 const INPUT_NONE: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: no rebuilt edge passes through it";
 /// How far, in millimetres, the nearest rebuilt edge must be for the reason to blame the rebuilt
 /// body rather than the tolerance.
@@ -471,7 +473,7 @@ fn sweep<'a>(
 }
 
 /// One independent body's selection, in order of first appearance in the input edges.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Selection {
     pub(crate) body: String,
     pub(crate) points: Vec<V3>,
@@ -560,6 +562,125 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
         }
     }
     Ok(selections)
+}
+
+/// How far (mm) a rebuilt edge may be from an input edge's midpoint and still be a candidate
+/// for it when the proof above fails. The proofs that fail on the public corpus find the
+/// nearest rebuilt edge 0.1 mm or 1.0 mm away when the bodies agree elsewhere, and 5 mm or
+/// more away when an earlier feature rebuilt a different body, which no edge choice mends.
+pub(crate) const CANDIDATE_DISTANCE: f64 = 2.0;
+/// Rebuilt edges kept per unproven input edge, nearest first.
+const CANDIDATES_PER_EDGE: usize = 3;
+
+/// The edge selections a blend whose proof failed could take: for each input edge, the
+/// rebuilt edges of its kind (straight or curved) within [`CANDIDATE_DISTANCE`] of its
+/// midpoint, nearest first, picked at their own nearest point; every combination that uses
+/// no rebuilt edge twice. `None` when an input edge has none, or the combinations number more
+/// than `cap`, so the refusal stands.
+pub(crate) fn candidates(
+    pending: &Pending,
+    bodies: &ReplayedBodies,
+    cap: usize,
+) -> Option<Vec<Vec<Selection>>> {
+    if pending.face.is_some() || pending.edges.is_empty() || pending.edges.len() > cap {
+        return None;
+    }
+    let mut per_input: Vec<Vec<(usize, usize, V3)>> = Vec::new();
+    let mut combinations = 1usize;
+    for input in &pending.edges {
+        let mut near: Vec<(f64, usize, usize, V3)> = Vec::new();
+        for (b, (_, edges)) in bodies.iter().enumerate() {
+            for (e, edge) in edges.iter().enumerate() {
+                if straight(edge) != input.straight {
+                    continue;
+                }
+                let (gap, at) = closest(input.point, edge);
+                if gap.is_finite() && gap <= CANDIDATE_DISTANCE {
+                    near.push((gap, b, e, at));
+                }
+            }
+        }
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        near.truncate(CANDIDATES_PER_EDGE);
+        if near.is_empty() {
+            return None;
+        }
+        combinations = combinations.saturating_mul(near.len());
+        if combinations > cap {
+            return None;
+        }
+        per_input.push(near.into_iter().map(|(_, b, e, at)| (b, e, at)).collect());
+    }
+    let mut out = Vec::new();
+    let mut choice = vec![0usize; per_input.len()];
+    loop {
+        let picked: Vec<(usize, usize, V3)> = choice
+            .iter()
+            .zip(&per_input)
+            .filter_map(|(&i, options)| options.get(i).copied())
+            .collect();
+        let distinct = picked
+            .iter()
+            .enumerate()
+            .all(|(i, a)| picked.iter().skip(i + 1).all(|b| (a.0, a.1) != (b.0, b.1)));
+        let square = !pending.angle_chamfer
+            || picked.iter().all(|&(b, e, _)| {
+                bodies.get(b).is_some_and(|(_, edges)| {
+                    edges.get(e).is_some_and(|edge| right_angle(edge, edges))
+                })
+            });
+        if distinct && square && picked.len() == per_input.len() {
+            let mut selections: Vec<Selection> = Vec::new();
+            for (b, _, at) in picked {
+                let name = bodies.get(b).map(|(name, _)| name.clone())?;
+                if let Some(selection) = selections.iter_mut().find(|s| s.body == name) {
+                    selection.points.push(at);
+                } else {
+                    selections.push(Selection {
+                        body: name,
+                        points: vec![at],
+                    });
+                }
+            }
+            out.push(selections);
+        }
+        // The next combination, the last input edge turning fastest.
+        let mut position = choice.len();
+        loop {
+            let Some(slot) = position.checked_sub(1) else {
+                return Some(out);
+            };
+            position = slot;
+            let (Some(index), Some(options)) = (choice.get_mut(slot), per_input.get(slot)) else {
+                return Some(out);
+            };
+            *index += 1;
+            if *index < options.len() {
+                break;
+            }
+            *index = 0;
+        }
+    }
+}
+
+/// How far `point` is from `edge`, and the point of the edge it is nearest: on the segment of
+/// a straight one; for a curved one the nearest of its ends and midpoint, which SolidCraft
+/// reports and the curve passes through, of which only the midpoint picks the edge alone.
+fn closest(point: V3, edge: &ReplayedEdge) -> (f64, V3) {
+    if straight(edge) {
+        let direction = sub(edge.end, edge.start);
+        let length2 = dot(direction, direction).max(f64::MIN_POSITIVE);
+        let t = dot(sub(point, edge.start), direction) / length2;
+        let gap = distance(point, add(edge.start, scale(direction, t.clamp(0.0, 1.0))));
+        // The pick is kept off the ends, where it would touch the neighbouring edges too.
+        (gap, add(edge.start, scale(direction, t.clamp(0.25, 0.75))))
+    } else {
+        let gap = [edge.start, edge.mid, edge.end]
+            .into_iter()
+            .map(|at| distance(point, at))
+            .fold(f64::INFINITY, f64::min);
+        (gap, edge.mid)
+    }
 }
 
 /// How far `point` is from the nearest rebuilt edge: the segment of a straight one; for a curved
@@ -818,6 +939,42 @@ mod tests {
         assert!(super::prove(&angle, &bodies)
             .unwrap_err()
             .contains("non-perpendicular"));
+    }
+
+    #[test]
+    fn edge_candidates_are_the_near_rebuilt_edges_of_each_kind_in_every_distinct_combination() {
+        let (a, b) = (straight_input(0.0), straight_input(20.0));
+        let mut near = rebuilt(&a);
+        for point in [&mut near.start, &mut near.end, &mut near.mid] {
+            point[0] += 0.5;
+        }
+        let mut arc = rebuilt(&a);
+        arc.length = 12.0;
+        let bodies = vec![
+            ("A".to_owned(), vec![rebuilt(&b), near.clone(), arc]),
+            ("B".to_owned(), vec![rebuilt(&a)]),
+        ];
+        // The straight edges 0 and 0.5 mm away, nearest first; the arc and the far edge are not.
+        let found = super::candidates(&proof(vec![a.clone()]), &bodies, 24).unwrap();
+        assert_eq!(
+            found,
+            vec![
+                vec![super::Selection {
+                    body: "B".to_owned(),
+                    points: vec![a.point]
+                }],
+                vec![super::Selection {
+                    body: "A".to_owned(),
+                    points: vec![near.mid]
+                }],
+            ]
+        );
+        // Two inputs near the same two edges: only the combinations using both edges.
+        let twice = super::candidates(&proof(vec![a.clone(), a.clone()]), &bodies, 24).unwrap();
+        assert_eq!(twice.len(), 2);
+        // Nothing near enough, or more combinations than allowed: no candidates.
+        assert!(super::candidates(&proof(vec![straight_input(50.0)]), &bodies, 24).is_none());
+        assert!(super::candidates(&proof(vec![a.clone(), a]), &bodies, 3).is_none());
     }
 
     #[test]

@@ -630,6 +630,24 @@ fn part_fields(parts: &[dutchman_core::PartHistory]) -> Value {
         .collect()
 }
 
+/// How a feature's unrecorded selection was inferred: never an exact reading of the source.
+fn inferred_fields(inferred: &dutchman_core::Inferred) -> Value {
+    json!({
+        "selection": match inferred.selection {
+            dutchman_core::InferredSelection::ProfileRegion => "profile_region",
+            dutchman_core::InferredSelection::Edges => "edges",
+        },
+        "candidates": inferred.candidates,
+        "matches": inferred.matches,
+        "measured_against": match inferred.against {
+            dutchman_core::InferredAgainst::OriginalShape => "original_shape",
+            dutchman_core::InferredAgainst::StoredBodies => "stored_bodies",
+        },
+        // Whole nanometres, as millimetres.
+        "deviation_mm": inferred.deviation_nm.map(|nm| nm as f64 / 1e6),
+    })
+}
+
 fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     let (status, reason) = check_fields(&outcome.check);
     let features: Vec<Value> = outcome
@@ -661,6 +679,9 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
             }
             if let (true, Some(fields)) = (feature.final_body, row.as_object_mut()) {
                 fields.insert("final_body".to_owned(), json!(true));
+            }
+            if let (Some(inferred), Some(fields)) = (&feature.inferred, row.as_object_mut()) {
+                fields.insert("inferred".to_owned(), inferred_fields(inferred));
             }
             if let (Some(refusal), Some(fields)) = (&refusal, row.as_object_mut()) {
                 fields.insert("source".into(), json!("solidcraft"));
@@ -1520,6 +1541,7 @@ mod tests {
                 profile_unverified: false,
                 reapplied: false,
                 final_body: false,
+                inferred: None,
             }],
         });
         let fields = Value::Object(fields);
@@ -1708,6 +1730,7 @@ mod tests {
             profile_unverified: false,
             reapplied: false,
             final_body: false,
+            inferred: None,
         }
     }
 
