@@ -196,6 +196,35 @@ with its status (`mapped`, `not_needed`, `left_out` or `blocked`, with the reaso
 blocked one), and the loss report. `inspect --json` prints the same as a
 `dutchman.inspect/1` report.
 
+## List what a file holds: contents
+
+`contents` reads a file and lists its bodies, its feature timeline and its parameters, with
+what Dutchman can map of each feature to SolidCraft. Like `inspect`, it writes nothing and
+does not run SolidCraft.
+
+```sh
+dutchman contents design_sketch_constraints.f3d
+```
+
+The first line counts the bodies, features and parameters, and names the SolidCraft release
+the verdicts are for (the newest Dutchman knows). Then come the bodies (kind and name, marked
+hidden when the source hides them), each feature with its verdict, kind and name (marked
+suppressed when the source suppresses it), and each parameter with its value, unit,
+expression and the feature it belongs to. The verdicts are:
+
+| Verdict | Means |
+|---|---|
+| `mapped` | It becomes SolidCraft features as it is. |
+| `needs SolidCraft check` | It maps, but converting keeps it only when SolidCraft confirms it; the reason says what is checked. |
+| `not needed` | SolidCraft needs no feature for it, such as a default plane. |
+| `left out` | It is suppressed in the source, or changes no geometry there. |
+| `not supported yet` | Dutchman can't map it yet; the reason says why. |
+| `after blocker` | An earlier feature stops the history, so this one is kept in the imported final shape. |
+
+For an assembly, each line is marked with its part file (or, for a part held in the
+assembly's own file, its component name), and a part repeated in the assembly is listed once. `contents --json` prints the same as a
+[`dutchman.contents/1`](json.md#dutchmancontents1) report.
+
 ## Progress during conversion
 
 `convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
@@ -224,6 +253,13 @@ time it reads **Still checking Bracket: 1 min 1 s**. This is elapsed time,
 not an estimate of time left. With parallel workers the oldest current step is shown;
 a check takes the place of preparation on its worker until it ends. Completed-read counts
 can stay unchanged while parts are prepared or checked.
+
+While a design's history is built, the line also names the feature it is on:
+**Building history for Bracket: 3 s; Feature 29 of 37 · Extrude 1**. The count is the
+feature's place in the source timeline, suppressed features included. When SolidCraft checks
+a feature by measuring it against the original, the line adds **(checking by measurement,
+which takes longer)**, and the desktop card says so under the feature. The whole-design check
+after the history is built runs once for the design, so it shows its check, not a feature.
 
 Available split reading, conversion and checking estimates supply usual times for whole
 stages, including a named whole-design read or preparation. A whole-file estimate is not
@@ -333,7 +369,7 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (ge
            Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history
 2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)
-Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 Each converted file's loss report is listed beneath it, summarised by component when it has
@@ -523,7 +559,7 @@ Pilot; other missing tools print their installation link and exit 1.
 Pilot-only installations can ship the small `dutchman-launcher` binary renamed to `dutchman`.
 It runs installed tools and identifies itself as `dutchman launcher <version>` with
 `--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
-`convert-all`, `watch`, `inspect`, and `formats`.
+`convert-all`, `watch`, `inspect`, `contents`, and `formats`.
 
 ## Assembly placements
 

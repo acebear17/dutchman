@@ -28,12 +28,28 @@ the output beside the input from `--to`. An existing derived output is kept with
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
 Explicit outputs retain their replacement behaviour. MCP output paths remain required.
 
+For public Fusion (`a360.co` or `*.autodesk360.com`) and Google Drive file shares, use
+`dutchman convert '<url>' -o design.sc`, or paste/drop the link into the desktop app and
+choose Convert after the download. Omitted CLI output goes in the current folder.
+Saved `.url`/`.webloc` shortcuts can be dropped; if a browser's raw link drop is not
+delivered by the desktop toolkit, paste it instead.
+Only public downloads needing no login work. Drive uses `uc?export=download` and handles
+its virus-scan confirmation; Fusion needs a public download exposed by its share page.
+Downloads are limited to 200 MB and two minutes, use only provider HTTPS hosts, and live
+in temporary folders that are cleaned up, including on CLI cancellation or a closed
+output pipe. The deadline includes DNS, connection, TLS and body streaming; connections
+use screened public addresses and refuse local, private and cloud metadata destinations.
+Private/expired links or unavailable Fusion
+downloads ask for a manual download and file drop. Never ask for login credentials.
+MCP tools still require local paths; download the file locally before calling them.
+Reports describe temporary local inputs and never include the original share URL.
+
 SolidWorks parts convert in their saved configuration when its body membership is known.
 An Info note counts bodies left out from other configurations and names the saved configuration;
 bodies with unknown membership stay.
 
 Dutchman converts native CAD files into SolidCraft designs. Use the `dutchman-mcp` tools when
-they are connected (`inspect`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
+they are connected (`inspect`, `contents`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's
 `docs/json.md`.
 
@@ -82,6 +98,19 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 ## Conversion choices and memory
 
@@ -188,8 +217,8 @@ invitation; JSON and MCP reports never include it.
 Directory conversion keeps the highest numbered `.prt.N` revision per part, reports older
 saves as skipped, and uses the part's base output name without replacing an existing file.
 After a refused conversion (except IGES) or a history that did not fully map, the invitation
-links to test-file recipes and offers private help: send the file and its STEP export to
-Dutchy in Discord.
+links to test-file recipes at <https://dutchmancad.xyz/fixtures/> and offers private help:
+send the file and its STEP export to Dutchy in Discord.
 
 What the installed build converts is what its `formats` says; check it rather than this
 list when unsure.
@@ -234,18 +263,48 @@ threads, and entry recesses with drill points block history: explain the reporte
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
 
+Planar hole-entry faces can have rounded corners or existing circular holes. Their own
+source boundary and SolidCraft replay must prove the face before drilling; placements must
+stay inside the filled face and drill inward. A blocked boundary or replay reason means the
+original geometry is retained. Straight-cap holes keep their existing conversion path.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 Tell the user what to expect in one or two sentences before converting, for example: "This
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),
 so you'll get the solid shape without the feature history."
 
+When someone asks what a file holds (its bodies, its features, its parameters) or which
+features would carry across, call `contents` with `input`. It writes nothing, runs no
+SolidCraft, and returns `dutchman.contents/1`. Verdicts target the newest SolidCraft
+release known to the build, without looking for an installed CLI:
+
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
+- `bodies.items`: each body's `kind`, `name` and `hidden`.
+- `features.items`: the timeline in order, with `kind`, `name`, `suppressed`, and a `verdict`:
+  `mapped`; `needs_solidcraft_check` (it maps, but converting keeps it only when SolidCraft
+  confirms it; say that a SolidCraft CLI is needed for it); `not_needed`; `left_out`;
+  `not_supported_yet` (explain `reason` plainly); or `after_blocker` (an earlier feature stops
+  the history, so this one stays in the imported shape).
+- `features.verdicts`: the count of each verdict, for a one-line summary.
+- `parameters.items`: `name`, `value` with `unit` (`mm`, `deg`, or none), `expression` as the
+  source wrote it, and the owning `feature`.
+
+Like `inspect`, its reply holds the file's private names: keep it local.
+
 Sheet-metal histories map base flanges and full-edge flanges on unchanged rectangular base
 sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
-outer-face heights, inside/outside placement, angles, and bend radii map. Other dimensions
+outer-face heights, inside/outside placement, angles, and bend radii map. An attached rectangular
+plate with its paired bend can map on an unchanged L-shaped or notched base: its entire straight
+profile edge must be proven, with a square plate of matching thickness. Curved, open, crossing,
+disconnected, or collinear base edges and base holes or partial regions remain unsupported
+by this proof. Other dimensions
 or unproven selections keep geometry and explain the blocked feature. CADIR's hem developed
 length has no exact mapping to SolidCraft's outer-face length. Do not claim
-that K-factor or relief settings were preserved: CADIR does not supply them, so sheet rules
-use SolidCraft defaults. Contour flange, bend, unfold/refold and corner-relief operations
-are not present in the pinned CADIR version.
+that K-factor or relief settings were preserved: sheet rules use SolidCraft defaults. A bend without its mapped attached plate remains blocked.
+Contour flanges and unfold/refold operations are not mapped yet.
 
 ## 3. Convert
 
@@ -341,7 +400,9 @@ Never remove or change the quarantine attribute.
   original in body position, box, area, and volume (area and volume alone when a box is
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
   the larger box diagonal for the centre distance and each minimum/maximum coordinate;
-  area and volume retain their measuring mesh tolerances. `unverified`: written
+  area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
+  report states every number the check used; face count and centre of mass are not compared.
+  `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
   sketches are hidden beside the visible imported shape; the reason says whether retained
@@ -429,6 +490,7 @@ change replay order: the neutral ordinal controls it.
 ```sh
 dutchman formats --json
 dutchman inspect --json /abs/part.f3d
+dutchman contents --json /abs/part.f3d
 dutchman convert --json /abs/part.f3d /abs/converted/part.sc
 dutchman convert-all --json --out-dir /abs/converted /abs/project
 ```
@@ -468,6 +530,19 @@ does not certify edit behavior. The current decoder omits named sketch constrain
 such as `.Constraints.width`; their dimensions stay at their evaluated values. Object-label
 references require decoded label identities. Check geometry after editing parameters; see
 [FreeCAD expressions](../../docs/freecad.md#spreadsheet-parameters-and-expressions).
+
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
 
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
@@ -863,7 +938,10 @@ that moves, and is reported. Smart also keeps the first placement of a displayed
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
-CLI and desktop progress includes the running part or stage and its elapsed time. “Still …”
+CLI and desktop progress includes the running part or stage and its elapsed time, and while
+a history is built, the feature it is on ("Feature 29 of 37 · Extrude 1"; `running.feature`
+in `dutchman.progress/1`), noting when SolidCraft checks a feature by measurement, which takes
+longer. “Still …”
 means the usual duration has passed, not a deadline. A check-limit notice states the actual
 retention or stop policy in a full sentence. Durations use a single format such as `1 min 1 s`
 or `2 min`. Desktop folder runs keep the longest-running file, stage and step visible below
@@ -878,3 +956,18 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+Meeting 3D curve endpoints do not create relations without a decoded source relation.
+
+Decoded 3D sketches retain supported neutral joins, dimensions, axis directions
+and endpoint tangencies on SolidCraft 0.44 and newer; dimensions keep their
+parameters. Other relations are reported as not carried. A selected planar line
+loop can supply an extrude through a separate planar profile sketch only after
+the source body check confirms it. A message saying its planar 3D sketch profile
+has not been confirmed means the original shape is retained. Earlier targets
+keep their existing output. See [Fusion conversion](../../docs/fusion.md) for the
+remaining spatial constraints and profile limits.
+
+A planar 3D sketch profile copy carries at most 400,000 constraints, including
+repeated line occurrences across all relations. If it exceeds that copy limit,
+reduce repeated relations and convert again; the original shape is retained.

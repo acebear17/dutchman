@@ -41,6 +41,9 @@ selection follows total file time, even when a part's step clock resets.
 
 Times use one format throughout: **45 s**, **1 min 1 s**, **2 min**, **1 h 5 min**, or **1 h**.
 Past the usual duration the line says **Still checking Bracket: 1 min 1 s**.
+While a design's history is built, the card names the feature it is on, such as
+**Feature 29 of 37 · Extrude 1**, and, while SolidCraft checks that feature by measurement,
+adds a short note that features checked by measurement take longer.
 A target check that reaches its enforced limit says what happens next: the check stops,
 and history stays unverified, imported geometry stays visible, or document conversion
 stops, according to the output and check being run. Usual durations are notices rather
@@ -283,7 +286,7 @@ that the result is wrong and asks what differs from the original.
 
 The card takes the invite, the limits, and the message from a small policy built into the app.
 Once a day at most, where update checks run, the app reads a newer copy from
-<https://dutchman-cad.github.io/report-policy.json> in the background. The request says nothing
+<https://dutchmancad.xyz/report-policy.json> in the background. The request says nothing
 about your files. `DUTCHMAN_UPDATE_CHECK=0`, turning off automatic update checks, and source
 builds all stop it, and the built-in copy is used.
 
