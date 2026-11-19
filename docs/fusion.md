@@ -537,8 +537,13 @@ selection blocker. Targets before 0.44 keep their existing output and refusals.
 
 ## Stored body fallback
 
-When a new-body extrude, revolve, sweep or loft cannot map, Dutchman can keep its
-stored result as an Import named after the feature and continue the later history.
+When a new-body extrude, revolve, sweep or loft requires a profile or path absent
+from the source, Dutchman can keep its stored result as an Import named after the
+feature and continue the later history. Ordinary mapping and measured inference
+must fail first. Unresolved selections within existing sketches, unsupported options
+and failed measurement checks keep their usual refusal. A missing input is proved
+by its CADIR reference or a missing-profile loss attributed to that feature; an
+unresolved carrier alone does not establish that it belongs to an external design.
 It uses the history body produced by that feature first. A final-model body is used
 only when no later active feature changes it. Joins, cuts and intersections never use
 this fallback: replacing them would discard earlier body history. No geometry is

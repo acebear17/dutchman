@@ -8004,11 +8004,18 @@ fn a_missing_recipe_uses_final_geometry_only_without_later_body_changes() {
 
 #[test]
 fn a_stored_result_reports_an_external_profile_only_for_the_affected_feature() {
-    let model = fallback_cube(true, true, "new_body");
-    for (detail, external) in [
-        ("feature \"Block\": profile sketch absent", true),
-        ("feature \"Other\": profile sketch absent", false),
+    let mut model = fallback_cube(true, true, "new_body");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // An unresolved carrier alone says nothing about whether it is external.
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] =
+        json!({"kind": "planar", "value": {"kind": "unresolved", "value": "synthetic:profile#1"}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    for (subject, detail, external) in [
+        ("source", "feature \"Block\": profile sketch absent", true),
+        ("source", "feature \"Other\": profile sketch absent", false),
+        ("feature \"Block\"", "Profile sketch absent", true),
         (
+            "source",
             "Sketch-profile operand names a sketch absent from this design",
             true,
         ),
@@ -8016,7 +8023,7 @@ fn a_stored_result_reports_an_external_profile_only_for_the_affected_feature() {
         let mut report = Report::default();
         report.push_coded(
             Severity::Degraded,
-            "source",
+            subject,
             "f3d/feature.extrude-profile-sketch-absent",
             detail,
         );
@@ -8024,17 +8031,103 @@ fn a_stored_result_reports_an_external_profile_only_for_the_affected_feature() {
             .verification(Verification::Off)
             .write(&model, &mut Vec::new(), &mut report)
             .unwrap();
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(|loss| loss.code.as_deref()
+                    == Some("f3d/feature.extrude-profile-sketch-absent"))
+                .count(),
+            1,
+            "{report:?}"
+        );
         let loss = report
             .losses()
             .iter()
-            .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"))
-            .unwrap();
+            .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"));
+        assert_eq!(loss.is_some(), external, "{report:?}");
         assert_eq!(
-            loss.detail.contains("its profile is in an external design"),
-            external,
+            report.outcome().unwrap().features[1].status,
+            if external {
+                dutchman_core::FeatureStatus::Mapped
+            } else {
+                dutchman_core::FeatureStatus::Blocked
+            },
             "{report:?}"
         );
     }
+}
+
+#[test]
+fn an_ordinary_loft_refusal_keeps_its_reason_with_a_stored_result() {
+    let mut model = loft_history(10.0, |definition| {
+        definition["guidance"] = json!({"kind": "guides", "value": [
+            {"kind": "edges", "value": []}
+        ]});
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let producer = wire["model"]["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["definition"]["value"]["kind"] == "loft")
+        .unwrap()["id"]
+        .clone();
+    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+    wire["model"]["history_bodies"][0]["produced_by"] = producer;
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("a guide rail of topological edges is not mapped yet"),
+        "{report:?}"
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
+}
+
+#[test]
+fn measured_inference_precedes_an_eligible_stored_result() {
+    let mut model = unresolved_square_selection(&[]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+    wire["model"]["history_bodies"][0]["produced_by"] = wire["model"]["features"][1]["id"].clone();
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut report = Report::default();
+    report.push_coded(
+        Severity::Degraded,
+        "feature \"Block\"",
+        "f3d/feature.extrude-profile-sketch-absent",
+        "Profile sketch absent",
+    );
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .evaluator(std::sync::Arc::new(RecordedEvaluator::default()))
+        .write(&model, &mut bytes, &mut report)
+        .unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(document["features"][1]["type"], "extrude");
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.code.as_deref() == Some("history/profile-region-inferred")));
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
 }
 
 #[test]

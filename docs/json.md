@@ -1462,9 +1462,11 @@ prioritizes dropped and degraded losses and includes an explicit truncation noti
 `history/body-fallback-imported` is a `Degraded` loss naming the feature in `subject`.
 Its stored result becomes a timeline Import and the feature row has status
 `mapped`, as for Base Feature body imports. The loss explains why its recipe could
-not map. When a cadmpeg `feature.extrude-profile-sketch-absent` loss identifies that
-feature, the loss says `its profile is in an external design`; otherwise it gives
-the mapping reason.
+not map: its required profile or path is absent from this design. A CADIR reference
+or a cadmpeg `feature.extrude-profile-sketch-absent` loss attributed to that feature
+must prove the absence. Ordinary mapping and measured inference run first;
+unsupported recipes and unconfirmed selections in existing sketches keep their
+usual refusal.
 These rows count as mapped and rebuilt, like Base Feature Imports. The source must
 supply a unique history body produced by the feature, or its final output body with
 no later active modification. Joins, cuts and intersections remain blockers.

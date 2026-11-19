@@ -76,23 +76,108 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     Ok(mapped)
 }
 
-/// Keeps a failed body-creating recipe only when the source supplies its exact result.
+/// Whether CADIR or a loss attributed to this feature proves a required input absent.
+/// Native selections and unresolved carriers alone do not prove an external design.
+pub(super) fn missing_input(
+    feature: &Value,
+    ctx: &Context,
+    losses: &[dutchman_core::Loss],
+) -> bool {
+    let definition = super::operation(feature);
+    let references: Vec<&Value> = match super::operation_kind(feature) {
+        Some("extrude" | "revolve") => definition.get("profile").into_iter().collect(),
+        Some("sweep") => [definition.get("profile"), definition.get("path")]
+            .into_iter()
+            .flatten()
+            .collect(),
+        Some("loft") => definition
+            .get("sections")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|section| section.get("kind").and_then(Value::as_str) == Some("profile"))
+            .filter_map(|section| section.get("value"))
+            .collect(),
+        _ => return false,
+    };
+    references
+        .into_iter()
+        .any(|reference| absent_reference(reference, ctx))
+        || (super::operation_kind(feature) == Some("extrude")
+            && losses.iter().any(|loss| {
+                loss.code
+                    .as_deref()
+                    .is_some_and(|code| code.ends_with("/feature.extrude-profile-sketch-absent"))
+                    && (loss.subject == describe(feature)
+                        || loss.detail.contains(&format!("{}:", describe(feature)))
+                        // Some decode losses identify no feature by name. With only
+                        // one extrude in this model there is no other possible owner.
+                        // Count suppressed rows too: their losses remain in the report.
+                        || (!loss.detail.contains("feature \"")
+                            && !loss.subject.starts_with("feature \"")
+                            && ctx.arena("features").iter().filter(|row| {
+                                super::operation_kind(row) == Some("extrude")
+                            }).count() == 1))
+            }))
+}
+
+fn absent_reference(reference: &Value, ctx: &Context) -> bool {
+    let reference = super::profile::planar(reference);
+    let kind = reference.get("kind").and_then(Value::as_str);
+    let value = reference.get("value").unwrap_or(&Value::Null);
+    if kind == Some("unresolved") {
+        return value.as_str().is_some_and(|value| {
+            value
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|word| matches!(word, "absent" | "external"))
+        });
+    }
+    let spatial = kind.is_some_and(|kind| kind.starts_with("spatial_sketch_"));
+    let sketch = if kind == Some("sketch") {
+        value.as_str()
+    } else if kind.is_some_and(|kind| kind.starts_with("sketch_") || spatial) {
+        value.get("sketch").and_then(Value::as_str)
+    } else {
+        None
+    };
+    if let Some(id) = sketch {
+        if ctx
+            .row(
+                if spatial {
+                    "spatial_sketches"
+                } else {
+                    "sketches"
+                },
+                id,
+            )
+            .is_none()
+        {
+            return true;
+        }
+        let arena = if spatial {
+            "spatial_sketch_entities"
+        } else {
+            "sketch_entities"
+        };
+        return ["entities", "curves"].into_iter().any(|field| {
+            value
+                .get(field)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|id| ctx.row(arena, id).is_none())
+        });
+    }
+    false
+}
+
+/// Keeps a failed recipe only when the source supplies its exact result.
 /// Never replace a join/cut, or a final body that later active features change.
 pub(super) fn fallback(feature: &Value, ctx: &mut Context) -> Result<Value, String> {
     if !matches!(
         super::operation_kind(feature),
-        Some(
-            "extrude"
-                | "revolve"
-                | "sweep"
-                | "loft"
-                | "sphere"
-                | "torus"
-                | "coil"
-                | "helical_sweep"
-                | "primitive"
-                | "block"
-        )
+        Some("extrude" | "revolve" | "sweep" | "loft")
     ) || super::operation(feature).get("op").and_then(Value::as_str) != Some("new_body")
     {
         return Err("it does not create a new body".to_owned());
@@ -394,6 +479,95 @@ mod tests {
 
     fn base(ordinal: u64) -> Value {
         json!({"id": "b", "name": "Base Feature 1", "ordinal": ordinal, "outputs": ["body#1"]})
+    }
+
+    #[test]
+    fn an_unnamed_absence_loss_requires_a_single_possible_feature() {
+        let feature = json!({"name": "Block", "definition": {"kind": "operation", "value": {
+            "kind": "extrude", "value": {"profile": {"kind": "planar", "value": {
+                "kind": "native", "value": "synthetic:profile#1"}}}}}});
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            "source",
+            "f3d/feature.extrude-profile-sketch-absent",
+            "Profile sketch absent",
+        );
+        let model = json!({"features": [feature]});
+        assert!(missing_input(
+            &feature,
+            &Context::testing(&model),
+            report.losses()
+        ));
+        for suppressed in [false, true] {
+            let mut other = feature.clone();
+            other["name"] = json!("Other");
+            other["suppressed"] = json!(suppressed);
+            let model = json!({"features": [feature, other]});
+            assert!(!missing_input(
+                &feature,
+                &Context::testing(&model),
+                report.losses()
+            ));
+        }
+    }
+
+    #[test]
+    fn only_absent_inputs_qualify_for_a_stored_result() {
+        let model = json!({"sketches": [{"id": "present"}],
+            "sketch_entities": [{"id": "curve", "sketch": "present"}]});
+        let ctx = Context::testing(&model);
+        let report = Report::default();
+        for (reference, absent) in [
+            (json!({"kind": "sketch", "value": "missing"}), true),
+            (json!({"kind": "sketch", "value": "present"}), false),
+            (
+                json!({"kind": "unresolved", "value": "synthetic:external:profile#1"}),
+                true,
+            ),
+            (
+                json!({"kind": "unresolved", "value": "synthetic:profile#1"}),
+                false,
+            ),
+            (
+                json!({"kind": "native", "value": "synthetic:profile#1"}),
+                false,
+            ),
+            (
+                json!({"kind": "sketch_selection", "value": {"sketch": "present", "selections": ["opaque"]}}),
+                false,
+            ),
+            (
+                json!({"kind": "sketch_curves", "value": {"sketch": "present", "curves": ["curve"]}}),
+                false,
+            ),
+            (
+                json!({"kind": "sketch_curves", "value": {"sketch": "present", "curves": ["missing"]}}),
+                true,
+            ),
+        ] {
+            for kind in ["extrude", "revolve", "sweep", "loft"] {
+                let definition = if kind == "loft" {
+                    json!({"sections": [{"kind": "profile", "value": reference}]})
+                } else {
+                    json!({"profile": reference})
+                };
+                let feature = json!({"definition": {"kind": "operation", "value": {
+                    "kind": kind, "value": definition}}});
+                assert_eq!(
+                    missing_input(&feature, &ctx, report.losses()),
+                    absent,
+                    "{feature}"
+                );
+            }
+            let feature = json!({"definition": {"kind": "operation", "value": {
+                "kind": "sweep", "value": {"path": reference}}}});
+            assert_eq!(
+                missing_input(&feature, &ctx, report.losses()),
+                absent,
+                "{feature}"
+            );
+        }
     }
 
     #[test]

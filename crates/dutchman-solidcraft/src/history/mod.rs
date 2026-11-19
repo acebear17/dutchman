@@ -919,6 +919,27 @@ pub(crate) fn map_with_profile_check(
     check: &mut infer::Check<'_>,
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Mapping {
+    map_with_source_profile_check(
+        model,
+        report,
+        target_version,
+        keep_sketches,
+        check,
+        progress,
+        &[],
+    )
+}
+
+/// Decode losses are read-only evidence, separate from the history losses being written.
+pub(crate) fn map_with_source_profile_check(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
+) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
     let result = map_into(
@@ -930,6 +951,7 @@ pub(crate) fn map_with_profile_check(
         keep_sketches,
         check,
         progress,
+        source_losses,
     );
     let mut mapping = Mapping {
         result,
@@ -1068,6 +1090,7 @@ fn map_into(
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
     progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
 ) -> Result<History, String> {
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
@@ -1221,7 +1244,11 @@ fn map_into(
         });
         let mut imported_body = false;
         let mapped = mapped.or_else(|reason| {
-            // Discard auxiliary work from the failed recipe before replacing it.
+            // Measured inference above has already had its chance. Only a source input
+            // proven absent can replace a refused recipe with its retained result.
+            if !base::missing_input(feature, &ctx, source_losses) {
+                return Err(reason);
+            }
             ctx.builds = builds;
             ctx.named_bodies.truncate(named_bodies);
             ctx.extra.clear();
@@ -1232,36 +1259,12 @@ fn map_into(
             ctx.profile_mismatch = false;
             ctx.inferred = None;
             ctx.measured = false;
-            let missing_profile = |row: &Value| {
-                let reference = operation(row).get("profile").map(profile::planar);
-                let absent = match reference.and_then(|profile| profile.get("kind")).and_then(Value::as_str) {
-                    Some("unresolved") => true,
-                    Some("sketch") => reference.and_then(|profile| profile.get("value"))
-                        .and_then(Value::as_str).is_some_and(|id| ctx.row("sketches", id).is_none()),
-                    _ => false,
-                };
-                operation_kind(row) == Some("extrude") && absent
-                    && row.get("suppressed").and_then(Value::as_bool) != Some(true)
-            };
-            let external = missing_profile(feature) && report.losses().iter().any(|loss| {
-                loss.code.as_deref().is_some_and(|code| code.ends_with("feature.extrude-profile-sketch-absent"))
-                    && (loss.detail.contains(&describe(feature))
-                        // Some source losses have no feature name. Attribute those only
-                        // when a single active extrude has an unresolved profile.
-                        || (!loss.detail.contains("feature \"")
-                            && ctx.arena("features").iter().filter(|row| missing_profile(row)).count() == 1))
-            });
-            let why = if external {
-                "its profile is in an external design"
-            } else {
-                &reason
-            };
             report.push_coded(
                 Severity::Degraded,
                 describe(feature),
                 "history/body-fallback-imported",
                 format!(
-                    "Stored result imported because {why}; later features continue on this body"
+                    "Stored result imported because its required profile or path is absent from this design ({reason}); later features continue on this body"
                 ),
             );
             imported_body = true;
