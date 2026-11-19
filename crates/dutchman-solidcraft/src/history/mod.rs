@@ -1196,6 +1196,7 @@ fn map_into(
         }
         map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
+        let named_bodies = ctx.named_bodies.len();
         let before = history.features.len();
         let blends = ctx.blends.len();
         let inferred = infer::map(
@@ -1217,6 +1218,54 @@ fn map_into(
                     .to_owned(),
             ),
             _ => Ok(mapped),
+        });
+        let mut imported_body = false;
+        let mapped = mapped.or_else(|reason| {
+            // Discard auxiliary work from the failed recipe before replacing it.
+            ctx.builds = builds;
+            ctx.named_bodies.truncate(named_bodies);
+            ctx.extra.clear();
+            ctx.blends.truncate(blends);
+            history.features.truncate(before);
+            let imported = base::fallback(feature, &mut ctx).map_err(|_| reason.clone())?;
+            ctx.profile_unverified = false;
+            ctx.profile_mismatch = false;
+            ctx.inferred = None;
+            ctx.measured = false;
+            let missing_profile = |row: &Value| {
+                let reference = operation(row).get("profile").map(profile::planar);
+                let absent = match reference.and_then(|profile| profile.get("kind")).and_then(Value::as_str) {
+                    Some("unresolved") => true,
+                    Some("sketch") => reference.and_then(|profile| profile.get("value"))
+                        .and_then(Value::as_str).is_some_and(|id| ctx.row("sketches", id).is_none()),
+                    _ => false,
+                };
+                operation_kind(row) == Some("extrude") && absent
+                    && row.get("suppressed").and_then(Value::as_bool) != Some(true)
+            };
+            let external = missing_profile(feature) && report.losses().iter().any(|loss| {
+                loss.code.as_deref().is_some_and(|code| code.ends_with("feature.extrude-profile-sketch-absent"))
+                    && (loss.detail.contains(&describe(feature))
+                        // Some source losses have no feature name. Attribute those only
+                        // when a single active extrude has an unresolved profile.
+                        || (!loss.detail.contains("feature \"")
+                            && ctx.arena("features").iter().filter(|row| missing_profile(row)).count() == 1))
+            });
+            let why = if external {
+                "its profile is in an external design"
+            } else {
+                &reason
+            };
+            report.push_coded(
+                Severity::Degraded,
+                describe(feature),
+                "history/body-fallback-imported",
+                format!(
+                    "Stored result imported because {why}; later features continue on this body"
+                ),
+            );
+            imported_body = true;
+            Ok(Mapped::Feature(imported))
         });
         match mapped {
             Ok(Mapped::Nothing) => {
@@ -1326,7 +1375,7 @@ fn map_into(
                 {
                     history.stored_bodies.insert(id, centers);
                 }
-                if whole_of_several(feature, &ctx) {
+                if !imported_body && whole_of_several(feature, &ctx) {
                     history.unconfirmed.insert(id);
                 }
             }

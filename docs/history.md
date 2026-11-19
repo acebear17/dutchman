@@ -463,3 +463,14 @@ for every source and replayed body, plus both face counts and the surface result
 two-reading comparison is unchanged. Centroid-only region discovery is refused: centroids do
 not prove selections for nonconvex regions or distinguish a concentric annulus and disc. Region
 discovery, mapping and measurements share one 120 s feature deadline; late results are refused.
+
+## Stored body fallback
+
+When a new-body extrude, revolve, sweep or loft cannot map, Dutchman can keep its
+stored result as an Import named after the feature and continue the later history.
+It uses the history body produced by that feature first. A final-model body is used
+only when no later active feature changes it. Joins, cuts and intersections never use
+this fallback: replacing them would discard earlier body history. No geometry is
+reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
+`history/body-fallback-imported` reports the lost recipe as Degraded. Later features
+and verification use the imported body as usual.

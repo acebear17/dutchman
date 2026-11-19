@@ -7895,6 +7895,148 @@ fn a_base_feature_imports_its_own_body_when_the_source_keeps_it() {
         .is_some_and(|reason| reason.contains("stored only as the design ends")));
 }
 
+/// A missing recipe with only synthetic cube topology, optionally retained at its producer.
+fn fallback_cube(stored: bool, later: bool, op: &str) -> Model {
+    let mut model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] = json!({"kind": "planar", "value": {"kind": "unresolved", "value": "synthetic:external:profile#1"}});
+    wire["model"]["features"][1]["definition"]["value"]["value"]["op"] = json!(op);
+    if !later {
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| f["ordinal"].as_u64() < Some(2));
+    }
+    if stored {
+        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+        wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[cfg(unix)]
+#[test]
+fn a_missing_recipe_imports_its_stored_result_and_a_later_fillet_maps() {
+    let model = fallback_cube(true, true, "new_body");
+    let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
+    let (document, report) = convert(&model, &replaying(&cli.path));
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(
+        rows[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert_eq!(
+        rows[2].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert!(rows[1].reason.is_none());
+    let features = document["features"].as_array().unwrap();
+    let imported = features.iter().find(|f| f["name"] == "Block").unwrap();
+    assert_eq!(imported["type"], "import");
+    assert!(imported["step_blob"].as_str().is_some());
+    assert!(features
+        .iter()
+        .any(|f| f["type"] == "fillet" && f["body"] == "unit cube"));
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss.subject.contains("Block"));
+    assert!(loss.detail.contains("unresolved"));
+}
+
+#[test]
+fn missing_recipes_without_a_stored_result_and_cuts_still_stop() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    for model in [
+        fallback_cube(false, true, "new_body"),
+        fallback_cube(true, true, "cut"),
+    ] {
+        let (_, report) = convert(&model, &writer);
+        assert_eq!(
+            report.outcome().unwrap().features[1].status,
+            dutchman_core::FeatureStatus::Blocked,
+            "{report:?}"
+        );
+        assert!(report
+            .losses()
+            .iter()
+            .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
+    }
+}
+
+#[test]
+fn a_missing_recipe_uses_final_geometry_only_without_later_body_changes() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(&fallback_cube(false, false, "new_body"), &writer);
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "import" && f["name"] == "Block"));
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss.subject.contains("Block"));
+    assert!(loss.detail.contains("unresolved"));
+    // The final cube exists, but a later fillet would modify it: refuse that source.
+    let (_, report) = convert(&fallback_cube(false, true, "new_body"), &writer);
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_stored_result_reports_an_external_profile_only_for_the_affected_feature() {
+    let model = fallback_cube(true, true, "new_body");
+    for (detail, external) in [
+        ("feature \"Block\": profile sketch absent", true),
+        ("feature \"Other\": profile sketch absent", false),
+        (
+            "Sketch-profile operand names a sketch absent from this design",
+            true,
+        ),
+    ] {
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            "source",
+            "f3d/feature.extrude-profile-sketch-absent",
+            detail,
+        );
+        SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .write(&model, &mut Vec::new(), &mut report)
+            .unwrap();
+        let loss = report
+            .losses()
+            .iter()
+            .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"))
+            .unwrap();
+        assert_eq!(
+            loss.detail.contains("its profile is in an external design"),
+            external,
+            "{report:?}"
+        );
+    }
+}
+
 #[test]
 fn a_sketch_with_no_timeline_row_is_written_before_the_extrude_that_uses_it() {
     // The source keeps the cube's sketch only in its sketch arena: no sketch feature names it.

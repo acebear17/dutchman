@@ -770,3 +770,9 @@ with host-drawn conversion options and a structured loss report. It implements S
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+A body-creating feature whose recipe cannot map can still be reported as `mapped`
+when its stored result is written as a named Import so later features can continue.
+The Degraded loss `history/body-fallback-imported` explains why. An external-design
+profile needs its original design to recover the editable recipe; the stored body
+preserves the available shape. Cuts and joins cannot use this fallback.

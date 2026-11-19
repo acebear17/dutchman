@@ -76,6 +76,59 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     Ok(mapped)
 }
 
+/// Keeps a failed body-creating recipe only when the source supplies its exact result.
+/// Never replace a join/cut, or a final body that later active features change.
+pub(super) fn fallback(feature: &Value, ctx: &mut Context) -> Result<Value, String> {
+    if !matches!(
+        super::operation_kind(feature),
+        Some(
+            "extrude"
+                | "revolve"
+                | "sweep"
+                | "loft"
+                | "sphere"
+                | "torus"
+                | "coil"
+                | "helical_sweep"
+                | "primitive"
+                | "block"
+        )
+    ) || super::operation(feature).get("op").and_then(Value::as_str) != Some("new_body")
+    {
+        return Err("it does not create a new body".to_owned());
+    }
+    let ids: Vec<&str> = feature
+        .get("outputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let [body] = ids.as_slice() else {
+        return Err("its single output body is not resolved".to_owned());
+    };
+    // Replacing a previously named body would discard the history that made it.
+    if ctx.named_bodies.iter().any(|(id, _)| id.as_str() == *body) {
+        return Err("its output already has body history".to_owned());
+    }
+    if let Some(nest) = history_body(feature, &ids, ctx) {
+        return import_history_body(feature, body, nest, ctx);
+    }
+    // Ambiguous history bodies cannot establish which result belongs here.
+    if ctx.source.is_some_and(|model| {
+        model.ir.model.history_bodies.iter().any(|nest| {
+            nest.produced_by
+                .as_ref()
+                .is_some_and(|by| Some(by.as_str()) == feature.get("id").and_then(Value::as_str))
+        })
+    }) || feature.get("ordinal").and_then(Value::as_u64).is_none()
+        || !later_changes(feature, &ids, ctx).is_empty()
+    {
+        return Err("its unchanged result body is not available".to_owned());
+    }
+    import(feature, &ids, ctx)
+}
+
 /// The body a base feature of one body made, as it stood when the base feature ended: the
 /// history body the source keeps for it, nested with its own topology. cadmpeg keeps one
 /// only when a later feature changes the body. None for a base feature of several bodies,
