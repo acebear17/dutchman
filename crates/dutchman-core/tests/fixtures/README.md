@@ -159,4 +159,10 @@ model from the public fixtures project at commit `200abefef33bd206a362e5166f61e0
 SHA-256: `86a50bb953ba0e6b5e963657dac5173ba297e2f813faca82057a1fca71ede876`.
 It is an authored 20 × 30 × 10 mm pad with one R2 vertical-edge fillet: volume
 5991.41592654 mm³, bounds (-10, -15, 0) to (10, 15, 10) mm, from that set's
-`manifest.json`. The component harness maps and replays its fillet with Stand up.
+`manifest.json`. The native writer and Stand up helper in the component harness map and replay its fillet;
+the packaged component refuses FreeCAD inputs before reading them.
+
+`two_parts.sldasm` uses `create_solidworks_assembly.py` and the same public synthetic
+SolidWorks envelope as `placed_cubes.sldasm`, with a second distinct part path. The component
+harness supplies the existing synthetic cube for the first reference and injects a host
+failure for the second. No additional part model or third-party file is needed.

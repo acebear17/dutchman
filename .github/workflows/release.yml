@@ -190,9 +190,14 @@ jobs:
             cp "$file" "$latest"
             sha256sum "$latest" > "$latest.sha256"
           done
-          # The SolidCraft plugin: dutchman-plugin-<version>.zip -> dutchman-plugin.zip.
+          # The SolidCraft plugin: dutchman-plugin-<version>.zip -> dutchman-plugin.zip, the name
+          # docs/solidcraft-plugin.md links as releases/latest/download/dutchman-plugin.zip.
           cp "dutchman-plugin-$VERSION.zip" dutchman-plugin.zip
           sha256sum dutchman-plugin.zip > dutchman-plugin.zip.sha256
+          for file in "dutchman-plugin-$VERSION.zip" "dutchman-plugin-$VERSION.zip.sha256" \
+                      dutchman-plugin.zip dutchman-plugin.zip.sha256; do
+            [[ -s "$file" ]] || { echo "Missing SolidCraft plugin file: $file" >&2; exit 1; }
+          done
           ls -l
       - name: Create the draft release
         shell: bash
@@ -215,6 +220,18 @@ jobs:
           python3 scripts/release-notes.py "$VERSION" > notes.md
           files=(dist/*)
           gh release create "$tag" --draft --verify-tag --title "Dutchman $VERSION" -F notes.md "${files[@]}"
+          # Every checked file reached the draft, the plugin's zips and checksums among them.
+          attached=$(gh release view "$tag" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
+          wanted=$(cd dist && ls | sort)
+          if [[ "$attached" != "$wanted" ]]; then
+            echo "The draft release's files differ from the checked files (< checked, > attached):" >&2
+            diff <(echo "$wanted") <(echo "$attached") >&2 || true
+            exit 1
+          fi
+          for file in "dutchman-plugin-$VERSION.zip" "dutchman-plugin-$VERSION.zip.sha256" \
+                      dutchman-plugin.zip dutchman-plugin.zip.sha256; do
+            grep -qxF -- "$file" <<<"$attached" || { echo "Missing from the draft release: $file" >&2; exit 1; }
+          done
           echo "Draft release for $tag created $(since) after the run started." | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The pacman package, built from the draft release's own Linux x86_64 archive (nothing is

@@ -904,9 +904,18 @@ Designs with both B-rep and mesh bodies still convert their B-rep bodies and rep
 losses for meshes it could not decode.
 
 The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
+It converts Fusion, Inventor and SolidWorks; FreeCAD files open with SolidCraft's own reader.
+Its report items count only what the design lost; notes remain under Details, and messages
+say what to do first.
 It does not add or change MCP tools. Its evaluator uses the host's existing
 command surface through the `evaluate` import, subject to host permissions.
 
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+The SolidCraft plugin keeps unresolved appearance losses and unknown degraded codes in its
+loss items; only known source-bookkeeping diagnostics and informational notes are suppressed.
+For input limits, both the plugin and CLI cap each file at 1 GiB. The plugin also caps an
+assembly's combined input at 1 GiB; the CLI can convert larger totals when each file fits.
+Save smaller parts in the source program when one file exceeds the shared cap.

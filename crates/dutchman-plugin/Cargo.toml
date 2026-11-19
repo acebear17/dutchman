@@ -11,7 +11,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-dutchman-core = { workspace = true, features = ["source-reader", "fusion", "inventor", "solidworks", "freecad"] }
+dutchman-core = { workspace = true, features = ["source-reader", "fusion", "inventor", "solidworks"] }
 dutchman-solidcraft.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,7 +21,8 @@ zip.workspace = true
 wit-bindgen = "0.57.1"
 
 [features]
-host-tests = ["dep:wasmtime"]
+# Only native replay regressions read the public FreeCAD fillet fixture.
+host-tests = ["dep:wasmtime", "dutchman-core/freecad"]
 
 [[test]]
 name = "component"

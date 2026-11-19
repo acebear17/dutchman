@@ -1303,8 +1303,9 @@ No report fields or schema versions change.
 
 ## `dutchman.plugin.loss/1`
 
-The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
-structured projection of the core report under `details`: stage counts, coded losses,
+The plugin returns SolidCraft's loss report (a summary line and one item per thing the design
+lost; notes are left out of the items) with a
+structured projection of the core report under `details`: stage counts, every loss and note,
 per-feature mapping results, assembly completeness, and verification.
 See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
 CLI and MCP `dutchman.convert/1` reports are unchanged.
@@ -1312,3 +1313,9 @@ CLI and MCP `dutchman.convert/1` reports are unchanged.
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+The SolidCraft plugin keeps unresolved appearance losses and unknown degraded codes in its
+loss items; only known source-bookkeeping diagnostics and informational notes are suppressed.
+For input limits, both the plugin and CLI cap each file at 1 GiB. The plugin also caps an
+assembly's combined input at 1 GiB; the CLI can convert larger totals when each file fits.
+Save smaller parts in the source program when one file exceeds the shared cap.

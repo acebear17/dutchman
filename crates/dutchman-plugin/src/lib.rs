@@ -13,13 +13,116 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 mod limits;
-pub use limits::{CHUNK_BYTES, MAX_OUTPUT_BYTES, MAX_REPORT_BYTES};
+pub use limits::{CHUNK_BYTES, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, MAX_REPORT_BYTES};
 #[cfg(test)]
 mod tests;
 
 /// What the report says when the Keep editable history option is off: the plugin's own
 /// option, not the command line's `--import-only`.
 pub const EDITABLE_HISTORY_OFF: &str = "Keep editable history is turned off";
+
+/// The formats the plugin converts, as its manifest lists them.
+pub const FORMATS: [Format; 6] = [
+    Format::FusionArchive,
+    Format::FusionMultiDocument,
+    Format::InventorPart,
+    Format::InventorAssembly,
+    Format::SolidWorksPart,
+    Format::SolidWorksAssembly,
+];
+
+/// The plugin's formats in a message.
+const FORMAT_NAMES: &str =
+    "Fusion (.f3d, .f3z), Inventor (.ipt, .iam) or SolidWorks (.sldprt, .sldasm)";
+
+/// Why FreeCAD is not a plugin format: SolidCraft's own reader keeps more of its history.
+pub const FREECAD: &str = "Open FreeCAD files with File > Open: SolidCraft's own reader keeps \
+     their editable history, which the Dutchman plugin does not match yet.";
+
+/// What to do first when one file is over the shared per-file limit.
+pub fn input_limit_message(limit: u64) -> String {
+    format!(
+        "Save smaller parts in the source program and choose a file under {}. The dutchman \
+         command line has the same per-file limit.",
+        size(limit)
+    )
+}
+
+/// The command line has no plugin aggregate budget, but still caps each input file.
+pub fn aggregate_input_limit_message(limit: u64) -> String {
+    format!(
+        "Convert fewer parts at once, or use the dutchman command line: the file and its \
+         parts together exceed the plugin's {} input limit. Each file must still fit the \
+         command line's {} per-file limit: {}.",
+        size(limit),
+        size(dutchman_core::MAX_INPUT_BYTES),
+        dutchman_core::RELEASES
+    )
+}
+
+/// A byte count in the unit a person would say.
+fn size(bytes: u64) -> String {
+    const MIB: u64 = 1 << 20;
+    const GIB: u64 = 1 << 30;
+    if bytes >= GIB && bytes.is_multiple_of(GIB) {
+        format!("{} GiB", bytes / GIB)
+    } else if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{} MiB", bytes.div_ceil(MIB))
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
+/// What the plugin tells the user when a conversion stops: what to do first, then the detail.
+/// It names only the plugin's own formats and limits.
+pub fn message(error: &Error) -> String {
+    match error {
+        Error::NotSupportedYet {
+            format: Format::FreeCadDocument,
+        } => FREECAD.to_owned(),
+        Error::UnknownFormat { .. } | Error::NotSupportedYet { .. } => format!(
+            "Choose a {FORMAT_NAMES} file: the Dutchman plugin converts only those. SolidCraft \
+             opens STEP, IGES and mesh files itself with File > Import."
+        ),
+        Error::TooLarge { bytes, limit, .. } => format!(
+            "{} This file is {}.",
+            input_limit_message(*limit),
+            size(*bytes)
+        ),
+        Error::MemoryBudget(detail) => format!(
+            "Convert this design with the dutchman command line, which has no plugin memory \
+             limit: {}. Detail: {detail}",
+            dutchman_core::RELEASES
+        ),
+        Error::Assembly(detail) => format!(
+            "Keep the assembly's part files in its folder, under their saved names, and open it \
+             again. Detail: {detail}"
+        ),
+        Error::NoGeometry(detail) => format!(
+            "Open a design with a solid or surface in it: this one has none SolidCraft can take. \
+             Detail: {detail}"
+        ),
+        // Already says what to do: convert fewer parts at once.
+        Error::Encode(detail) if detail.contains("exceeds") => detail.clone(),
+        _ => {
+            let text = error.to_string();
+            // The reader's own advice names the command line's anonymous report; say it here
+            // first, in the plugin's words, and keep only the cause as the detail.
+            let cause = text
+                .split_once(". The file may be incomplete")
+                .map_or(text.as_str(), |(cause, _)| cause);
+            format!(
+                "Download or copy the file again and open it once more. If the original opens \
+                 in the program that made it, report the problem on Dutchman's issue form ({}); \
+                 `dutchman convert FILE --report-anon report.json` makes an anonymous report to \
+                 attach. Detail: {cause}",
+                dutchman_core::FILE_DID_NOT_CONVERT
+            )
+        }
+    }
+}
 
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +199,19 @@ pub fn resolve(stored: &str, folder: &Path, exists: &dyn Fn(&Path) -> bool) -> O
     None
 }
 
+/// The plugin format a file name names, or why the plugin does not convert it. The adapter
+/// asks before reading any bytes.
+pub fn format(name: &str) -> Result<Format, Error> {
+    let path = Path::new(name);
+    let format =
+        Format::from_path(path).ok_or_else(|| Error::UnknownFormat { path: path.into() })?;
+    if FORMATS.contains(&format) {
+        Ok(format)
+    } else {
+        Err(Error::NotSupportedYet { format })
+    }
+}
+
 pub fn convert(
     name: &str,
     options: Options,
@@ -105,20 +221,7 @@ pub fn convert(
 ) -> Result<(Vec<u8>, String), Error> {
     validate_name(name).map_err(Error::Decode)?;
     let path = Path::new(name);
-    let format =
-        Format::from_path(path).ok_or_else(|| Error::UnknownFormat { path: path.into() })?;
-    if !matches!(
-        format,
-        Format::FusionArchive
-            | Format::FusionMultiDocument
-            | Format::InventorPart
-            | Format::InventorAssembly
-            | Format::SolidWorksPart
-            | Format::SolidWorksAssembly
-            | Format::FreeCadDocument
-    ) {
-        return Err(Error::NotSupportedYet { format });
-    }
+    let format = format(name)?;
     let mut report = Report::default();
     let model = dutchman_core::source::read(
         format,
@@ -152,5 +255,5 @@ pub fn convert(
             "Converted design exceeds 256 MiB; convert fewer parts at once".into(),
         ));
     }
-    Ok((design, report::encode(&report)?))
+    Ok((design, report::encode(&report, EDITABLE_HISTORY_OFF)?))
 }

@@ -38,11 +38,17 @@ pub(crate) fn json(report: &Report) -> Value {
         "joints":report.joints()})
 }
 
-/// The loss report SolidCraft shows: a one-line summary, one item per loss, and the full
-/// `dutchman.plugin.loss/1` report under `details`.
-pub(crate) fn host(report: &Report) -> Value {
+/// The loss report SolidCraft shows: a one-line summary, one item per thing the design lost,
+/// and the full `dutchman.plugin.loss/1` report, notes included, under `details`.
+/// `history_off` is the reason the writer records when Keep editable history is off.
+pub(crate) fn host(report: &Report, history_off: &str) -> Value {
     const MAX_ITEMS: usize = 4096;
-    let mut losses: Vec<_> = report.losses().iter().collect();
+    let mut losses: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.lost_from_design())
+        .collect();
+    let total = losses.len();
     // Stable sorting retains source order within each severity.
     losses.sort_by_key(|loss| match loss.severity {
         Severity::Dropped => 0,
@@ -73,10 +79,9 @@ pub(crate) fn host(report: &Report) -> Value {
             })
         })
         .collect();
-    let mut host =
-        json!({"summary": clip(&summary(report), 240), "items": items, "details": json(report)});
+    let mut host = json!({"summary": clip(&summary(report, total, history_off), 240), "items": items, "details": json(report)});
     if truncated {
-        truncation(&mut host, report.losses().len(), false);
+        truncation(&mut host, total, false);
     }
     host
 }
@@ -112,11 +117,16 @@ fn truncation(host: &mut Value, total: usize, details_omitted: bool) {
     }
 }
 
-pub(crate) fn encode(report: &Report) -> Result<String, dutchman_core::Error> {
+pub(crate) fn encode(report: &Report, history_off: &str) -> Result<String, dutchman_core::Error> {
     let encode = |value: &Value| {
         serde_json::to_string(value).map_err(|e| dutchman_core::Error::Encode(e.to_string()))
     };
-    let mut host = host(report);
+    let total = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.lost_from_design())
+        .count();
+    let mut host = host(report, history_off);
     let text = encode(&host)?;
     if text.len() <= crate::MAX_REPORT_BYTES {
         return Ok(text);
@@ -125,7 +135,7 @@ pub(crate) fn encode(report: &Report) -> Result<String, dutchman_core::Error> {
         details.remove("losses");
     }
     loop {
-        truncation(&mut host, report.losses().len(), true);
+        truncation(&mut host, total, true);
         let text = encode(&host)?;
         if text.len() <= crate::MAX_REPORT_BYTES {
             return Ok(text);
@@ -144,9 +154,9 @@ pub(crate) fn encode(report: &Report) -> Result<String, dutchman_core::Error> {
     }
 }
 
-fn summary(report: &Report) -> String {
-    let losses = report.losses().len();
-    let losses = match losses {
+/// One line on what the user got, counting only what the design lost.
+fn summary(report: &Report, lost: usize, history_off: &str) -> String {
+    let losses = match lost {
         0 => String::new(),
         1 => "; 1 loss".to_owned(),
         n => format!("; {n} losses"),
@@ -171,7 +181,17 @@ fn summary(report: &Report) -> String {
         Mode::PartialHistory => format!(
             "Partial editable history: {mapped} of {needing} features mapped, original shape visible{losses}"
         ),
-        Mode::Import => format!("Geometry without editable history{losses}"),
+        Mode::Import if matches!(&outcome.check, Check::NotApplicable(why) if why == history_off) => {
+            format!("Geometry only, as Keep editable history is off{losses}")
+        }
+        // Nothing to rebuild is not a loss: the file kept no feature history Dutchman reads.
+        Mode::Import if needing == 0 => {
+            format!("Shape converted; the file has no feature history to rebuild{losses}")
+        }
+        Mode::Import => format!(
+            "Shape converted without editable history: {needing} {} could not be rebuilt{losses}",
+            if needing == 1 { "feature" } else { "features" }
+        ),
     }
 }
 
@@ -190,21 +210,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn late_severe_losses_survive_item_and_byte_compaction() {
+    fn unresolved_native_appearance_is_a_visible_loss() {
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            "appearance",
+            "sldprt/appearance.native-scope-unresolved",
+            "Conflicting face appearances remain unresolved.",
+        );
+        report.push_coded(
+            Severity::Degraded,
+            "source",
+            "sldprt/source.dialect-unverified",
+            "Source dialect is unverified.",
+        );
+        let value: Value = serde_json::from_str(&encode(&report, "history off").unwrap()).unwrap();
+        assert_eq!(value["summary"], "Converted; 1 loss");
+        assert_eq!(value["items"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["items"][0]["title"],
+            "Appearances carried over with changes"
+        );
+        assert_eq!(
+            value["items"][0]["code"],
+            "sldprt/appearance.native-scope-unresolved"
+        );
+        assert_eq!(value["details"]["losses"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn notes_stay_in_details_when_the_report_is_shortened() {
         let mut report = Report::default();
         for _ in 0..4096 {
             report.push(Severity::Info, "decode", "i".repeat(1024));
         }
         report.push(Severity::Degraded, "appearance", "Late appearance changed");
         report.push(Severity::Dropped, "shape", "Late shape dropped");
-        assert!(serde_json::to_vec(&host(&report)).unwrap().len() > crate::MAX_REPORT_BYTES);
-        let text = encode(&report).unwrap();
+        let value: Value = serde_json::from_str(&encode(&report, "history off").unwrap()).unwrap();
+        let items = value["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["message"], "Late shape dropped");
+        assert_eq!(items[1]["message"], "Late appearance changed");
+        assert_eq!(items[2]["code"], "dutchman.report.truncated");
+        assert_eq!(value["summary"], "Converted; 2 losses");
+        assert_eq!(value["details"]["truncation"]["omitted_items"], 0);
+        assert_eq!(
+            value["details"]["truncation"]["details_losses_omitted"],
+            true
+        );
+    }
+
+    #[test]
+    fn late_dropped_loss_survives_item_and_byte_compaction() {
+        let mut report = Report::default();
+        for _ in 0..4096 {
+            report.push(Severity::Degraded, "appearance", "i".repeat(1024));
+        }
+        report.push(Severity::Degraded, "appearance", "Late appearance changed");
+        report.push(Severity::Dropped, "shape", "Late shape dropped");
+        assert!(
+            serde_json::to_vec(&host(&report, "history off"))
+                .unwrap()
+                .len()
+                > crate::MAX_REPORT_BYTES
+        );
+        let text = encode(&report, "history off").unwrap();
         assert!(text.len() <= crate::MAX_REPORT_BYTES);
         let value: Value = serde_json::from_str(&text).unwrap();
         let items = value["items"].as_array().unwrap();
         assert!(items.len() <= 4096);
         assert_eq!(items[0]["message"], "Late shape dropped");
-        assert_eq!(items[1]["message"], "Late appearance changed");
+        // The item limit also reserves a notice and keeps the late dropped loss first.
+        let full = host(&report, "history off");
+        assert_eq!(full["items"][0]["message"], "Late shape dropped");
+        assert_eq!(full["details"]["truncation"]["omitted_items"], 3);
+        assert_eq!(
+            full["details"]["truncation"]["details_losses_omitted"],
+            false
+        );
+        assert_eq!(value["summary"], "Converted; 4098 losses");
+        assert!(full["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["severity"] != "info" || row["code"] == "dutchman.report.truncated"));
         assert_eq!(items.last().unwrap()["code"], "dutchman.report.truncated");
         assert_eq!(
             value["details"]["truncation"]["omitted_items"],
