@@ -102,6 +102,11 @@ or `editable history, unverified`). After progress updates, the lines on stderr 
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
 
+Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
+L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
+see [sheet-metal limits](history.md#sheet-metal). Unproven picks or base perimeters with curved,
+open, crossing, disconnected, or collinear edges keep geometry and name the blocked feature.
+
 SolidCraft output accepts `.sc`, `.solidcraft`, and `.solvecraft`; each uses the same container.
 Other targets use their own extension.
 To get one machine-readable report on stdout instead
@@ -270,6 +275,15 @@ splines are clamped first. Uniform splines stay one spline. Endpoints are shared
 profiles and sweep paths select the whole chain. Constraints that cannot apply to a chain
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
+
+A hole on a planar face can retain its history even when that face has a rounded corner or
+an earlier circular hole. Dutchman checks the source boundary and asks SolidCraft to prove
+that face exists before drilling. A placement inside an existing hole, outside the face,
+or facing out of it stays blocked with a specific reason; conversion keeps the original
+shape. This proof needs SolidCraft replay; when replay is unavailable or disabled, the
+original shape stays visible.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 
 ## Open the result in SolidCraft
 
