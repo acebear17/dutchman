@@ -17,6 +17,7 @@ pub mod compare;
 mod container;
 mod document;
 mod evaluator;
+mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
 pub use evaluator::SolidCraftEvaluator;
@@ -230,7 +231,7 @@ impl SolidCraftWriter {
     }
 
     /// How a written history is checked, and which SolidCraft CLI finds the input edges of
-    /// its blends (see [`SolidCraftWriter::replay`]).
+    /// its blends and body-edge sweep paths (see [`SolidCraftWriter::replay`]).
     pub fn verification(mut self, verification: Verification) -> Self {
         self.replay = verification.clone();
         self.verification = verification;
@@ -238,9 +239,9 @@ impl SolidCraftWriter {
         self
     }
 
-    /// Which SolidCraft CLI replays the history before each fillet or chamfer to find the
-    /// edges it blends, after [`SolidCraftWriter::verification`] has set it too. Without one
-    /// ([`Verification::Off`], or none found) blends are refused, saying why.
+    /// Which SolidCraft CLI replays the history to prove blend and body-edge sweep-path input edges,
+    /// after [`SolidCraftWriter::verification`] has set it too. Without one
+    /// ([`Verification::Off`], or none found) those selections are refused, saying why.
     pub fn replay(mut self, replay: Verification) -> Self {
         self.replay = replay;
         self
@@ -291,6 +292,10 @@ impl SolidCraftWriter {
 
     fn keep_unverified_hidden(&self) -> bool {
         self.hide_unverified || self.memory_skip.get().is_some()
+    }
+
+    fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
+        self.keep_unverified_hidden() || history.topological_replay_required
     }
 
     /// How long each SolidCraft evaluation may run before the check gives up.
@@ -346,13 +351,17 @@ impl SolidCraftWriter {
             };
         }
         let mut history_report = Report::default();
-        let mut mapping = history::map_with_sketches(
+        let mut mapping = history::map_with_source_profile_check(
             model,
             &mut history_report,
             self.resolved_version(),
             self.sketches,
+            &mut history::infer::Unmeasured,
+            None,
+            report.losses(),
         );
         self.plan_blends(&mut mapping);
+        output_links::not_written(&mut mapping.features);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
             Ok(ref history) if history.stop.is_some() => {
@@ -981,7 +990,7 @@ impl SolidCraftWriter {
             &model.name,
             dutchman_core::progress_words::history_limit(
                 history.pattern_replay_required,
-                self.keep_unverified_hidden(),
+                self.keep_unverified_history_hidden(history),
             ),
         );
         Ok(match result {
@@ -1480,7 +1489,7 @@ impl Writer for SolidCraftWriter {
             )
         } else {
             let mut history_report = Report::default();
-            let mut mapping = history::map_with_profile_check(
+            let mut mapping = history::map_with_source_profile_check(
                 model,
                 &mut history_report,
                 self.resolved_version(),
@@ -1492,6 +1501,7 @@ impl Writer for SolidCraftWriter {
                     progress,
                 },
                 progress,
+                report.losses(),
             );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {
@@ -1611,7 +1621,9 @@ impl Writer for SolidCraftWriter {
                             );
                             (written, written_as(Check::Verified))
                         }
-                        verify::Outcome::Unverified(why) if self.keep_unverified_hidden() => {
+                        verify::Outcome::Unverified(why)
+                            if self.keep_unverified_history_hidden(history) =>
+                        {
                             report.append(history_report);
                             let message = format!(
                                 "{summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
@@ -1665,7 +1677,18 @@ impl Writer for SolidCraftWriter {
                     }
                 }
             };
-            written
+            let (bytes, mut outcome) = written;
+            let flattened = mapping.result.is_err() || matches!(outcome.check, Check::Flattened(_));
+            if flattened {
+                output_links::retain(
+                    &mut outcome.features,
+                    &mapping.references.features,
+                    document::FEATURE,
+                );
+            } else if let Ok(history) = &mapping.result {
+                output_links::history(&mut outcome.features, history, 0);
+            }
+            (bytes, outcome)
         };
         if outcome.mode == Mode::Import {
             self.check_import(model, &bytes, report, progress);
@@ -1712,6 +1735,9 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
         |_, _, _| Err("only a SolidCraft design is replayed to find them".to_owned()),
         |_, _| history::infer::Fit::Unknown,
     );
+    for feature in &mut mapping.features {
+        feature.output = Default::default();
+    }
     MappedHistory {
         features: mapping.result.and_then(|history| match history.stop {
             Some(why) => Err(why),
@@ -1851,5 +1877,48 @@ mod proof_prefix_tests {
         // Already the whole history, or no step in it: nothing to trim.
         assert!(through_last(&history, &[4, 1]).is_none());
         assert!(through_last(&history, &[9]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod mesh_only_tests {
+    use super::*;
+
+    /// A model whose only geometry is a mesh has nothing SolidCraft can take.
+    #[test]
+    fn a_mesh_only_model_writes_no_design() {
+        use cadmpeg_ir::math::Point3;
+        use cadmpeg_ir::tessellation::{Tessellation, TessellationId, TessellationMesh};
+        let point = |x: f64, y: f64, z: f64| Point3 { x, y, z };
+        let mesh = TessellationMesh::List {
+            vertices: vec![
+                point(0.0, 0.0, 0.0),
+                point(10.0, 0.0, 0.0),
+                point(0.0, 10.0, 0.0),
+                point(0.0, 0.0, 10.0),
+            ],
+            triangles: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]],
+        };
+        let mut ir = cadmpeg_ir::CadIr::empty();
+        ir.model.tessellations.push(
+            Tessellation::new(
+                TessellationId::mint("f3d:model:tessellation#1").unwrap(),
+                mesh,
+                Vec::new(),
+            )
+            .unwrap(),
+        );
+        let model = Model {
+            ir,
+            fidelity: None,
+            name: "mesh".to_owned(),
+            source_file: Some("mesh.f3d".to_owned()),
+            assembly: None,
+            source_step: None,
+        };
+        let mut out = Vec::new();
+        let result = SolidCraftWriter::default().write(&model, &mut out, &mut Report::default());
+        assert!(matches!(result, Err(Error::NoGeometry(_))), "{result:?}");
+        assert!(out.is_empty());
     }
 }

@@ -233,6 +233,9 @@ enum Command {
         /// names, paths or geometry, safe to share (see docs/report-anon.md).
         #[arg(long, value_name = "FILE")]
         report_anon: Option<PathBuf>,
+        /// Write only counts and fixed categories to --report-anon.
+        #[arg(long, requires = "report_anon", conflicts_with_all = ["report_salt", "report_key"])]
+        report_counts: bool,
         /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
         /// an earlier run (default: a new one, printed when the run ends).
         #[arg(long, value_name = "HEX", requires = "report_anon")]
@@ -272,6 +275,9 @@ enum Command {
         /// names, paths or geometry, safe to share (see docs/report-anon.md).
         #[arg(long, value_name = "FILE")]
         report_anon: Option<PathBuf>,
+        /// Write only counts and fixed categories to --report-anon.
+        #[arg(long, requires = "report_anon", conflicts_with_all = ["report_salt", "report_key"])]
+        report_counts: bool,
         /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
         /// an earlier run (default: a new one, printed when the run ends).
         #[arg(long, value_name = "HEX", requires = "report_anon")]
@@ -385,7 +391,24 @@ fn quiet_when_stdout_closes() {
     }));
 }
 
+/// Stack for the thread that runs the command line. Windows gives a program's main thread
+/// 1 MiB, which parsing the command line, building the help and a conversion's deepest
+/// recursion can exceed (`0xC0000409`); other platforms give 8 MiB. Every platform gets the same.
+const CLI_STACK: usize = 64 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    match std::thread::Builder::new()
+        .name("dutchman".into())
+        .stack_size(CLI_STACK)
+        .spawn(run_cli)
+    {
+        // A panic was already reported by the panic hook; exit as Rust does for one.
+        Ok(thread) => thread.join().unwrap_or(ExitCode::from(101)),
+        Err(_) => run_cli(),
+    }
+}
+
+fn run_cli() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
@@ -761,6 +784,7 @@ fn main() -> ExitCode {
             stop_at_feature,
             log,
             report_anon,
+            report_counts,
             report_salt,
             report_key,
             json,
@@ -805,7 +829,13 @@ fn main() -> ExitCode {
                 eprintln!("dutchman: --page requires --to dxf");
                 return ExitCode::from(2);
             }
-            let mut anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+            let mut anon = match anon_request(
+                report_anon,
+                report_salt,
+                report_key,
+                report_counts,
+                &mut options,
+            ) {
                 Ok(anon) => anon,
                 Err(code) => return code,
             };
@@ -963,6 +993,7 @@ fn main() -> ExitCode {
             max_memory,
             journal,
             report_anon,
+            report_counts,
             report_salt,
             report_key,
             mut options,
@@ -983,7 +1014,13 @@ fn main() -> ExitCode {
             for job in preview.jobs {
                 memory_cli(&job.input, &options, json, quiet);
             }
-            let anon = match anon_request(report_anon, report_salt, report_key, &mut options) {
+            let anon = match anon_request(
+                report_anon,
+                report_salt,
+                report_key,
+                report_counts,
+                &mut options,
+            ) {
                 Ok(anon) => anon,
                 Err(code) => return code,
             };
@@ -1380,6 +1417,7 @@ fn anon_request(
     report_anon: Option<PathBuf>,
     report_salt: Option<String>,
     report_key: Option<PathBuf>,
+    counts: bool,
     options: &mut ConvertOptions,
 ) -> Result<Option<anon::Request>, ExitCode> {
     let salt = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
@@ -1404,6 +1442,7 @@ fn anon_request(
         path,
         salt: Some(salt),
         key: report_key,
+        counts,
     }))
 }
 
@@ -1413,6 +1452,13 @@ fn anon_notice(
     written: Result<anon::Salt, String>,
 ) -> Result<(), ExitCode> {
     match written {
+        Ok(_) if request.counts => {
+            eprintln!(
+                "dutchman: counts report written to {}. Review it before sharing.",
+                request.path.display()
+            );
+            Ok(())
+        }
         Ok(salt) => {
             eprintln!(
                 "dutchman: anonymous report written to {}. Its file ids use the salt {}: \

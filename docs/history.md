@@ -232,12 +232,41 @@ chain direction. A fillet with several radius groups becomes one SolidCraft blen
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.
 
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body. Closed chains assembled from
+open edges remain refused until their start and traversal direction can be proven.
+Exact curve measurements are requested only for consumers that need them; a measurement
+limit or failure preserves earlier straight-edge blends.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
 carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required
 resolved placement or binder source geometry remains a blocker, with its reason in the report.
 These Info notes remain when another feature or a replay mismatch flattens the history.
 A body inside a hidden container is hidden even when its own flag says it is shown.
+
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
 
 FreeCAD fillets and chamfers can supply input edges from their base feature's stored shape.
 Those edges must belong to one hidden result of an earlier dependency, and still pass the
@@ -280,7 +309,9 @@ whole carrier circle lies on that side. Reversing the source axis reverses the s
 They also keep symmetric angles, equal angles on two sides, and full turns, including unequal
 sides that add up to a full turn. An axis that is a line of the profile's sketch stays that
 line; an edge or datum axis becomes a fixed line in the sketch plane. Surface revolves keep
-their symmetric history short of a full turn. Unproven one-sided sweep sides, one-sided
+their symmetric history short of a full turn, from closed profiles or from picked sketch curves
+that form open chains (a single line, say); a pick mixing open chains and closed loops stops
+the history. Unproven one-sided sweep sides, one-sided
 partial surface sweeps, unequal partial two-sided angles, ends at a face, vertex, or body,
 full-turn surface revolves, and faces built other than
 the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report
@@ -468,3 +499,14 @@ for every source and replayed body, plus both face counts and the surface result
 two-reading comparison is unchanged. Centroid-only region discovery is refused: centroids do
 not prove selections for nonconvex regions or distinguish a concentric annulus and disc. Region
 discovery, mapping and measurements share one 120 s feature deadline; late results are refused.
+
+## Stored body fallback
+
+When a new-body extrude, revolve, sweep or loft cannot map, Dutchman can keep its
+stored result as an Import named after the feature and continue the later history.
+It uses the history body produced by that feature first. A final-model body is used
+only when no later active feature changes it. Joins, cuts and intersections never use
+this fallback: replacing them would discard earlier body history. No geometry is
+reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
+`history/body-fallback-imported` reports the lost recipe as Degraded. Later features
+and verification use the imported body as usual.

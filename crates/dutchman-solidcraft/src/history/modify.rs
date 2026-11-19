@@ -354,7 +354,40 @@ fn side(ctx: &Context, body: &str, origin: [f64; 3], normal: [f64; 3]) -> Option
     }
 }
 
-/// Splits one body by an earlier datum plane. SolidCraft keeps the body's name for the piece
+/// The body a split works on when it exists only earlier in the timeline (a historical
+/// selection of one body, or a body no earlier feature has named): imported from the history
+/// body the source keeps for it. None when the selection is any other.
+fn consumed_target(
+    source: &Value,
+    selection: &Value,
+    ctx: &mut Context,
+) -> Result<Option<String>, String> {
+    let historical = selection.get("kind").and_then(Value::as_str) == Some("historical");
+    let refs = if historical {
+        selection
+            .pointer("/value/bodies")
+            .and_then(Value::as_array)
+            .map(|ids| ids.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+    } else {
+        members(selection)
+            .ok()
+            .map(|ids| ids.into_iter().filter_map(Value::as_str).collect())
+    };
+    let [target] = refs.as_deref().unwrap_or_default() else {
+        // A native target the source does not resolve: the body this split consumed, kept by
+        // the source as its history body, is still the body it works on.
+        if selection.get("kind").and_then(Value::as_str) == Some("native") {
+            return super::base::import_consumed(source, "", ctx);
+        }
+        return Ok(None);
+    };
+    if !historical && ctx.named_bodies.iter().any(|(known, _)| known == target) {
+        return Ok(None);
+    }
+    super::base::import_consumed(source, target, ctx)
+}
+
+/// Splits one body by a plane or coplanar input faces. SolidCraft keeps the body's name for the piece
 /// on the side the plane's normal points to and names the piece on the other side; the
 /// source's two result bodies are matched to them by the side their vertices lie on. When they
 /// cannot be, neither piece keeps a source identity, so a later feature selecting one is
@@ -364,27 +397,94 @@ pub(super) fn split(
     definition: &Value,
     ctx: &mut Context,
 ) -> Result<Value, String> {
-    let targets = body_names(definition.get("targets").unwrap_or(&Value::Null), ctx)?;
+    let names = ctx.named_bodies.clone();
+    let mapped = split_bodies(source, definition, ctx);
+    if mapped.is_err() {
+        ctx.named_bodies = names;
+    }
+    mapped
+}
+
+/// The plane of a splitting tool given as faces, as a point on it and its unit normal. SolidCraft
+/// splits by a plane, or by a face of a body it names; the source says which faces split the
+/// body but not which body holds them, so only a planar face, whose surface extended is the
+/// plane, is mapped. Faces that are not coplanar and selections the source does not resolve
+/// to input faces are refused.
+fn face_tool(source: &Value, value: &Value, ctx: &Context) -> Result<([f64; 3], [f64; 3]), String> {
+    let found = value.get("kind").and_then(Value::as_str);
+    let selection = match found {
+        Some("historical") => value.get("value").unwrap_or(&Value::Null),
+        Some("historical_partial") => {
+            return Err(
+                "some of its splitting faces are not resolved in its input topology".to_owned(),
+            )
+        }
+        _ => return Err(super::unsupported_selection("splitting face", found)),
+    };
+    if !crate::VersionGate::SplitFaces.supported(ctx.target_version) {
+        return Err(format!(
+            "splitting by input faces needs SolidCraft 0.40 or newer (target {})",
+            ctx.target_version.minor()
+        ));
+    }
+    let several = selection
+        .get("faces")
+        .and_then(Value::as_array)
+        .is_some_and(|faces| faces.len() > 1);
+    // Several faces split as one plane when they all lie on it (the source often gives the
+    // tool as the faces where the results meet).
+    if several {
+        let (origin, normal) = super::face_profile::coplanar_faces(source, selection, ctx)
+            .map_err(|why| {
+                if why.contains("not planar") {
+                    "splitting a body by faces that do not lie on one plane is not supported yet"
+                        .to_owned()
+                } else {
+                    why
+                }
+            })?;
+        let normal = unit(normal).ok_or("its splitting faces are not placed")?;
+        return Ok((origin, normal));
+    }
+    let (origin, normal) = super::face_profile::planar_face(source, selection, ctx).map_err(|why| {
+        if why.contains("not planar") {
+            "splitting a body by a face that is not flat is not supported yet: the source does not say which body holds the face".to_owned()
+        } else {
+            why
+        }
+    })?;
+    let normal = unit(normal).ok_or("its splitting face is not placed")?;
+    Ok((origin, normal))
+}
+
+fn split_bodies(source: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
+    let selection = definition.get("targets").unwrap_or(&Value::Null);
+    let targets = match consumed_target(source, selection, ctx)? {
+        Some(name) => vec![name],
+        None => body_names(selection, ctx)?,
+    };
     let target = match targets.as_slice() {
         [target] => target.clone(),
         _ => return Err("splitting several bodies at once is not supported yet".to_owned()),
     };
     let tool = definition.get("tool").unwrap_or(&Value::Null);
-    match tool.get("kind").and_then(Value::as_str) {
-        Some("plane") => {}
-        Some("faces") => return Err("splitting a body by faces is not supported yet".to_owned()),
+    let (origin, normal) = match tool.get("kind").and_then(Value::as_str) {
+        Some("plane") => {
+            let datum = tool
+                .pointer("/value/plane")
+                .and_then(Value::as_str)
+                .and_then(|id| ctx.planes.get(id))
+                .ok_or("its splitting plane is not an earlier resolved datum plane")?;
+            let frame = super::datum::value(datum);
+            let origin = v3(frame.get("origin")).ok_or("its splitting plane is not placed")?;
+            let normal = v3(frame.get("normal"))
+                .and_then(unit)
+                .ok_or("its splitting plane is not placed")?;
+            (origin, normal)
+        }
+        Some("faces") => face_tool(source, tool.get("value").unwrap_or(&Value::Null), ctx)?,
         _ => return Err("its splitting tool is not resolved".to_owned()),
-    }
-    let datum = tool
-        .pointer("/value/plane")
-        .and_then(Value::as_str)
-        .and_then(|id| ctx.planes.get(id))
-        .ok_or("its splitting plane is not an earlier resolved datum plane")?;
-    let frame = super::datum::value(datum);
-    let origin = v3(frame.get("origin")).ok_or("its splitting plane is not placed")?;
-    let normal = v3(frame.get("normal"))
-        .and_then(unit)
-        .ok_or("its splitting plane is not placed")?;
+    };
     let plane = plane(origin, normal)?;
     let outputs: Vec<String> = source
         .get("outputs")

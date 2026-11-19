@@ -85,12 +85,13 @@ timeout. See [Public share links](guide.md#public-share-links) for limits and cl
 
 ## Mesh bodies
 
-When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
-or placed components, Dutchman says "it has mesh bodies (N), which Dutchman
+When cadmpeg reports mesh bodies for a Fusion design with no decoded B-rep bodies or
+placed components, Dutchman says "it has mesh bodies (N), which Dutchman
 doesn't convert yet, and no solid bodies could be read" and asks you to convert the meshes to
-solids in Fusion, then save a new copy. The count comes from typed mesh selections; an
-undecoded mesh container or an unresolved source alone cannot supply a count, so the
-existing read error remains.
+solids in Fusion, then save a new copy. The count comes from typed mesh selections and from
+decoded meshes, also those of a design without a mesh-import feature, such as a mesh-workspace
+design; a mesh counts once. An undecoded mesh container or an unresolved source alone cannot
+supply a count, so the existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
@@ -194,6 +195,27 @@ without edge geometry for the face, a direction of its own, ends to or from an o
 an extrude that re-applies to a base body cadmpeg gives only as the design ends (where the
 face's outward side is not the one it had) leave the extrude unmapped with the reason. Faces that share an edge are refused. Without a
 SolidCraft CLI to replay the history, the extrude waits for one like a blend does.
+
+### Split Body history
+
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
+
+The mapper uses only cadmpeg's resolved plane, input face boundaries and nested
+`history_bodies` (`produced_by` / `consumed_by`). It does not infer a splitting plane
+from final result bodies when the tool is native. Component slices carry history bodies
+with their producing or consuming feature, without mixing their topology into final geometry.
+The current Fusion reader pin emits produced snapshots but does not populate `consumed_by`.
+A native target without a consumed body association remains a reported loss; consumed-body
+preservation and mapping are covered by synthetic tests against the current neutral model API.
+
 
 ## Appearances
 
@@ -558,3 +580,19 @@ relations remain reported losses. One sketch carries at most 400,000 wire constr
 additional relations are reported and their solved geometry is retained. An unresolved sketch binding cannot be replaced
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
+
+## Stored body fallback
+
+When a new-body extrude, revolve, sweep or loft requires a profile or path absent
+from the source, Dutchman can keep its stored result as an Import named after the
+feature and continue the later history. Ordinary mapping and measured inference
+must fail first. Unresolved selections within existing sketches, unsupported options
+and failed measurement checks keep their usual refusal. A missing input is proved
+by its CADIR reference or a missing-profile loss attributed to that feature; an
+unresolved carrier alone does not establish that it belongs to an external design.
+It uses the history body produced by that feature first. A final-model body is used
+only when no later active feature changes it. Joins, cuts and intersections never use
+this fallback: replacing them would discard earlier body history. No geometry is
+reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
+`history/body-fallback-imported` reports the lost recipe as Degraded. Later features
+and verification use the imported body as usual.

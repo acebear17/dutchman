@@ -317,6 +317,12 @@ A base feature written with its body as the design ends (`final_body`) isn't com
 source's stored state after it is the body before later features changed it.
 A base feature written with its own body as the source keeps it (a history body) is compared
 like any other feature.
+A mapped Split can emit an extra Import for its consumed history body; `history.features`
+still has one outcome per source feature. Unsupported splitting faces name the missing input
+geometry or nonplanar tool in `history.features[].reason`. No report fields or counts are
+added for the generated Import. Targets below SolidCraft 0.40 receive a named version reason
+for the new Split history body imports and input-face tools, and the existing
+`older_loses_history` notice. Existing Base Feature imports retain their version support.
 A state whose source marks any body centre as based on incomplete edge evidence
 (`body_centers_incomplete`) is not compared, even if every body has a centre entry, so the
 history stays unverified there.
@@ -418,6 +424,7 @@ in conversion, inspection, batch results and MCP reports. Its `error.message` is
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,
 with `error.stage: "decode"` and `error.upstream: null`. Batch results count it as a refused
 file (`ok: false`); the CLI and GUI do not offer a fixtures invitation for IGES.
+The command exits with status 1 for a refused IGES file, on every platform.
 The formats listing reports `status: "not_supported"`, `words: "open it in SolidCraft directly"`
 and `converts: "SolidCraft imports IGES itself (File > Import)"`.
 
@@ -456,6 +463,22 @@ and keep the original geometry. The existing history status and reason fields re
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
 edge geometry or a failed replay proof. Resolved edges without proven membership in an
@@ -542,12 +565,13 @@ A failure carries `"ok": false`, `input` and `error`, and exits 1:
            "stage": "decode", "upstream": "cadmpeg"}}
 ```
 
-When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
-or placed components, Dutchman says "it has mesh bodies (N), which Dutchman
+When cadmpeg reports mesh bodies for a Fusion design with no decoded B-rep bodies or
+placed components, Dutchman says "it has mesh bodies (N), which Dutchman
 doesn't convert yet, and no solid bodies could be read" and asks you to convert the meshes to
-solids in Fusion, then save a new copy. The count comes from typed mesh selections; an
-undecoded mesh container or an unresolved source alone cannot supply a count, so the
-existing read error remains.
+solids in Fusion, then save a new copy. The count comes from typed mesh selections and from
+decoded meshes, also those of a design without a mesh-import feature, such as a mesh-workspace
+design; a mesh counts once. An undecoded mesh container or an unresolved source alone cannot
+supply a count, so the existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
@@ -584,6 +608,64 @@ geometry have a separate message. Face-pick failures distinguish an unnamed writ
 from a face without a resolved interior point. A decoded body proven to have no writable
 STEP shape says “its body has no geometry the STEP writer can write”. Uniform face
 appearances carried as a body colour are preserved and do not produce a loss.
+
+### Counts-only anonymous report: `dutchman.report-counts/1`
+
+`convert` and `convert-all` accept `--report-counts --report-anon FILE`.
+MCP `convert_all` accepts `report_counts: true` with `report_anon` as its destination.
+Both write locally on explicit request. Review the file before sharing; choosing this
+profile does not authorize sending it. Existing confirmation requirements still apply.
+The profile cannot be combined with a report salt or private key. The ordinary report
+remains the default. The local MCP result reports `report_anon: {path, profile: "counts"}`
+without a salt; that local destination path is outside the shareable payload. The browser plugin has no anonymous-report entry point.
+
+This is an allow-list schema, built directly from conversion reports. Its serializable
+Rust types have private fields containing only enums, booleans, integer counters, numeric
+version components, and collections of those types. There are no source strings, arbitrary
+JSON values or user-defined map keys. Unknown input words become `unknown`; no scrubbing
+or substring replacement is involved. Names, paths, messages, IDs, dimensions, geometry,
+source version strings and exact durations have no representation. Counts and version
+components are unsigned 64-bit integers.
+
+| Field | Meaning |
+|---|---|
+| `schema` | The single fixed word `dutchman.report-counts/1`. |
+| `converter_version` | Three built-in numeric release components: major, minor, patch. No environment or source text. |
+| `files` | Aggregate rows with `source_format`, `source_version_band`, `document`, `verification`, `timing`, `converted` (boolean), and `count`. Identical rows are combined; there is no per-file identifier. |
+| `features_by_kind` | Total recorded timeline features by fixed kind. Sum of each kind's outcome counts. Empty when the converter records no feature outcomes, including geometry-only conversion. |
+| `features` | Aggregate rows with fixed `kind`, `outcome`, `reason`, and integer `count`. No feature names, ordinals, variants, selections or output IDs. |
+
+`source_format` uses the fixed input format identifiers defined above, plus `unknown`.
+`source_version_band` is `unknown`: conversion reports currently do not record the source
+version. It never guesses a version from a name or error message. `document` is `part`,
+`assembly`, or `unknown` when the format is not recognized, based on the recorded assembly or the fixed source-format category.
+`verification` is `verified`, `partial`, `differs`, `unverified`, `flattened`,
+`not_applicable`, or `unknown`.
+
+`timing` is `unknown` when absent, `under_second` for less than one second, `seconds` for
+less than one minute, `minutes` for less than one hour, or `over_hour` for an hour or more.
+These are display bands, not resource estimates.
+
+Feature `kind` accepts only the neutral operation words enumerated in
+[`counts.rs`](../crates/dutchman/src/counts.rs) and `unknown`. An exhaustive compile-time test requires a category for every operation enum
+variant. Outcome and reason pairs are:
+
+| Source outcome | `outcome` | `reason` |
+|---|---|---|
+| Mapped | `mapped` | `none` |
+| Mapped with an inferred selection | `changed` | `inferred` |
+| Mapped by reapplying to a final body | `changed` | `reapplied` |
+| No target feature needed | `mapped` | `not_needed` |
+| Left out | `dropped` | `left_out` |
+| Blocked with a replay category | `stopped` | `replay` |
+| Other blocked feature | `stopped` | `mapping_limit` |
+| Unrecognized or absent status | `unknown` | `unknown` |
+
+Reasons are broad categories of recorded outcomes. Free-form explanations and replay
+category text are never copied. Counts describe recorded outcomes, not an independent
+inventory of a file that could not be decoded. Enum coverage tests intentionally fail
+compilation when an operation, outcome, verification status or reason enum grows without
+an explicit category decision. Fixture goldens and hostile-field tests guard the payload.
 
 ### Stages
 
@@ -1485,3 +1567,36 @@ CLI and MCP `dutchman.convert/1` reports are unchanged.
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+`history/body-fallback-imported` is a `Degraded` loss naming the feature in `subject`.
+Its stored result becomes a timeline Import and the feature row has status
+`mapped`, as for Base Feature body imports. The loss explains why its recipe could
+not map: its required profile or path is absent from this design. A CADIR reference
+or a cadmpeg `feature.extrude-profile-sketch-absent` loss attributed to that feature
+must prove the absence. Ordinary mapping and measured inference run first;
+unsupported recipes and unconfirmed selections in existing sketches keep their
+usual refusal.
+These rows count as mapped and rebuilt, like Base Feature Imports. The source must
+supply a unique history body produced by the feature, or its final output body with
+no later active modification. Joins, cuts and intersections remain blockers.
+
+### History output links (additive to version 1)
+
+`history.features[].output_ids` and `output_match` are additive fields within
+`dutchman.convert/1` and `dutchman.inspect/1`. Existing fields keep their names,
+types and meanings. Readers can ignore the additions; older saved reports may omit
+them. Batch envelopes and per-file report schemas are unchanged.
+
+`output_ids` is an array of integer feature ids in the saved design's feature timeline
+order. One source feature may produce several output features. Ids are recorded at
+emission and adjusted when parts join an assembly; names are never used for matching.
+`output_match` is `emitted` when the ids link to retained features, `no_output` when
+no independently produced feature survives (including dropped or merged rows), or
+`not_written` for inspection, which saves no design. Empty arrays do not change the
+existing status or counts: a feature can map during planning and be removed by fallback.
+Retained reference sketches link to their final ids even after fallback. No link points
+to the replacement geometry merely because it contains the source feature's shape.
+
+For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
+ids follow timeline order rather than numeric order. A dropped row contains
+`"output_ids": [], "output_match": "no_output"`.
