@@ -1122,11 +1122,22 @@ mod tests {
 
     #[test]
     fn contents_lists_a_design_without_writing_anything() {
+        check_contents_without_writing("design_sketch_constraints.f3d");
+    }
+
+    #[cfg(feature = "freecad")]
+    #[test]
+    fn contents_lists_a_freecad_design_without_writing_anything() {
+        check_contents_without_writing("design_history.FCStd");
+    }
+
+    fn check_contents_without_writing(fixture: &str) {
         let dir = tempfile::tempdir().unwrap();
-        let input = dir.path().join("design_history.FCStd");
+        let input = dir.path().join(fixture);
         std::fs::copy(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../dutchman-core/tests/fixtures/design_history.FCStd"),
+                .join("../dutchman-core/tests/fixtures")
+                .join(fixture),
             &input,
         )
         .unwrap();

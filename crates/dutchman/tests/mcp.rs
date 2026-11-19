@@ -234,11 +234,21 @@ fn an_mcp_client_converts_through_dutchman() {
 
 #[test]
 fn contents_matches_the_cli_report_without_writing_a_design() {
+    check_contents_matches_cli("design_sketch_constraints.f3d", "mapped");
+}
+
+#[cfg(feature = "freecad")]
+#[test]
+fn freecad_contents_matches_the_cli_report_without_writing_a_design() {
+    check_contents_matches_cli("design_history.FCStd", "needs_solidcraft_check");
+}
+
+fn check_contents_matches_cli(fixture_name: &str, verdict: &str) {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("project folder");
     std::fs::create_dir(&folder).unwrap();
-    let input = folder.join("design history.FCStd");
-    std::fs::copy(fixture("design_history.FCStd"), &input).unwrap();
+    let input = folder.join(fixture_name);
+    std::fs::copy(fixture(fixture_name), &input).unwrap();
 
     let mut server_command = Command::new(env!("CARGO_BIN_EXE_dutchman-mcp"));
     let mut cli_command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
@@ -269,12 +279,7 @@ fn contents_matches_the_cli_report_without_writing_a_design() {
         dutchman_solidcraft::SolidCraftVersion::default().to_string()
     );
     assert!(report["features"]["count"].as_u64().unwrap() > 0);
-    assert!(
-        report["features"]["verdicts"]["needs_solidcraft_check"]
-            .as_u64()
-            .unwrap()
-            > 0
-    );
+    assert!(report["features"]["verdicts"][verdict].as_u64().unwrap() > 0);
     let text: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(&text, report);
 
