@@ -384,9 +384,30 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Guest-side checks remain strict even when a caller bypasses a host form. Each refusal
     // says what to do first, in the plugin's terms (`message` in src/lib.rs).
     for (entry, name, params, size, expected, says) in [
-        ("convert", "cube.f3d", r#"{"extra":true}"#, 0, "invalid options", ""),
-        ("other", "cube.f3d", "{}", 0, "invalid entry", ""),
-        ("convert", "cube.f3d", "{}", 5, "invalid file", ""),
+        (
+            "convert",
+            "cube.f3d",
+            r#"{"extra":true}"#,
+            0,
+            "invalid options",
+            "Use the declared conversion options",
+        ),
+        (
+            "other",
+            "cube.f3d",
+            "{}",
+            0,
+            "invalid entry",
+            "Use Dutchman's importer entry",
+        ),
+        (
+            "convert",
+            "cube.f3d",
+            "{}",
+            5,
+            "invalid file",
+            "Select the file again: Dutchman could not read the whole file",
+        ),
         (
             "convert",
             "cube.f3d",
@@ -437,6 +458,9 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         assert_eq!(actual, expected, "{name}: {reason}");
         assert!(reason.starts_with(says), "{name}: {reason}");
+        for internal in ["EOCD", "unknown field", "line 1 column", "invalid input file"] {
+            assert!(!reason.contains(internal), "{name}: {reason}");
+        }
         assert!(!reason.contains("Rhino"), "{name}: {reason}");
         if matches!(name, "design.FCStd" | "part.3dm") {
             assert_eq!(store.data().calls, 0, "unsupported format was read");
@@ -460,13 +484,13 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         },
         "{}",
     )?;
-    // An unreadable file: what to do comes first, the reader's cause after it.
+    // An unreadable file gives advice without exposing decoder internals.
     assert!(
         matches!(
             result,
             Err(PluginError::InvalidInput(FieldFailure { ref field, ref reason }))
                 if field == "file" && reason.starts_with("Download or copy the file again")
-                    && reason.contains("Detail: ")
+                    && !reason.contains("Detail:") && !reason.contains("EOCD")
         ),
         "{result:?}"
     );
@@ -529,7 +553,7 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 continue;
             }
             (native, guest) => {
-                return Err(format!("{fixture}: native={native:?}, guest={guest:?}").into())
+                return Err(format!("{fixture}: native={native:?}, guest={guest:?}").into());
             }
         };
         assert!(report.len() < 1 << 20);

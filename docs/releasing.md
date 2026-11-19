@@ -65,6 +65,8 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
    (`release.yml`) does not build. It finds the successful candidate run for exactly that
    commit, downloads its release files, checks every SHA-256, the exact file set and that
    `dutchman --version` from the Linux archive reports `X.Y.Z`, adds the version-less copies,
+   requires `dutchman-plugin-X.Y.Z.zip` and its checksum, creates the stable
+   `dutchman-plugin.zip` download alias and checksum, verifies all four plugin assets after upload,
    and creates the draft GitHub release from `release-notes/X.Y.Z.md` with the files attached.
    That takes about five minutes. It fails if a release for that tag already exists, if the tag
    does not match the `Cargo.toml` version, or if no successful candidate run exists for the

@@ -106,7 +106,7 @@ mod guest {
             if entry != ENTRY {
                 return Err(invalid(
                     "entry",
-                    format!("Dutchman has one importer entry, \"{ENTRY}\""),
+                    format!("Use Dutchman's importer entry, \"{ENTRY}\""),
                 ));
             }
             crate::validate_name(&file.name).map_err(|e| invalid("file", e))?;
@@ -118,7 +118,9 @@ mod guest {
                 ));
             }
             let options = serde_json::from_str(&options)
-                .map_err(|e| invalid("options", format!("Conversion options: {e}")))?;
+                .map_err(|_| {
+                    invalid("options", "Use the declared conversion options with their listed values and types, then try again")
+                })?;
             if control::cancelled() {
                 return Err(PluginError::Cancelled);
             }
@@ -249,7 +251,7 @@ mod guest {
             if chunk.is_empty() || chunk.len() > len as usize {
                 return Err(invalid(
                     "file",
-                    "Input stream ended early or exceeded the requested length; select the file again",
+                    "Select the file again: Dutchman could not read the whole file",
                 ));
             }
             bytes.extend(chunk);

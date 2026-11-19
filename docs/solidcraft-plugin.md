@@ -89,7 +89,8 @@ The dialog shows three options:
 
 ## When a conversion stops
 
-The message says what to do first, then the detail:
+The message says what to do next without raw decoder or option-parser details. SolidCraft
+0.44.1 adds its own `plugin: invalid input file` prefix to a file refusal:
 
 - **A file it can't read** (incomplete, or not really the format its extension says): download
   or copy it again and open it once more. If the original opens in the program that made it,
