@@ -7,6 +7,50 @@ If a reader supplies only CADIR v11 design history, the final geometry is kept a
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
 
+## Public share links
+
+Paste a public Fusion or Google Drive **file** share link into the desktop app's link
+field and choose **Add link**, paste it when no text field is focused, or drop a saved
+`.url` or `.webloc` link shortcut into the window. The file downloads in the background,
+then joins the same queue as local files. Choose an output folder and convert as usual.
+URI text drops also work when delivered by a desktop integration. Some desktop/browser combinations do not deliver
+raw URL drops through the window toolkit; paste the link in that case.
+
+The CLI accepts the same links:
+
+```sh
+dutchman convert 'https://drive.google.com/file/d/FILE_ID/view' -o design.sc
+```
+
+Quote links in a shell. With no output path, the CLI writes in the current folder using
+the downloaded file's name; an existing default output still requires `--force`.
+Project ZIP links use the existing bounded project extraction and batch conversion.
+
+Only public files needing no login work. Google Drive file links use
+`https://drive.google.com/uc?export=download&id=FILE_ID`, including Drive's virus-scan
+confirmation page. Drive folders and Google Docs documents are not file downloads.
+Fusion links from `a360.co` or `*.autodesk360.com` work when the share page exposes a
+public download URL or download link. If downloads are disabled or require login,
+Dutchman asks you to download the design yourself and drop the file into the app.
+Private and expired links get the same plain explanation.
+
+Downloads use HTTPS, a 200 MB cap matching the web app's default upload limit, a two-minute
+total timeout across DNS, connection, TLS and response streaming, and at most twelve
+requests. Every redirect and confirmation action is checked before contacting its host.
+Resolved addresses must be public unicast: local, private,
+link-local, CGNAT, reserved and cloud metadata destinations are refused, including
+IPv4-mapped IPv6 forms. Each connection uses the screened DNS answer without a second
+lookup. Drive downloads stay on `drive.google.com`,
+`drive.usercontent.google.com`, or `googleusercontent.com` and its subdomains; Fusion
+stays on `a360.co`, `autodesk360.com` and its subdomains, or `autodesk.com` and its subdomains. Other download hosts require a manual download.
+
+The original share link is never included in reports or sent to another service as a
+referrer. Dutchman uses no browser login or credentials and does not load the page's
+scripts, images, or other resources. Downloaded files live in a private temporary folder;
+failed downloads are removed immediately. The CLI removes its download after conversion,
+errors, Ctrl-C, and intentional exits (including a closed output pipe); the app retains downloads while queued files or result cards need them, then removes
+them when cleared or when the app closes. Converted outputs stay in your output folder.
+
 ## Ask your assistant about a saved desktop result
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a
@@ -86,7 +130,7 @@ dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthro
 dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
 dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
-Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
@@ -408,6 +452,19 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
@@ -679,3 +736,14 @@ remaining spatial constraints and profile limits.
 A planar 3D sketch profile copy carries at most 400,000 constraints, including
 repeated line occurrences across all relations. If it exceeds that copy limit,
 reduce repeated relations and convert again; the original shape is retained.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It implements SolidCraft's
+`craft:plugin` importer interface; see that page for the build. To install it, see
+[Dutchman in SolidCraft](solidcraft-plugin.md).
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

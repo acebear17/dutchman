@@ -28,6 +28,22 @@ the output beside the input from `--to`. An existing derived output is kept with
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
 Explicit outputs retain their replacement behaviour. MCP output paths remain required.
 
+For public Fusion (`a360.co` or `*.autodesk360.com`) and Google Drive file shares, use
+`dutchman convert '<url>' -o design.sc`, or paste/drop the link into the desktop app and
+choose Convert after the download. Omitted CLI output goes in the current folder.
+Saved `.url`/`.webloc` shortcuts can be dropped; if a browser's raw link drop is not
+delivered by the desktop toolkit, paste it instead.
+Only public downloads needing no login work. Drive uses `uc?export=download` and handles
+its virus-scan confirmation; Fusion needs a public download exposed by its share page.
+Downloads are limited to 200 MB and two minutes, use only provider HTTPS hosts, and live
+in temporary folders that are cleaned up, including on CLI cancellation or a closed
+output pipe. The deadline includes DNS, connection, TLS and body streaming; connections
+use screened public addresses and refuse local, private and cloud metadata destinations.
+Private/expired links or unavailable Fusion
+downloads ask for a manual download and file drop. Never ask for login credentials.
+MCP tools still require local paths; download the file locally before calling them.
+Reports describe temporary local inputs and never include the original share URL.
+
 SolidWorks parts convert in their saved configuration when its body membership is known.
 An Info note counts bodies left out from other configurations and names the saved configuration;
 bodies with unknown membership stay.
@@ -82,6 +98,19 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 ## Conversion choices and memory
 
@@ -188,8 +217,8 @@ invitation; JSON and MCP reports never include it.
 Directory conversion keeps the highest numbered `.prt.N` revision per part, reports older
 saves as skipped, and uses the part's base output name without replacing an existing file.
 After a refused conversion (except IGES) or a history that did not fully map, the invitation
-links to test-file recipes and offers private help: send the file and its STEP export to
-Dutchy in Discord.
+links to test-file recipes at <https://dutchmancad.xyz/fixtures/> and offers private help:
+send the file and its STEP export to Dutchy in Discord.
 
 What the installed build converts is what its `formats` says; check it rather than this
 list when unsure.

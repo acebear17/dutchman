@@ -11,11 +11,39 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
 
 Local CLI and desktop progress can name the current timeline feature, such as
 “Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
 These updates use `dutchman.progress/1`; MCP final conversion reports stay unchanged.
 Feature names are private local text and are excluded from anonymous diagnostics.
+
+## Public share links in the app and CLI
+
+The desktop app's **Add link**, paste, and shortcut/URI drop flows and `dutchman convert <url>` accept
+public Fusion and Google Drive file links. Downloads are bounded to 200 MB and two minutes,
+follow only provider HTTPS hosts resolving to public addresses, and use temporary files
+that are cleaned up, including on CLI cancellation or a closed output pipe. The total
+deadline includes DNS, connection, TLS and body streaming. Drive's
+virus-scan confirmation is handled; Fusion needs a download exposed without login.
+Private, expired, or login-only shares ask for a manual download. See
+[Public share links](guide.md#public-share-links).
+
+MCP tools continue to take local paths. Download the public file locally before calling
+`inspect` or `convert`; do not pass URLs to an MCP path argument. Reports keep their
+existing schemas and contain local input paths, never the original share link.
 
 ## Read an existing result
 
@@ -327,7 +355,8 @@ Batch results retain that refusal; IGES does not trigger the CLI or GUI fixtures
 Numbered `.prt.N` saves are identified by contents too; a directory conversion keeps only
 the highest revision per part and returns older saves in `skipped_revisions` (`path`, `newer`).
 Numbered saves use the part's base output name and keep existing output files.
-The CLI and desktop volunteer invitation is absent from MCP and `--json` output.
+The CLI and desktop volunteer invitation links to <https://dutchmancad.xyz/fixtures/>
+and is absent from MCP and `--json` output.
 
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
@@ -935,3 +964,11 @@ remaining spatial constraints and profile limits.
 A planar 3D sketch profile copy carries at most 400,000 constraints, including
 repeated line occurrences across all relations. If it exceeds that copy limit,
 reduce repeated relations and convert again; the original shape is retained.
+
+The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
+It does not add or change MCP tools. Its evaluator uses the host's existing
+command surface through the `evaluate` import, subject to host permissions.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

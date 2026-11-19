@@ -161,3 +161,13 @@ The `spatial_044_*` history tests in `dutchman-solidcraft/tests/history.rs` buil
 neutral CADIR in code on cadmpeg's public synthetic unit cube. They use a square,
 a skew quadrilateral, independent spatial lines, points and an arc; no native
 CAD file or third-party geometry was added for them.
+
+### Stand up fillet regression
+
+`freecad-1.1.4-P04/P04a.FCStd` is the unchanged CC0-1.0 CAD Fixture Recipes P04a
+model from the public fixtures project at commit `200abefef33bd206a362e5166f61e07e326e633a`,
+`generated/freecad-1.1.4/P04a.FCStd` (booklet 1.30, FreeCAD 1.1.4).
+SHA-256: `86a50bb953ba0e6b5e963657dac5173ba297e2f813faca82057a1fca71ede876`.
+It is an authored 20 × 30 × 10 mm pad with one R2 vertical-edge fillet: volume
+5991.41592654 mm³, bounds (-10, -15, 0) to (10, 15, 10) mm, from that set's
+`manifest.json`. The component harness maps and replays its fillet with Stand up.
