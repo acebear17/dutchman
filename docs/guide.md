@@ -271,6 +271,16 @@ profiles and sweep paths select the whole chain. Constraints that cannot apply t
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
 
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:

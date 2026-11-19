@@ -281,6 +281,12 @@ A base feature written with its body as the design ends (`final_body`) isn't com
 source's stored state after it is the body before later features changed it.
 A base feature written with its own body as the source keeps it (a history body) is compared
 like any other feature.
+A mapped Split can emit an extra Import for its consumed history body; `history.features`
+still has one outcome per source feature. Unsupported splitting faces name the missing input
+geometry or nonplanar tool in `history.features[].reason`. No report fields or counts are
+added for the generated Import. Targets below SolidCraft 0.40 receive a named version reason
+for the new Split history body imports and input-face tools, and the existing
+`older_loses_history` notice. Existing Base Feature imports retain their version support.
 A state whose source marks any body centre as based on incomplete edge evidence
 (`body_centers_incomplete`) is not compared, even if every body has a centre entry, so the
 history stays unverified there.

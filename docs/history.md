@@ -188,6 +188,16 @@ resolved placement or binder source geometry remains a blocker, with its reason 
 These Info notes remain when another feature or a replay mismatch flattens the history.
 A body inside a hidden container is hidden even when its own flag says it is shown.
 
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
+
 FreeCAD fillets and chamfers can supply input edges from their base feature's stored shape.
 Those edges must belong to one hidden result of an earlier dependency, and still pass the
 same replay proof. A resolved selection without that proven earlier result is refused.

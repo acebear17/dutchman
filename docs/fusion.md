@@ -135,6 +135,27 @@ an extrude that re-applies to a base body cadmpeg gives only as the design ends 
 face's outward side is not the one it had) leave the extrude unmapped with the reason. Faces that share an edge are refused. Without a
 SolidCraft CLI to replay the history, the extrude waits for one like a blend does.
 
+### Split Body history
+
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
+
+The mapper uses only cadmpeg's resolved plane, input face boundaries and nested
+`history_bodies` (`produced_by` / `consumed_by`). It does not infer a splitting plane
+from final result bodies when the tool is native. Component slices carry history bodies
+with their producing or consuming feature, without mixing their topology into final geometry.
+The current Fusion reader pin emits produced snapshots but does not populate `consumed_by`.
+A native target without a consumed body association remains a reported loss; consumed-body
+preservation and mapping are covered by synthetic tests against the current neutral model API.
+
+
 ## Appearances
 
 Body and face appearance bindings follow the component definition's own BREP ids into its

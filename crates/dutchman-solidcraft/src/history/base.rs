@@ -45,6 +45,11 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let bodies = definition.get("bodies").unwrap_or(&Value::Null);
     let found = bodies.get("kind").and_then(Value::as_str);
     if found != Some("resolved") {
+        // A body stored only earlier in the timeline has no body in the final model for the
+        // selection to resolve to; the source still keeps it as this feature's history body.
+        if let Some(nest) = produced(feature, ctx) {
+            return import_produced(feature, nest, ctx);
+        }
         return Err(super::unsupported_selection("body", found));
     }
     let ids: Vec<&str> = bodies
@@ -88,6 +93,13 @@ fn history_body<'a>(
     let [_] = ids else {
         return None;
     };
+    produced(feature, ctx)
+}
+
+fn produced<'a>(
+    feature: &Value,
+    ctx: &Context<'a>,
+) -> Option<&'a cadmpeg_ir::history_body::HistoryBody> {
     let id = feature.get("id").and_then(Value::as_str)?;
     let mut nests = ctx.source?.ir.model.history_bodies.iter().filter(|nest| {
         nest.produced_by
@@ -122,6 +134,10 @@ fn import_history_body(
     let text = step::restate(&part, &mut Report::default())
         .map_err(|err| format!("base feature \"{name}\": {err}"))?;
     let names = super::faces::import_names(ctx, &[body], Some(&text));
+    if let [name] = names.as_slice() {
+        ctx.named_bodies
+            .push((nest.topology.body.id.as_str().to_owned(), name.clone()));
+    }
     let mut mapped = json!({
         "id": id,
         "name": name,
@@ -152,6 +168,153 @@ fn nested_model(model: &Model, nest: &cadmpeg_ir::history_body::HistoryBody, nam
         assembly: None,
         source_step: None,
     }
+}
+
+fn import_produced(
+    feature: &Value,
+    nest: &cadmpeg_ir::history_body::HistoryBody,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let id = ctx.id();
+    let name = name(feature)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Base Feature{id}"));
+    let text = nest_step("base feature", &name, nest, ctx)?;
+    let base = nest
+        .topology
+        .body
+        .name
+        .as_deref()
+        .filter(|body| !body.trim().is_empty())
+        .unwrap_or("Body")
+        .to_owned();
+    let mut body = base.clone();
+    let mut n = 2;
+    while ctx.named_bodies.iter().any(|(_, known)| *known == body) {
+        body = format!("{base} ({n})");
+        n += 1;
+    }
+    ctx.named_bodies
+        .push((nest.topology.body.id.as_str().to_owned(), body.clone()));
+    ctx.builds = true;
+    Ok(json!({
+        "id": id,
+        "name": name,
+        "type": "import",
+        "suppressed": false,
+        "file": format!("{name}.step"),
+        "step": "",
+        STEP: text,
+        "body_names": [body],
+    }))
+}
+
+fn require_history_version(ctx: &Context) -> Result<(), String> {
+    if !crate::VersionGate::HistoryBody.supported(ctx.target_version) {
+        return Err(format!(
+            "history bodies need SolidCraft 0.40 or newer (target {})",
+            ctx.target_version.minor()
+        ));
+    }
+    Ok(())
+}
+
+/// The STEP text of the body of a history body `nest`, as `label` feature `name` imports it.
+fn nest_step(
+    label: &str,
+    name: &str,
+    nest: &cadmpeg_ir::history_body::HistoryBody,
+    ctx: &Context,
+) -> Result<String, String> {
+    require_history_version(ctx)?;
+    let model = ctx.source.ok_or("its source geometry is not available")?;
+    let part = nested_model(model, nest, name);
+    let nest_body = nest.topology.body.id.as_str();
+    let part = dutchman_core::with_bodies(&part, &[nest_body], name.to_owned())
+        .map_err(|why| format!("{label} \"{name}\": {why}"))?;
+    let text = step::restate(&part, &mut Report::default())
+        .map_err(|err| format!("{label} \"{name}\": {err}"))?;
+    if super::faces::shape_count(&text) != 1 {
+        return Err(format!(
+            "{label} \"{name}\": its history body does not restate as exactly one solid or sheet"
+        ));
+    }
+    Ok(text)
+}
+
+/// Imports the body a split feature works on, when it exists only earlier in the timeline:
+/// the history body the source keeps as consumed by `feature`, as it stood before the split.
+/// The import goes in just before the split, and `target`, the body the split selects,
+/// is named by it. None when the source keeps no such body; several are refused.
+pub(super) fn import_consumed(
+    feature: &Value,
+    target: &str,
+    ctx: &mut Context,
+) -> Result<Option<String>, String> {
+    let id = feature.get("id").and_then(Value::as_str);
+    let mut nests = ctx
+        .source
+        .into_iter()
+        .flat_map(|model| &model.ir.model.history_bodies)
+        .filter(|nest| id.is_some() && nest.consumed_by.as_ref().map(|by| by.as_str()) == id);
+    let nest = match (nests.next(), nests.next()) {
+        (Some(nest), None) => nest,
+        (None, _) => return Ok(None),
+        _ => {
+            return Err(
+                "splitting several consumed history bodies at once is not supported yet".to_owned(),
+            )
+        }
+    };
+    require_history_version(ctx)?;
+    // A body an earlier feature (a Base Feature) made and this split consumes was imported when
+    // that feature mapped: the split works on that body, which is not imported a second time.
+    if nest.produced_by.is_some() {
+        let made = ctx
+            .named_bodies
+            .iter()
+            .find(|(known, _)| known == nest.topology.body.id.as_str())
+            .map(|(_, body)| body.clone());
+        if let Some(body) = made {
+            if !target.is_empty() {
+                ctx.named_bodies.push((target.to_owned(), body.clone()));
+            }
+            return Ok(Some(body));
+        }
+    }
+    let feature_id = ctx.id();
+    let label = format!("{} import", name(feature).unwrap_or("Split"));
+    let text = nest_step("split", &label, nest, ctx)?;
+    let base = nest
+        .topology
+        .body
+        .name
+        .as_deref()
+        .filter(|body| !body.trim().is_empty())
+        .unwrap_or("Body")
+        .to_owned();
+    let mut body = base.clone();
+    let mut n = 2;
+    while ctx.named_bodies.iter().any(|(_, known)| *known == body) {
+        body = format!("{base} ({n})");
+        n += 1;
+    }
+    ctx.builds = true;
+    ctx.extra.push(json!({
+        "id": feature_id,
+        "name": label,
+        "type": "import",
+        "suppressed": false,
+        "file": format!("{label}.step"),
+        "step": "",
+        STEP: text,
+        "body_names": [body],
+    }));
+    // An empty `target` is a native selection: nothing later names the body by that id.
+    if !target.is_empty() {
+        ctx.named_bodies.push((target.to_owned(), body.clone()));
+    }
+    Ok(Some(body))
 }
 
 /// Whether a later feature re-applies to a body that already holds its result without

@@ -423,6 +423,10 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Earlier body snapshots used by editable history.
+    HistoryBody,
+    /// Coplanar input faces used as a Split Body tool.
+    SplitFaces,
 }
 
 impl VersionGate {
@@ -430,6 +434,7 @@ impl VersionGate {
         match self {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
+            Self::HistoryBody | Self::SplitFaces => SolidCraftVersion::V0_40_0,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
         }
     }
@@ -442,6 +447,12 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if [VersionGate::HistoryBody, VersionGate::SplitFaces]
+        .into_iter()
+        .any(|gate| gate.supported(SolidCraftVersion::default()) && !gate.supported(target))
+    {
+        return true;
+    }
     [
         VersionGate::EntryRecessTip,
         VersionGate::SketchProfileCoil,
@@ -486,6 +497,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// Oldest release in the window when history-body and face-tool mapping was added.
+    pub const V0_40_0: Self = Self([0, 40, 0]);
+
     /// First release that applies a drill-point angle on counterbores and countersinks.
     pub const V0_22_1: Self = Self([0, 22, 1]);
 
@@ -3205,6 +3219,16 @@ mod version_tests {
     use super::*;
 
     #[test]
+    fn new_history_paths_flatten_below_the_release_window() {
+        for gate in [VersionGate::HistoryBody, VersionGate::SplitFaces] {
+            assert!(!gate.supported("0.18.2".parse().unwrap()));
+            assert!(!gate.supported("0.39.0".parse().unwrap()));
+            assert!(gate.supported(SolidCraftVersion::V0_40_0));
+        }
+        assert!(target_loses_history("0.39.0".parse().unwrap()));
+    }
+
+    #[test]
     fn target_040_keeps_030_writer_capabilities() {
         let target: SolidCraftVersion = "0.40.0".parse().unwrap();
         for gate in [
@@ -3309,7 +3333,8 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(!target_loses_history(after));
+        assert!(VersionGate::MirrorChain.supported(after));
+        assert!(target_loses_history(after));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());
