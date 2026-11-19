@@ -277,145 +277,6 @@ fn topological_chain_replays_as_the_same_solidcraft_edge_path() {
     }
 }
 
-fn closed_wire(hole: bool, rotated_seam: bool) -> Value {
-    let mut wire = path_wire();
-    let m = &mut wire["model"];
-    let mut base = m["features"][0].clone();
-    let cylinder = |radius: f64, x: f64, y: f64, op: &str| {
-        json!({"kind": "primitive", "value": {
-        "solid": {"kind": "cylinder", "radius": radius, "height": 10.0, "angle": std::f64::consts::TAU},
-        "placement": [[1.0,0.0,0.0,x],[0.0,1.0,0.0,y],[0.0,0.0,1.0,0.0]], "op": op}})
-    };
-    let (radius, center, kind, feature_id, mut features) = if hole {
-        let mut cut = feature("test:model:feature#2", 1, cylinder(2.0, 5.0, 5.0, "cut"));
-        cut["outputs"] = json!(["synthetic:cube:body#0"]);
-        cut["dependencies"] = json!(["test:model:feature#1"]);
-        (
-            2.0,
-            [5.0, 5.0, 10.0],
-            "chamfer",
-            "test:model:feature#3",
-            vec![base, cut],
-        )
-    } else {
-        base["definition"]["value"] = cylinder(5.0, 0.0, 0.0, "new_body");
-        (
-            5.0,
-            [0.0, 0.0, 10.0],
-            "fillet",
-            "test:model:feature#2",
-            vec![base],
-        )
-    };
-    let group = if hole {
-        json!({"edges": {"kind":"historical","value":{"state":"test:model:feature-input#1","edges":["rim"],"native":"synthetic rim"}},
-            "spec":{"kind":"distance","distance":0.5}})
-    } else {
-        json!({"edges": {"kind":"historical","value":{"state":"test:model:feature-input#1","edges":["rim"],"native":"synthetic rim"}},
-            "radius":{"kind":"constant","radius":0.5}})
-    };
-    let mut blend = feature(
-        feature_id,
-        features.len() as u64,
-        json!({"kind":kind,"value":{"groups":[group]}}),
-    );
-    if hole {
-        blend["definition"]["value"]["value"]["flip_direction"] = json!(false);
-    }
-    features.push(blend);
-    m["features"] = json!(features);
-    m["sketches"] = json!([]);
-    m["sketch_entities"] = json!([]);
-    let (along, tangent) = if rotated_seam {
-        ([0.0, 1.0, 0.0], [1.0, 0.0, 0.0])
-    } else {
-        ([1.0, 0.0, 0.0], [0.0, -1.0, 0.0])
-    };
-    let start = [
-        center[0] + radius * along[0],
-        center[1] + radius * along[1],
-        center[2],
-    ];
-    let opposite = [
-        center[0] - radius * along[0],
-        center[1] - radius * along[1],
-        center[2],
-    ];
-    m["feature_input_topologies"] = json!([{"id":"test:model:feature-input#1","input_of":feature_id,
-        "bodies":[],"faces":[],"vertices":[],"edges":["rim"],
-        "edge_geometry":[sample("rim",start,opposite,start,tangent)]}]);
-    wire
-}
-
-fn closed_reference(hole: bool) -> Value {
-    let mut commands = if hole {
-        vec![
-            json!({"command":"solid.box","params":{"length":"10 mm","width":"10 mm","height":"10 mm","body_name":"Base"}}),
-            json!({"command":"solid.cylinder","params":{"radius":"2 mm","height":"10 mm","base":[5,5,0],"operation":"cut"}}),
-        ]
-    } else {
-        vec![
-            json!({"command":"solid.cylinder","params":{"radius":"5 mm","height":"10 mm","body_name":"Base"}}),
-        ]
-    };
-    commands.push(if hole {
-        json!({"command":"solid.chamfer","params":{"body":"Base","edges":[[7,5,10]],"distance":"0.5 mm","tangent_chain":false}})
-    } else {
-        json!({"command":"solid.fillet","params":{"body":"Base","edges":[[5,0,10]],"radius":"0.5 mm","tangent_chain":false}})
-    });
-    json!(commands)
-}
-
-fn replay_closed(hole: bool) {
-    let Some(cli) = cli() else { return };
-    for rotated_seam in [false, true] {
-        let (bytes, document, report) = written(&closed_wire(hole, rotated_seam), &writer(&cli));
-        let kind = if hole { "chamfer" } else { "fillet" };
-        let blend = document["features"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|f| f["type"] == kind);
-        assert!(blend.is_some(), "{report:?}");
-        let blend = blend.unwrap();
-        assert_eq!(blend["body"], "unit cube");
-        let dir = tempfile::tempdir().unwrap();
-        let actual = dir.path().join("actual.sc");
-        std::fs::write(&actual, editable_copy(&bytes)).unwrap();
-        let expected = dir.path().join("expected-script.json");
-        std::fs::write(&expected, closed_reference(hole).to_string()).unwrap();
-        let actual = measure(&cli, &actual, &dir.path().join("actual.json"));
-        let expected = measure(&cli, &expected, &dir.path().join("expected.json"));
-        let a = actual["total"]["volume_mm3"].as_f64().unwrap();
-        let b = expected["total"]["volume_mm3"].as_f64().unwrap();
-        assert!((a - b).abs() < 1e-5, "{actual}\n{expected}");
-        let analytic = if hole {
-            1000.0 - 40.0 * std::f64::consts::PI - std::f64::consts::PI * (0.5 + 0.125 / 3.0)
-        } else {
-            250.0 * std::f64::consts::PI
-                - std::f64::consts::TAU
-                    * (4.5 * 0.25 * (1.0 - std::f64::consts::FRAC_PI_4) + 0.125 / 6.0)
-        };
-        assert!((a - analytic).abs() < 0.05, "{a} vs {analytic}: {actual}");
-        assert_eq!(actual["bodies"][0]["faces"], expected["bodies"][0]["faces"]);
-        assert_eq!(actual["bodies"][0]["bbox"], expected["bodies"][0]["bbox"]);
-        assert!(
-            actual["bodies"][0]["center_of_mass"][2].as_f64().unwrap() < 5.0,
-            "{actual}"
-        );
-    }
-}
-
-#[test]
-fn topological_cylinder_rim_fillet_replays_with_either_source_seam() {
-    replay_closed(false);
-}
-
-#[test]
-fn topological_hole_edge_chamfer_replays_with_either_source_seam() {
-    replay_closed(true);
-}
-
 #[derive(Debug)]
 struct EdgeReplay(Vec<(String, Vec<Value>)>);
 
@@ -441,6 +302,96 @@ impl dutchman_solidcraft::SolidCraftEvaluator for EdgeReplay {
             }
             _ => Err("unexpected replay command".to_owned()),
         }).collect()
+    }
+}
+
+#[derive(Debug)]
+struct ArcReplay {
+    edges: EdgeReplay,
+    analytic: bool,
+}
+
+impl dutchman_solidcraft::SolidCraftEvaluator for ArcReplay {
+    fn evaluate(&self, _: &[u8], _: std::time::Duration, _: &str) -> Result<Value, String> {
+        Err("this edge proof does not evaluate final geometry".to_owned())
+    }
+
+    fn run(
+        &self,
+        design: &[u8],
+        commands: &[Value],
+        timeout: std::time::Duration,
+        label: &str,
+    ) -> Result<Vec<Value>, String> {
+        commands
+            .iter()
+            .map(|command| {
+                if command["command"] == "inspect.measure" {
+                    let length = 5.0 * std::f64::consts::FRAC_PI_2;
+                    return Ok(json!({"items":[{"type":"edge","round":"arc",
+                    "center":[0,0,10],"axis":[0,0,1],"radius":5,
+                    "length_mm":if self.analytic { length } else { 7.8 },
+                    "arc_length":length}]}));
+                }
+                self.edges
+                    .run(design, std::slice::from_ref(command), timeout, label)
+                    .map(|mut results| results.remove(0))
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn topological_body_arcs_use_the_shared_exact_circle_measurements() {
+    let diagonal = 5.0 / 2.0_f64.sqrt();
+    let mut wire = path_wire();
+    wire["model"]["features"][2]["definition"]["value"]["value"]["path"]["value"]["edges"] =
+        json!(["arc"]);
+    let state = &mut wire["model"]["feature_input_topologies"][0];
+    state["edges"] = json!(["arc"]);
+    state["edge_geometry"] = json!([sample(
+        "arc",
+        [5.0, 0.0, 10.0],
+        [diagonal, diagonal, 10.0],
+        [0.0, 5.0, 10.0],
+        [
+            -std::f64::consts::FRAC_1_SQRT_2,
+            std::f64::consts::FRAC_1_SQRT_2,
+            0.0
+        ]
+    )]);
+    for analytic in [false, true] {
+        let writer = SolidCraftWriter::new()
+            .target_version(Some("0.44.1".parse().unwrap()))
+            .verification(Verification::Off)
+            .replay(Verification::Auto)
+            .evaluator(std::sync::Arc::new(ArcReplay {
+                edges: EdgeReplay(vec![(
+                    "unit cube".to_owned(),
+                    vec![json!({
+                        "index":0,"name":"arc","start":[5,0,10],
+                        "mid":[diagonal,diagonal,10],"end":[0,5,10],"length":7.8
+                    })],
+                )]),
+                analytic,
+            }));
+        let (_, document, report) = written(&wire, &writer);
+        let sweep = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "sweep");
+        if analytic {
+            assert_eq!(sweep.unwrap()["path_body"], "unit cube", "{report:?}");
+        } else {
+            assert!(sweep.is_none(), "{document}");
+            assert!(
+                report.losses().iter().any(|loss| loss
+                    .detail
+                    .contains("no proven rebuilt circular arc measurement")),
+                "{report:?}"
+            );
+        }
     }
 }
 
@@ -679,12 +630,8 @@ impl dutchman_solidcraft::SolidCraftEvaluator for UnsoundOriginal {
 
 #[test]
 fn topological_histories_keep_the_original_position_when_the_source_cannot_be_compared() {
-    for closed in [false, true] {
-        let mut wire = if closed {
-            closed_wire(false, true)
-        } else {
-            sketch_wire_path(true)
-        };
+    {
+        let mut wire = sketch_wire_path(true);
         wire["geometry"]["bodies"][0]["transform"] = json!([
             [1.0, 0.0, 0.0, 10_000.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -727,7 +674,7 @@ fn topological_histories_keep_the_original_position_when_the_source_cannot_be_co
                 .filter(|component| component["history_hidden"] == true)
                 .map(|component| component["id"].clone())
                 .collect();
-            let kind = if closed { "fillet" } else { "sweep" };
+            let kind = "sweep";
             let feature = document["features"]
                 .as_array()
                 .unwrap()
@@ -779,12 +726,8 @@ fn topological_histories_keep_the_original_position_when_the_source_cannot_be_co
 
 #[test]
 fn unchecked_topological_histories_keep_the_original_visible() {
-    for closed in [false, true] {
-        let mut wire = if closed {
-            closed_wire(false, true)
-        } else {
-            sketch_wire_path(true)
-        };
+    {
+        let mut wire = sketch_wire_path(true);
         wire["geometry"]["bodies"][0]["transform"] = json!([
             [1.0, 0.0, 0.0, 10_000.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -810,62 +753,6 @@ fn unchecked_topological_histories_keep_the_original_visible() {
             .unwrap()
             .iter()
             .any(|feature| feature["type"] == "import" && feature["suppressed"] == false));
-    }
-}
-
-#[test]
-fn optional_curve_failures_keep_the_earlier_straight_blend() {
-    for curves in [1, 257] {
-        let mut wire = closed_wire(true, false);
-        let m = &mut wire["model"];
-        m["features"][2]["ordinal"] = json!(3);
-        let straight = feature(
-            "test:model:feature#4",
-            2,
-            json!({"kind":"fillet","value":{"groups":[{
-            "edges":{"kind":"historical","value":{"state":"test:model:feature-input#2","edges":["straight"],"native":"synthetic straight edge"}},
-            "radius":{"kind":"constant","radius":0.5}}]}}),
-        );
-        m["features"].as_array_mut().unwrap().insert(2, straight);
-        m["feature_input_topologies"].as_array_mut().unwrap().push(json!({
-            "id":"test:model:feature-input#2","input_of":"test:model:feature#4",
-            "bodies":[],"faces":[],"vertices":[],"edges":["straight"],
-            "edge_geometry":[sample("straight",[0.0;3],[0.0,0.0,5.0],[0.0,0.0,10.0],[0.0,0.0,1.0])]}));
-        let mut edges = vec![
-            json!({"name":"straight","start":[0,0,0],"mid":[0,0,5],"end":[0,0,10],"length":10}),
-        ];
-        edges.extend((0..curves).map(|index| {
-            json!({"index":index,"name":format!("rim{index}"),
-            "start":[7,5,10],"mid":[3,5,10],"end":[7,5,10],"length":12.54})
-        }));
-        let writer = SolidCraftWriter::new()
-            .target_version(Some("0.44.1".parse().unwrap()))
-            .verification(Verification::Off)
-            .replay(Verification::Auto)
-            .evaluator(std::sync::Arc::new(EdgeReplay(vec![(
-                "unit cube".to_owned(),
-                edges,
-            )])));
-        let (_, document, report) = written(&wire, &writer);
-        let features = document["features"].as_array().unwrap();
-        assert_eq!(
-            features.iter().filter(|f| f["type"] == "fillet").count(),
-            1,
-            "{document}\n{report:?}"
-        );
-        assert!(!features.iter().any(|f| f["type"] == "chamfer"));
-        let reason = if curves == 257 {
-            "exact curved-edge measurements exceed the replay limit"
-        } else {
-            "unexpected replay command"
-        };
-        assert!(
-            report
-                .losses()
-                .iter()
-                .any(|loss| loss.detail.contains(reason)),
-            "{report:?}"
-        );
     }
 }
 

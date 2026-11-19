@@ -307,9 +307,9 @@ pub(crate) fn write(
     if let (false, Some(fields)) = (visibility.is_empty(), doc.as_object_mut()) {
         fields.insert("visibility".to_owned(), Value::Object(visibility));
     }
-    builder
-        .report
-        .set_outcome(outcome(&builder.histories, builder.outcomes));
+    let result = outcome(&builder.histories, builder.outcomes);
+    crate::state_tolerances(builder.report, &result);
+    builder.report.set_outcome(result);
     builder.container.finish(&doc)
 }
 
@@ -680,9 +680,13 @@ fn prepare_history(
         &mut part_report,
         writer.resolved_version(),
         writer.sketches,
-        &mut |prefix, stored, final_state| {
-            writer.profile_check(part, prefix, step, stored, final_state, progress)
+        &mut crate::Measuring {
+            writer,
+            model: part,
+            step,
+            progress,
         },
+        progress,
     );
     if let Ok(history) = &mut mapping.result {
         if let Err(why) = history::base::restate(history, part) {

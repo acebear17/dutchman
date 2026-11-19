@@ -7,6 +7,50 @@ If a reader supplies only CADIR v11 design history, the final geometry is kept a
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
 
+## Public share links
+
+Paste a public Fusion or Google Drive **file** share link into the desktop app's link
+field and choose **Add link**, paste it when no text field is focused, or drop a saved
+`.url` or `.webloc` link shortcut into the window. The file downloads in the background,
+then joins the same queue as local files. Choose an output folder and convert as usual.
+URI text drops also work when delivered by a desktop integration. Some desktop/browser combinations do not deliver
+raw URL drops through the window toolkit; paste the link in that case.
+
+The CLI accepts the same links:
+
+```sh
+dutchman convert 'https://drive.google.com/file/d/FILE_ID/view' -o design.sc
+```
+
+Quote links in a shell. With no output path, the CLI writes in the current folder using
+the downloaded file's name; an existing default output still requires `--force`.
+Project ZIP links use the existing bounded project extraction and batch conversion.
+
+Only public files needing no login work. Google Drive file links use
+`https://drive.google.com/uc?export=download&id=FILE_ID`, including Drive's virus-scan
+confirmation page. Drive folders and Google Docs documents are not file downloads.
+Fusion links from `a360.co` or `*.autodesk360.com` work when the share page exposes a
+public download URL or download link. If downloads are disabled or require login,
+Dutchman asks you to download the design yourself and drop the file into the app.
+Private and expired links get the same plain explanation.
+
+Downloads use HTTPS, a 200 MB cap matching the web app's default upload limit, a two-minute
+total timeout across DNS, connection, TLS and response streaming, and at most twelve
+requests. Every redirect and confirmation action is checked before contacting its host.
+Resolved addresses must be public unicast: local, private,
+link-local, CGNAT, reserved and cloud metadata destinations are refused, including
+IPv4-mapped IPv6 forms. Each connection uses the screened DNS answer without a second
+lookup. Drive downloads stay on `drive.google.com`,
+`drive.usercontent.google.com`, or `googleusercontent.com` and its subdomains; Fusion
+stays on `a360.co`, `autodesk360.com` and its subdomains, or `autodesk.com` and its subdomains. Other download hosts require a manual download.
+
+The original share link is never included in reports or sent to another service as a
+referrer. Dutchman uses no browser login or credentials and does not load the page's
+scripts, images, or other resources. Downloaded files live in a private temporary folder;
+failed downloads are removed immediately. The CLI removes its download after conversion,
+errors, Ctrl-C, and intentional exits (including a closed output pipe); the app retains downloads while queued files or result cards need them, then removes
+them when cleared or when the app closes. Converted outputs stay in your output folder.
+
 ## Ask your assistant about a saved desktop result
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a
@@ -54,7 +98,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.40.0–0.44.1.
+converted history. The supported SolidCraft window is currently 0.18.2–0.44.
 
 ## Your first conversion
 
@@ -86,7 +130,7 @@ dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthro
 dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
 dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
-Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
@@ -101,6 +145,11 @@ or `editable history, unverified`). After progress updates, the lines on stderr 
 `--verbose` prints them whole. An explicitly named existing output file is
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
+
+Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
+L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
+see [sheet-metal limits](history.md#sheet-metal). Unproven picks or base perimeters with curved,
+open, crossing, disconnected, or collinear edges keep geometry and name the blocked feature.
 
 SolidCraft output accepts `.sc`, `.solidcraft`, and `.solvecraft`; each uses the same container.
 Other targets use their own extension.
@@ -271,6 +320,15 @@ profiles and sweep paths select the whole chain. Constraints that cannot apply t
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
 
+A hole on a planar face can retain its history even when that face has a rounded corner or
+an earlier circular hole. Dutchman checks the source boundary and asks SolidCraft to prove
+that face exists before drilling. A placement inside an existing hole, outside the face,
+or facing out of it stays blocked with a specific reason; conversion keeps the original
+shape. This proof needs SolidCraft replay; when replay is unavailable or disabled, the
+original shape stays visible.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:
@@ -300,7 +358,7 @@ Which SolidCraft a design is written for, and how Dutchman finds the installed o
 ## Where next
 
 - [The desktop app](desktop.md): presets, estimates, the SolidCraft version, and updates.
-- [The command line](command-line.md): options, `inspect`, whole folders, watching a folder.
+- [The command line](command-line.md): options, `inspect`, `contents`, whole folders, watching a folder.
 - [Choosing what to keep](presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Formats](formats.md): what converts from each program.
 - [Feature history](history.md): what maps onto SolidCraft, and what stops a history.
@@ -366,6 +424,16 @@ This page used to hold everything. Each part now has its own page:
 
 [Look before you convert: inspect](command-line.md#look-before-you-convert-inspect)
 
+### List what a file holds: contents
+
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
+[List what a file holds: contents](command-line.md#list-what-a-file-holds-contents)
+
+Contents reports what maps for the newest SolidCraft release known to this build,
+without looking for or launching an installed SolidCraft CLI.
+
 ### Progress during conversion
 
 [Progress during conversion](command-line.md#progress-during-conversion)
@@ -394,16 +462,39 @@ A trimmed profile region, including a revolve's, is selected by a point inside i
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
+
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
 
 For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
-edges on one earlier body. Closed circular edges also work for constant-radius fillets
-and equal-distance chamfers when their centre, radius, plane and circumference match
-uniquely, regardless of seam position. SolidCraft's exact edge measurement establishes
-its circular carrier. Missing source geometry, ambiguous matches, topological guide rails, and older
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
 targets keep the original geometry and report a specific history blocker. Closed sweep
 paths, including loops assembled from open edges, still require a proven start and traversal
 direction and remain refused. An unavailable exact curve measurement blocks only the feature
@@ -412,7 +503,7 @@ require a SolidCraft replay for body-edge selections; `--no-verify` cannot estab
 edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
 matches one entire mapped curve, including the midpoint and length of an arc.
 
-A history using these edge paths or closed circular blends stays hidden beside the
+A history using these edge paths stays hidden beside the
 original unless the full comparison succeeds. This also applies when checking is off
 or the original cannot be measured soundly. The original position and shape remain
 visible, and the report explains the unverified check. Other histories keep their
@@ -654,8 +745,8 @@ that moves, and is reported. Smart also keeps the first placement of a displayed
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
-Local CLI and desktop progress names the running part or stage and its elapsed time,
-including “Still …” notices and full-sentence check-limit consequences. Durations use one
+Local CLI and desktop progress names the running part or stage and its elapsed time, the
+feature a design's history is on ("Feature 29 of 37 · Extrude 1"), including “Still …” notices and full-sentence check-limit consequences. Durations use one
 format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-running file,
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
@@ -669,3 +760,14 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It implements SolidCraft's
+`craft:plugin` importer interface; see that page for the build. To install it, see
+[Dutchman in SolidCraft](solidcraft-plugin.md).
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

@@ -352,18 +352,8 @@ fn sample(ir: &cadmpeg_ir::CadIr, id: &str, body: &str) -> Option<Value> {
                 .find(|p| p.id == vertex.point)
                 .map(|p| p.position())
         };
-        let (start, end) = match (edge.start(), edge.end()) {
-            (Some(start), Some(end)) => (position(start)?, position(end)?),
-            // A vertexless full circle has an arbitrary parameter seam. Evaluate it
-            // from its own analytic carrier, under the same decoder guard as the midpoint.
-            (None, None) if circular && b - a == std::f64::consts::TAU => (
-                cadmpeg_ir::eval::decode::curve_point(&ctx, &curve.geometry, a).ok()?,
-                cadmpeg_ir::eval::decode::curve_point(&ctx, &curve.geometry, b).ok()?,
-            ),
-            _ => return None,
-        };
         let sample = json!({"edge": id, "interior": placed(interior)?, "tangent": tangent,
-            "faces": [], "start": placed(start)?, "end": placed(end)?});
+            "faces": [], "start": placed(position(edge.start()?)?)?, "end": placed(position(edge.end()?)?)?});
         ctx.finish_session().ok()?;
         Some(sample)
     }))
@@ -622,12 +612,7 @@ mod tests {
             .remove("ends");
         let ring = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         assert!(ring.geometry.edges[0].vertices().next().is_none());
-        let sampled = sample_edge(&ring, "test:arc:edge#1").unwrap();
-        assert_eq!(sampled["start"], json!({"x": 5.0, "y": -4.0, "z": 2.0}));
-        assert!((sampled["end"]["x"].as_f64().unwrap() - 5.0).abs() < 1e-12);
-        assert!((sampled["end"]["y"].as_f64().unwrap() + 4.0).abs() < 1e-12);
-        assert!((sampled["interior"]["x"].as_f64().unwrap() - 1.0).abs() < 1e-12);
-        assert!((sampled["interior"]["y"].as_f64().unwrap() + 4.0).abs() < 1e-12);
+        assert!(sample_edge(&ring, "test:arc:edge#1").is_none());
     }
 
     #[test]

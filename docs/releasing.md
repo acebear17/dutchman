@@ -10,9 +10,9 @@ merge queue runs the full matrix once per group. Pushes to `main` keep their exi
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` stays an
    exact, checksum-pinned release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 43]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 44]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.43` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.44` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest pinned checksum, and the newest minor's dynamic CI matrix entry. Copy those
@@ -134,6 +134,15 @@ tool, change the version and both checksums for each architecture together. The 
 `.zsync` must stay attached to every release. `release.yml` requires the four AppImage files
 (and their checksums) and adds version-less copies like the other assets. Changes under
 `packaging/linux/` receive the full build in the merge queue or a manual full run.
+
+The `plugin` job builds the SolidCraft plugin once, on Linux: `dutchman-plugin` for
+`wasm32-unknown-unknown` with the size settings in `.cargo/config.toml`, wrapped by
+`scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip` (the manifest stamped with the
+version, and the component) with its `.sha256`. It then converts the public fixtures with the
+packaged component in Wasmtime and uploads the zip as the `dutchman-X.Y.Z-plugin` artifact.
+`release.yml` requires it and adds the version-less `dutchman-plugin.zip`. A change to
+`crates/dutchman-plugin/plugin.json` or `.cargo/config.toml` starts the full build on a pull
+request. See [the plugin notes](plugin.md).
 
 For just the Linux x86_64 tarball and its checksum, dispatch with `targets: linux-x86_64`: `gh workflow run release-build.yml --ref <branch> -f targets=linux-x86_64`.
 

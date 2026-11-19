@@ -23,7 +23,7 @@ mod faces;
 mod helix;
 mod helpers;
 mod hole;
-mod infer;
+pub(crate) mod infer;
 mod loft;
 mod modify;
 mod move_face;
@@ -49,6 +49,10 @@ use serde_json::{json, Value};
 /// Accepted document versions. In-memory models use cadmpeg's current v11 serializer;
 /// topology homes and enum payloads are read in that serializer's wire layout.
 const IR_VERSIONS: [&str; 6] = ["6", "7", "8", "9", "10", "11"];
+
+/// The reason of a feature that is not mapped because an earlier one blocks the history.
+pub(crate) const AFTER_BLOCKER: &str =
+    "after the first blocking feature; kept in the imported final shape";
 
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]
@@ -101,6 +105,10 @@ pub(crate) struct History {
     /// profile. Which of them it takes isn't stated, so each is kept only when SolidCraft's
     /// check confirms the replay ([`History::first_unconfirmed`]).
     pub(crate) unconfirmed: BTreeSet<u64>,
+    /// Ids of features whose profile region Dutchman chose by measuring every candidate
+    /// ([`infer`]). A final shape that differs from the source suspects them as it suspects
+    /// unconfirmed profiles, so the timeline keeps no more than it would without them.
+    pub(crate) measured: BTreeSet<u64>,
 }
 
 /// The bodies the source stores right after `feature`, to compare its replay with. A base
@@ -190,17 +198,21 @@ impl History {
     pub(crate) fn first_unconfirmed(&self) -> Option<(usize, String)> {
         self.features.iter().find_map(|feature| {
             let id = feature.get("id").and_then(Value::as_u64)?;
-            if !self.unconfirmed.contains(&id) {
-                return None;
-            }
             let name = feature.get("name").and_then(Value::as_str).unwrap_or("?");
-            Some((
-                *self.sources.get(&id)?,
+            let why = if self.unconfirmed.contains(&id) {
                 format!(
                     "feature \"{name}\": its profile is the whole of a sketch with several \
                      profiles, and SolidCraft's check could not confirm which it takes"
-                ),
-            ))
+                )
+            } else if self.measured.contains(&id) {
+                format!(
+                    "feature \"{name}\": its profile region was inferred by measurement, and \
+                     the complete replay does not match the source"
+                )
+            } else {
+                return None;
+            };
+            Some((*self.sources.get(&id)?, why))
         })
     }
 
@@ -653,6 +665,11 @@ struct Context<'a> {
     reapplied: BTreeSet<String>,
     /// Set by a base feature being mapped with its body as the design ends.
     final_body: bool,
+    /// Set by the feature being mapped: a selection the source does not record was inferred.
+    inferred: Option<dutchman_core::Inferred>,
+    /// Set by the feature being mapped: that selection was chosen by measuring every
+    /// candidate, so a final shape that differs suspects it first.
+    measured: bool,
 }
 
 impl<'a> Context<'a> {
@@ -703,6 +720,8 @@ impl<'a> Context<'a> {
             profile_mismatch: false,
             reapplied: BTreeSet::new(),
             final_body: false,
+            inferred: None,
+            measured: false,
         }
     }
 
@@ -890,18 +909,21 @@ pub(crate) fn map_with_sketches(
         report,
         target_version,
         keep_sketches,
-        &mut |_, _, _| false,
+        &mut infer::Unmeasured,
+        None,
     )
 }
 
 /// Mapping with a host check for otherwise unresolved sketch-selection candidates.
-/// Planning has no check and retains the original profile refusal.
+/// Planning has no check and retains the original profile refusal. `progress` hears of
+/// each timeline feature as mapping reaches it.
 pub(crate) fn map_with_profile_check(
     model: &Model,
     report: &mut Report,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
@@ -913,6 +935,7 @@ pub(crate) fn map_with_profile_check(
         target_version,
         keep_sketches,
         check,
+        progress,
     );
     let mut mapping = Mapping {
         result,
@@ -1041,6 +1064,7 @@ fn hidden_bodies(ctx: &Context) -> Vec<String> {
     names
 }
 
+#[allow(clippy::too_many_arguments)]
 fn map_into(
     model: &Model,
     report: &mut Report,
@@ -1049,6 +1073,7 @@ fn map_into(
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<History, String> {
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
@@ -1109,7 +1134,11 @@ fn map_into(
                 .map(str::to_owned)
         })
         .collect();
+    let timeline = progress.map(|p| p.features(features.len() as u64));
     for (position, feature) in features.into_iter().enumerate() {
+        if let Some(timeline) = &timeline {
+            timeline.at(position as u64 + 1, name(feature));
+        }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             name: name(feature).map(str::to_owned),
             kind: kind(feature),
@@ -1120,6 +1149,7 @@ fn map_into(
             profile_unverified: false,
             reapplied: false,
             final_body: false,
+            inferred: None,
         };
         if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
             report.push(
@@ -1161,9 +1191,7 @@ fn map_into(
         if blocked.is_some() && (kind(feature) != "sketch" || !keep_sketches) && !structural {
             out.push(outcome(
                 FeatureStatus::Blocked,
-                Some(
-                    "after the first blocking feature; kept in the imported final shape".to_owned(),
-                ),
+                Some(AFTER_BLOCKER.to_owned()),
             ));
             continue;
         }
@@ -1241,6 +1269,7 @@ fn map_into(
                 let mut kept = outcome(FeatureStatus::Mapped, None);
                 kept.profile_unverified = std::mem::take(&mut ctx.profile_unverified);
                 kept.final_body = std::mem::take(&mut ctx.final_body);
+                kept.inferred = ctx.inferred.take();
                 kept.reapplied = feature
                     .get("id")
                     .and_then(Value::as_str)
@@ -1260,6 +1289,8 @@ fn map_into(
                 ctx.builds = builds;
                 ctx.profile_unverified = false;
                 ctx.final_body = false;
+                ctx.inferred = None;
+                ctx.measured = false;
                 if std::mem::take(&mut ctx.profile_mismatch) {
                     report.push_coded(
                         Severity::Degraded,
@@ -1275,8 +1306,12 @@ fn map_into(
                 out.push(outcome(FeatureStatus::Blocked, Some(reason)));
             }
         }
+        let measured = std::mem::take(&mut ctx.measured);
         for emitted in history.features.iter().skip(before) {
             if let Some(id) = emitted.get("id").and_then(Value::as_u64) {
+                if measured {
+                    history.measured.insert(id);
+                }
                 history.sources.insert(id, out.len().saturating_sub(1));
                 if let Some(centers) = out
                     .last()
@@ -1570,6 +1605,8 @@ enum Proven {
     Path,
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
+    /// A hole axis signed to enter the proven face.
+    Hole(sketch::V3),
 }
 
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
@@ -1578,7 +1615,8 @@ enum Proven {
 /// the history with the reason; without a replay (`replay` returning `Err`) none can be.
 pub(crate) fn prove_blends(
     mapping: &mut Mapping,
-    mut replay: impl FnMut(&History, &[u64], bool, &[bool]) -> Replayed,
+    mut replay: impl FnMut(&History, &[u64], bool) -> Replayed,
+    mut measure: impl FnMut(&History, std::time::Duration) -> infer::Fit,
 ) {
     let Ok(history) = &mut mapping.result else {
         return;
@@ -1602,19 +1640,8 @@ pub(crate) fn prove_blends(
     let mut replayed = if steps.is_empty() {
         Ok(Vec::new())
     } else {
-        let faces = history.blends.iter().any(blend::needs_faces);
-        replay(
-            history,
-            &steps,
-            faces,
-            &history
-                .blends
-                .iter()
-                .zip(&after)
-                .filter(|(_, marker)| marker.is_some())
-                .map(|(pending, _)| blend::needs_curves(pending))
-                .collect::<Vec<_>>(),
-        )
+        let faces = history.blends.iter().any(|pending| pending.face.is_some());
+        replay(history, &steps, faces)
     };
     let blends = std::mem::take(&mut history.blends);
     let mut step = 0usize;
@@ -1636,7 +1663,7 @@ pub(crate) fn prove_blends(
                 step = step.saturating_add(1);
                 match at {
                     Some(Ok(replay)) => match &pending.face {
-                        None => blend::prove_replay(pending, replay).and_then(|selections| {
+                        None => blend::prove(pending, &replay.bodies).and_then(|selections| {
                             if pending.path {
                                 let [selection] = selections.as_slice() else {
                                     return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
@@ -1659,7 +1686,9 @@ pub(crate) fn prove_blends(
                             Ok(Proven::Bodies(added))
                         }),
                         Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
-                            if mirrored {
+                            if let Some(direction) = face.entry_direction(mirrored)? {
+                                Ok(Proven::Hole(direction))
+                            } else if mirrored {
                                 face.sketch(true)
                                     .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
                             } else {
@@ -1675,6 +1704,43 @@ pub(crate) fn prove_blends(
                     }
                 }
             }
+        };
+        // A last blend whose edges the proof cannot pin down: measure the nearby rebuilt edges.
+        let proven = match proven {
+            Err(reason) if pending.face.is_none() && reason.starts_with(blend::UNPROVEN) => {
+                let at = pending.feature.saturating_add(inserted);
+                let bodies = replayed
+                    .as_ref()
+                    .ok()
+                    .and_then(|steps| steps.get(step.saturating_sub(1)))
+                    .and_then(|replay| replay.as_ref().ok())
+                    .map(|replay| &replay.bodies);
+                match bodies.and_then(|bodies| {
+                    infer::edges(history, at, pending.outcome, pending, bodies, &mut measure)
+                }) {
+                    Some(Ok((selections, inferred))) => {
+                        let added = selections.len().saturating_sub(1);
+                        split_blend(history, at, pending.outcome, selections).map(|()| {
+                            for id in history
+                                .features
+                                .iter()
+                                .skip(at)
+                                .take(added.saturating_add(1))
+                                .filter_map(|feature| feature.get("id").and_then(Value::as_u64))
+                            {
+                                history.measured.insert(id);
+                            }
+                            if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
+                                outcome.inferred = Some(inferred);
+                            }
+                            Proven::Bodies(added)
+                        })
+                    }
+                    Some(Err(why)) => Err(format!("{reason}; {why}")),
+                    None => Err(reason),
+                }
+            }
+            proven => proven,
         };
         match proven {
             Ok(proven @ (Proven::Bodies(_) | Proven::Path)) => {
@@ -1695,19 +1761,8 @@ pub(crate) fn prove_blends(
                     let faces = blends
                         .iter()
                         .skip(index.saturating_add(1))
-                        .any(blend::needs_faces);
-                    replayed = replay(
-                        history,
-                        &remaining,
-                        faces,
-                        &blends
-                            .iter()
-                            .zip(&after)
-                            .skip(index.saturating_add(1))
-                            .filter(|(_, marker)| marker.is_some())
-                            .map(|(pending, _)| blend::needs_curves(pending))
-                            .collect::<Vec<_>>(),
-                    );
+                        .any(|pending| pending.face.is_some());
+                    replayed = replay(history, &remaining, faces);
                     step = 0;
                 }
             }
@@ -1738,19 +1793,32 @@ pub(crate) fn prove_blends(
                         let faces = blends
                             .iter()
                             .skip(index.saturating_add(1))
-                            .any(blend::needs_faces);
-                        replayed = replay(
-                            history,
-                            &remaining,
-                            faces,
-                            &blends
-                                .iter()
-                                .zip(&after)
-                                .skip(index.saturating_add(1))
-                                .filter(|(_, marker)| marker.is_some())
-                                .map(|(pending, _)| blend::needs_curves(pending))
-                                .collect::<Vec<_>>(),
-                        );
+                            .any(|pending| pending.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
+                }
+            }
+            Ok(Proven::Hole(direction)) => {
+                let target = history
+                    .features
+                    .get_mut(pending.feature.saturating_add(inserted));
+                let value = serde_json::json!(direction);
+                if let Some(fields) = target.and_then(Value::as_object_mut) {
+                    let changed = fields.get("direction") != Some(&value);
+                    fields.insert("direction".to_owned(), value);
+                    if changed && index.saturating_add(1) < blends.len() {
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|p| p.face.is_some());
+                        replayed = replay(history, &remaining, faces);
                         step = 0;
                     }
                 }
@@ -2887,6 +2955,7 @@ mod tests {
             profile_unverified: false,
             reapplied: false,
             final_body,
+            inferred: None,
         };
         assert_eq!(
             compared_state(&outcome(false), &feature).map(|c| c.len()),
