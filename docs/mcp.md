@@ -66,7 +66,7 @@ from the saved report remain absent. A saved failure retains `ok: false` and is 
 as an MCP tool error with its original error details. Reports over 64 MiB, unreadable JSON,
 and other schemas are refused.
 
-This is a **local report tool**, like `convert` and `inspect`: its full reply includes
+This is a **local report tool**, like `convert`, `inspect` and `contents`: its full reply includes
 private paths, file/feature names and messages. Use it only with a client keeping that
 content local; do not paste the reply into an issue or send it to a remote assistant.
 The anonymous diagnostic tools below continue to exclude these details. `read_report`
@@ -361,6 +361,19 @@ and is absent from MCP and `--json` output.
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
 
+`contents` lists a file's bodies (kind, name, hidden), its feature timeline (kind, name,
+suppressed) and its parameters (name, value, unit, expression, owning feature), and gives each
+feature a verdict: `mapped`, `needs_solidcraft_check` (it maps, but converting keeps it only
+when SolidCraft confirms it, such as a fillet whose input edges are found on SolidCraft's
+replay), `not_needed`, `left_out`, `not_supported_yet` (with the reason), or `after_blocker`.
+It writes nothing and runs no SolidCraft. Verdicts target the newest SolidCraft release
+known to this build, without looking for an installed CLI. Reading large assemblies can
+still take time. See
+[`dutchman.contents/1`](json.md#dutchmancontents1).
+
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
 carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required
@@ -382,6 +395,19 @@ FreeCAD external Body and Part links are resolved beside the assembly first, the
 `project` and `search`. A missing linked `.FCStd` file is left out and named in losses and
 `completeness.left_out`; available components still convert. Link arrays place each element
 once. Grounding and supported Assembly-workbench joints map like other assembly joints.
+
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
@@ -438,6 +464,7 @@ change replay order: the neutral ordinal controls it.
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
+| `contents` | `input`, and optionally `project`, `search` | `dutchman.contents/1` | nothing |
 | `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
 | `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
@@ -526,6 +553,27 @@ Inspect a file:
   "losses":[
     {"level":"Degraded","stage":"project","upstream":"cadmpeg","code":"sldprt/source.dialect-unverified","subject":"sldprt/source.dialect-unverified","message":"the document carries no swSolidWorks swVersion declaration, …"},
     {"level":"Degraded","stage":"project","upstream":"cadmpeg","code":"sldprt/config.inferred-without-native","subject":"sldprt/config.inferred-without-native","message":"1 configuration state(s) are inferred from geometry partitions without native configuration definitions."}]}}}
+```
+
+List what a file holds (shortened):
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"contents","arguments":{"input":"/home/me/designs/design_sketch_constraints.f3d"}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":7,"result":{"isError":false,"content":"…","structuredContent":{
+  "schema":"dutchman.contents/1","ok":true,
+  "input":{"format":"fusion_archive","format_name":"Fusion archive (.f3d)","path":"/home/me/designs/design_sketch_constraints.f3d", …},
+  "solidcraft_version":"0.43.0",
+  "parts":[{"name":null,"bodies":1,"features":1,"parameters":2,"history_reason":"no feature in the history builds geometry"}],
+  "bodies":{"count":1,"items":[{"part":null,"name":null,"kind":"sheet","hidden":false}]},
+  "features":{"count":1,"verdicts":{"after_blocker":0,"left_out":0,"mapped":1,"needs_solidcraft_check":0,"not_needed":0,"not_supported_yet":0},
+    "items":[{"part":null,"ordinal":0,"kind":"sketch","name":"Sketch 1","variant":null,"suppressed":false,"verdict":"mapped","reason":null}]},
+  "parameters":{"count":2,"items":[
+    {"part":null,"name":"d1","value":10.0,"unit":"mm","expression":"10 mm","feature":"Sketch 1"},
+    {"part":null,"name":"d2","value":10.0,"unit":"mm","expression":"10 mm","feature":"Sketch 1"}]},
+  "losses":[…]}}}
 ```
 
 Convert one file:
@@ -618,7 +666,7 @@ parameter edits, particularly named sketch constraint expressions and object-lab
 
 - **Everything stays on your machine.** The server reads and writes local files only and
   sends nothing over the network. It runs `solidcraft-cli` locally for the history check.
-- **What it writes.** `inspect` and `formats` write nothing. `convert` writes only its
+- **What it writes.** `inspect`, `contents` and `formats` write nothing. `convert` writes only its
   `output` file, matching the selected format. `convert_all` writes converted designs and
   its ordinary log inside `out_dir`. If supplied, `diagnostics`, `journal`, `report_anon`,
   and `report_key` are also written at their specified paths. `diagnostics_default` writes

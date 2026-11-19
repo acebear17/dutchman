@@ -358,7 +358,7 @@ Which SolidCraft a design is written for, and how Dutchman finds the installed o
 ## Where next
 
 - [The desktop app](desktop.md): presets, estimates, the SolidCraft version, and updates.
-- [The command line](command-line.md): options, `inspect`, whole folders, watching a folder.
+- [The command line](command-line.md): options, `inspect`, `contents`, whole folders, watching a folder.
 - [Choosing what to keep](presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Formats](formats.md): what converts from each program.
 - [Feature history](history.md): what maps onto SolidCraft, and what stops a history.
@@ -424,6 +424,16 @@ This page used to hold everything. Each part now has its own page:
 
 [Look before you convert: inspect](command-line.md#look-before-you-convert-inspect)
 
+### List what a file holds: contents
+
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
+[List what a file holds: contents](command-line.md#list-what-a-file-holds-contents)
+
+Contents reports what maps for the newest SolidCraft release known to this build,
+without looking for or launching an installed SolidCraft CLI.
+
 ### Progress during conversion
 
 [Progress during conversion](command-line.md#progress-during-conversion)
@@ -465,6 +475,19 @@ complete bounds and derived placement; missing measurements keep the refusal. Re
 only by centroids are refused because a centroid may lie outside its own region. One 120 s
 feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
 evaluations; late results keep the refusal.
+
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source

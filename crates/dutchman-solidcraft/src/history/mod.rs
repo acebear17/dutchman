@@ -49,6 +49,10 @@ use serde_json::{json, Value};
 /// topology homes and enum payloads are read in that serializer's wire layout.
 const IR_VERSIONS: [&str; 6] = ["6", "7", "8", "9", "10", "11"];
 
+/// The reason of a feature that is not mapped because an earlier one blocks the history.
+pub(crate) const AFTER_BLOCKER: &str =
+    "after the first blocking feature; kept in the imported final shape";
+
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct History {
@@ -1186,9 +1190,7 @@ fn map_into(
         if blocked.is_some() && (!is_sketch(feature) || !keep_sketches) && !structural {
             out.push(outcome(
                 FeatureStatus::Blocked,
-                Some(
-                    "after the first blocking feature; kept in the imported final shape".to_owned(),
-                ),
+                Some(AFTER_BLOCKER.to_owned()),
             ));
             continue;
         }
