@@ -140,9 +140,15 @@ mod tests {
     #[test]
     fn host_command_results_use_the_shared_edge_and_face_parsers() {
         let host: &dyn SolidCraftEvaluator = &Host;
-        let steps =
-            crate::verify::replay_edges(host, DEFAULT_TIMEOUT, b"design", &[2, 4], true, false)
-                .unwrap();
+        let steps = crate::verify::replay_edges(
+            host,
+            DEFAULT_TIMEOUT,
+            b"design",
+            &[2, 4],
+            true,
+            &[false, false],
+        )
+        .unwrap();
         assert_eq!(steps.len(), 2);
         for step in steps {
             let step = step.unwrap();

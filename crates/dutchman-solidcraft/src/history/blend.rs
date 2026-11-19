@@ -424,28 +424,49 @@ pub(super) fn historical(
     Ok((inputs, points))
 }
 
-/// A path must visit its selected edges in source order, end to end. Edge carriers may
-/// run against traversal, so try both directions of the first edge. Repeated edges are
-/// refused by the replay proof; branches and disconnected or reordered paths fail here.
-pub(super) fn connected(inputs: &[Input]) -> bool {
+/// Establish one open traversal in source order. Carriers may run against traversal;
+/// closed chains and multiple successful starts need a source traversal we cannot save yet.
+pub(super) fn connected(inputs: &[Input]) -> Result<(), String> {
+    const TRAVERSAL: &str = "sweep paths on closed or ambiguous input edge chains need a proven start and traversal direction, which is not supported yet";
     let Some(first) = inputs.first() else {
-        return false;
+        return Err(
+            "its selected input edges do not form a connected path in source order".to_owned(),
+        );
     };
-    if inputs.len() == 1 {
-        return true;
+    if inputs.iter().any(Input::is_closed) {
+        return Err(TRAVERSAL.to_owned());
     }
-    [first.ends.0, first.ends.1].into_iter().any(|mut at| {
+    if inputs.len() == 1 {
+        return Ok(());
+    }
+    let mut starts = 0usize;
+    let mut closed = false;
+    for (start, mut at) in [(first.ends.0, first.ends.1), (first.ends.1, first.ends.0)] {
+        let mut visited = vec![start, at];
+        let mut success = true;
         for input in inputs.iter().skip(1) {
             at = if near(at, input.ends.0) && !near(at, input.ends.1) {
                 input.ends.1
             } else if near(at, input.ends.1) && !near(at, input.ends.0) {
                 input.ends.0
             } else {
-                return false;
+                success = false;
+                break;
             };
+            closed |= visited.iter().any(|point| near(at, *point));
+            visited.push(at);
         }
-        true
-    })
+        if success {
+            starts = starts.saturating_add(1);
+        }
+    }
+    if closed || starts > 1 {
+        Err(TRAVERSAL.to_owned())
+    } else if starts == 1 {
+        Ok(())
+    } else {
+        Err("its selected input edges do not form a connected path in source order".to_owned())
+    }
 }
 
 /// Edges an extrusion or a sheet-metal base flange generated from its sketch, as cadmpeg names
@@ -611,6 +632,11 @@ pub(crate) struct Selection {
 /// Blends may split over disjoint bodies with identical parameters. A sweep path must
 /// stay on one actual body, even if two rebuilt bodies happen to have the same name.
 pub(crate) fn prove_replay(pending: &Pending, replay: &Replay) -> Result<Vec<Selection>, String> {
+    if needs_curves(pending) {
+        if let Some(why) = &replay.curve_error {
+            return Err(why.clone());
+        }
+    }
     prove_edges(pending, &replay.bodies)
 }
 
@@ -1050,6 +1076,7 @@ mod tests {
         let replay = super::Replay {
             bodies: vec![("Cylinder".to_owned(), vec![edge])],
             faces: Vec::new(),
+            curve_error: None,
         };
         assert_eq!(
             super::prove_replay(&pending, &replay).unwrap(),
@@ -1112,6 +1139,7 @@ mod tests {
         let replay = super::Replay {
             bodies: vec![("Arc".to_owned(), vec![edge])],
             faces: Vec::new(),
+            curve_error: None,
         };
         assert!(super::prove_replay(&pending, &replay).is_ok());
         for wrong in 0..4 {
@@ -1131,13 +1159,13 @@ mod tests {
         let a = straight_input(0.0);
         let mut b = straight_input(0.0);
         b.ends = ([0.0, 0.0, 10.0], [10.0, 0.0, 10.0]);
-        assert!(super::connected(&[a.clone(), b.clone()]));
+        assert!(super::connected(&[a.clone(), b.clone()]).is_ok());
         b.ends = (b.ends.1, b.ends.0);
-        assert!(super::connected(&[a.clone(), b.clone()]));
+        assert!(super::connected(&[a.clone(), b.clone()]).is_ok());
         b.ends.0[1] = 1.0;
         b.ends.1[1] = 1.0;
-        assert!(!super::connected(&[a, b]));
-        assert!(!super::connected(&[]));
+        assert!(super::connected(&[a, b]).is_err());
+        assert!(super::connected(&[]).is_err());
     }
 
     #[test]

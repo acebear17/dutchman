@@ -224,9 +224,12 @@ Call `inspect` with `input`. It writes nothing. Read:
 - `losses`: everything that will not carry across intact.
 
 For SolidCraft 0.44 and newer, a sweep can follow a connected chain of proven historical
-input edges on one body. Closed circular fillet and chamfer edges match by centre, radius,
-plane and circumference, independently of their seams, using SolidCraft's exact circular
-carrier measurements. Body-edge proofs need SolidCraft replay and cannot be proven with
+input edges on one body. Closed chains made from open edges also remain refused until
+their start and traversal can be proven. If exact curve measurements are unavailable,
+earlier straight-edge blends remain editable. Closed circular fillet and chamfer edges
+match by centre, radius, plane and circumference, independently of their seams, using
+SolidCraft's exact circular carrier measurements. Body-edge proofs need SolidCraft replay
+and cannot be proven with
 verification off. A stored sketch wire can instead resolve to its own earlier sketch after
 matching every entire curve by its source geometry.
 Topological guide rails, unproven edges and older targets retain the original geometry

@@ -1514,6 +1514,8 @@ pub(crate) struct ReplayedFace {
 pub(crate) struct Replay {
     pub bodies: ReplayedBodies,
     pub faces: Vec<Vec<ReplayedFace>>,
+    /// Optional carrier measurement failure; ordinary edge replay is still usable.
+    pub curve_error: Option<String>,
 }
 
 /// The bodies at one point of a replayed timeline, each by name with its edges.
@@ -1534,7 +1536,7 @@ pub(crate) fn replay_edges(
     design: &[u8],
     after: &[u64],
     faces: bool,
-    curves: bool,
+    curves: &[bool],
 ) -> Result<Vec<Result<Replay, String>>, String> {
     let deadline = Instant::now() + timeout;
     let roll = |id: u64| crate::replay::roll_commands(id)[0].clone();
@@ -1556,6 +1558,7 @@ pub(crate) fn replay_edges(
         steps.push(step_bodies(inspect).map(|bodies| Replay {
             bodies,
             faces: Vec::new(),
+            curve_error: None,
         }));
     }
     let mut script = Vec::new();
@@ -1625,28 +1628,33 @@ pub(crate) fn replay_edges(
             }
         }
     }
-    if curves {
-        measure_curves(cli, deadline, design, after, &mut steps)?;
-    }
+    measure_curves(cli, deadline, design, after, curves, &mut steps);
     Ok(steps)
 }
 
-/// Request exact carriers only for curved edges. A per-step cap bounds command and
-/// response expansion; a model beyond it keeps its original shape with a named refusal.
+/// Request exact carriers only at steps whose consumer needs them. Optional failures
+/// leave ordinary edge replay intact and refuse only consumers needing measurements.
 fn measure_curves(
     cli: &(impl SolidCraftEvaluator + ?Sized),
     deadline: Instant,
     design: &[u8],
     after: &[u64],
+    curves: &[bool],
     steps: &mut [Result<Replay, String>],
-) -> Result<(), String> {
+) {
     let mut commands = Vec::new();
     let mut queries = Vec::new();
-    for (step, (id, replay)) in after.iter().zip(steps.iter()).enumerate() {
-        commands.push(crate::replay::roll_commands(*id)[0].clone());
+    for (step, ((id, replay), needed)) in after.iter().zip(steps.iter_mut()).zip(curves).enumerate()
+    {
+        if !needed {
+            continue;
+        }
         let Ok(replay) = replay else { continue };
+        let command_start = commands.len();
+        let query_start = queries.len();
+        commands.push(crate::replay::roll_commands(*id)[0].clone());
         let mut count = 0usize;
-        for (body, (name, edges)) in replay.bodies.iter().enumerate() {
+        'bodies: for (body, (name, edges)) in replay.bodies.iter().enumerate() {
             for (edge, candidate) in edges.iter().enumerate() {
                 let chord = candidate
                     .start
@@ -1664,39 +1672,57 @@ fn measure_curves(
                 }
                 count = count.saturating_add(1);
                 if count > 256 || commands.len() > REPLAY_EDGES {
-                    return Err("exact curved-edge measurements exceed the replay limit".to_owned());
+                    replay.curve_error =
+                        Some("exact curved-edge measurements exceed the replay limit".to_owned());
+                    break 'bodies;
                 }
-                let index = candidate
-                    .index
-                    .ok_or("SolidCraft did not report an index for a curved edge")?;
+                let Some(index) = candidate.index else {
+                    replay.curve_error =
+                        Some("SolidCraft did not report an index for a curved edge".to_owned());
+                    break 'bodies;
+                };
                 queries.push((commands.len(), step, body, edge));
                 commands.push(serde_json::json!({"command":"inspect.measure","params":{
                     "items":[{"type":"edge","body":name,"index":index}]}}));
             }
         }
+        if replay.curve_error.is_some() {
+            commands.truncate(command_start);
+            queries.truncate(query_start);
+        }
     }
     if queries.is_empty() {
-        return Ok(());
+        return;
     }
     let results = cli.run(
         design,
         &commands,
         deadline.saturating_duration_since(Instant::now()),
         "curves",
-    )?;
+    );
     for (result, step, body, edge) in queries {
-        let row = results
-            .get(result)
-            .ok_or("SolidCraft's exact edge measurement is missing")?;
-        let candidate = steps
-            .get_mut(step)
-            .and_then(|step| step.as_mut().ok())
-            .and_then(|step| step.bodies.get_mut(body))
-            .and_then(|(_, edges)| edges.get_mut(edge))
-            .ok_or("SolidCraft's measured edge is missing")?;
-        candidate.curve = measured_curve(row);
+        let Some(replay) = steps.get_mut(step).and_then(|step| step.as_mut().ok()) else {
+            continue;
+        };
+        let row = match &results {
+            Ok(results) => results
+                .get(result)
+                .ok_or("SolidCraft's exact edge measurement is missing"),
+            Err(why) => Err(why.as_str()),
+        };
+        match row {
+            Ok(row) => {
+                if let Some(candidate) = replay
+                    .bodies
+                    .get_mut(body)
+                    .and_then(|(_, edges)| edges.get_mut(edge))
+                {
+                    candidate.curve = measured_curve(row);
+                }
+            }
+            Err(why) => replay.curve_error = Some(why.to_owned()),
+        }
     }
-    Ok(())
 }
 
 fn measured_curve(result: &Value) -> Option<ReplayedCurve> {

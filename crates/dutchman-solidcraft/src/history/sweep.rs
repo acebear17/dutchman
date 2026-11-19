@@ -65,14 +65,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         }
         let selection = definition.get("path").ok_or("it has no path")?;
         let (inputs, points) = super::blend::historical(feature, selection, ctx, false)?;
-        if inputs.iter().any(super::blend::Input::is_closed) {
-            return Err("sweep paths on closed input edges need a proven start and traversal direction, which is not supported yet".to_owned());
-        }
-        if !super::blend::connected(&inputs) {
-            return Err(
-                "its selected input edges do not form a connected path in source order".to_owned(),
-            );
-        }
+        super::blend::connected(&inputs)?;
         if let Some((sketch, path)) = super::edge_path::sketch(feature, selection, &inputs, ctx)? {
             (Some(sketch), path, None)
         } else {

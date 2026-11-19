@@ -193,7 +193,10 @@ own input state. Resolved edges are preserved only from one hidden earlier depen
 result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
 to that sketch only when every edge matches one entire emitted curve by its endpoints,
 midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
-source order, and bind the whole path to one rebuilt body.
+source order, and bind the whole path to one rebuilt body. Closed chains assembled from
+open edges remain refused until their start and traversal direction can be proven.
+Exact curve measurements are requested only for consumers that need them; a measurement
+limit or failure preserves earlier straight-edge blends.
 Later edge consumers replay after this binding. Topological guide rails remain unsupported;
 SolidCraft's rail representation requires sketch curves. Paths without proven earlier
 input geometry and older targets keep specific refusals.

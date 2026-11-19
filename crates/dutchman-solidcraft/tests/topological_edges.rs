@@ -812,3 +812,147 @@ fn unchecked_topological_histories_keep_the_original_visible() {
             .any(|feature| feature["type"] == "import" && feature["suppressed"] == false));
     }
 }
+
+#[test]
+fn optional_curve_failures_keep_the_earlier_straight_blend() {
+    for curves in [1, 257] {
+        let mut wire = closed_wire(true, false);
+        let m = &mut wire["model"];
+        m["features"][2]["ordinal"] = json!(3);
+        let straight = feature(
+            "test:model:feature#4",
+            2,
+            json!({"kind":"fillet","value":{"groups":[{
+            "edges":{"kind":"historical","value":{"state":"test:model:feature-input#2","edges":["straight"],"native":"synthetic straight edge"}},
+            "radius":{"kind":"constant","radius":0.5}}]}}),
+        );
+        m["features"].as_array_mut().unwrap().insert(2, straight);
+        m["feature_input_topologies"].as_array_mut().unwrap().push(json!({
+            "id":"test:model:feature-input#2","input_of":"test:model:feature#4",
+            "bodies":[],"faces":[],"vertices":[],"edges":["straight"],
+            "edge_geometry":[sample("straight",[0.0;3],[0.0,0.0,5.0],[0.0,0.0,10.0],[0.0,0.0,1.0])]}));
+        let mut edges = vec![
+            json!({"name":"straight","start":[0,0,0],"mid":[0,0,5],"end":[0,0,10],"length":10}),
+        ];
+        edges.extend((0..curves).map(|index| {
+            json!({"index":index,"name":format!("rim{index}"),
+            "start":[7,5,10],"mid":[3,5,10],"end":[7,5,10],"length":12.54})
+        }));
+        let writer = SolidCraftWriter::new()
+            .target_version(Some("0.44.1".parse().unwrap()))
+            .verification(Verification::Off)
+            .replay(Verification::Auto)
+            .evaluator(std::sync::Arc::new(EdgeReplay(vec![(
+                "unit cube".to_owned(),
+                edges,
+            )])));
+        let (_, document, report) = written(&wire, &writer);
+        let features = document["features"].as_array().unwrap();
+        assert_eq!(
+            features.iter().filter(|f| f["type"] == "fillet").count(),
+            1,
+            "{document}\n{report:?}"
+        );
+        assert!(!features.iter().any(|f| f["type"] == "chamfer"));
+        let reason = if curves == 257 {
+            "exact curved-edge measurements exceed the replay limit"
+        } else {
+            "unexpected replay command"
+        };
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.contains(reason)),
+            "{report:?}"
+        );
+    }
+}
+
+#[test]
+fn topological_closed_chains_refuse_unproven_traversal_with_twist_and_scale() {
+    let semicircles = vec![
+        sample(
+            "first",
+            [5.0, 0.0, 0.0],
+            [0.0, 5.0, 0.0],
+            [-5.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ),
+        sample(
+            "second",
+            [-5.0, 0.0, 0.0],
+            [0.0, -5.0, 0.0],
+            [5.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ),
+    ];
+    let polygon = vec![
+        sample(
+            "first",
+            [0.0; 3],
+            [5.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ),
+        sample(
+            "second",
+            [10.0, 0.0, 0.0],
+            [10.0, 5.0, 0.0],
+            [10.0, 10.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ),
+        sample(
+            "third",
+            [10.0, 10.0, 0.0],
+            [5.0, 10.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ),
+        sample(
+            "fourth",
+            [0.0, 10.0, 0.0],
+            [0.0, 5.0, 0.0],
+            [0.0; 3],
+            [0.0, -1.0, 0.0],
+        ),
+    ];
+    for geometry in [semicircles, polygon] {
+        for controls in [
+            json!({}),
+            json!({"twist":0.5}),
+            json!({"scale":1.5}),
+            json!({"twist":0.5,"scale":1.5}),
+        ] {
+            let mut wire = path_wire();
+            let ids: Vec<_> = geometry.iter().map(|edge| edge["edge"].clone()).collect();
+            let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
+            definition["path"]["value"]["edges"] = json!(ids);
+            definition
+                .as_object_mut()
+                .unwrap()
+                .extend(controls.as_object().unwrap().clone());
+            let state = &mut wire["model"]["feature_input_topologies"][0];
+            state["edges"] = json!(ids);
+            state["edge_geometry"] = json!(geometry);
+            let (_, document, report) = written(
+                &wire,
+                &SolidCraftWriter::new()
+                    .target_version(Some("0.44.1".parse().unwrap()))
+                    .verification(Verification::Off),
+            );
+            assert!(!document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "sweep"));
+            assert!(
+                report
+                    .losses()
+                    .iter()
+                    .any(|loss| loss.detail.contains("proven start and traversal direction")),
+                "{report:?}"
+            );
+        }
+    }
+}

@@ -353,7 +353,9 @@ and equal-distance chamfers when their centre, radius, plane and circumference m
 uniquely, regardless of seam position. SolidCraft's exact edge measurement establishes
 its circular carrier. Missing source geometry, ambiguous matches, topological guide rails, and older
 targets keep the original geometry and report a specific history blocker. Closed sweep
-paths still require a proven start and traversal direction and remain refused. These proofs
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
 require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
 edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
 matches one entire mapped curve, including the midpoint and length of an arc.

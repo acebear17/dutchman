@@ -1578,7 +1578,7 @@ enum Proven {
 /// the history with the reason; without a replay (`replay` returning `Err`) none can be.
 pub(crate) fn prove_blends(
     mapping: &mut Mapping,
-    mut replay: impl FnMut(&History, &[u64], bool, bool) -> Replayed,
+    mut replay: impl FnMut(&History, &[u64], bool, &[bool]) -> Replayed,
 ) {
     let Ok(history) = &mut mapping.result else {
         return;
@@ -1607,7 +1607,13 @@ pub(crate) fn prove_blends(
             history,
             &steps,
             faces,
-            history.blends.iter().any(blend::needs_curves),
+            &history
+                .blends
+                .iter()
+                .zip(&after)
+                .filter(|(_, marker)| marker.is_some())
+                .map(|(pending, _)| blend::needs_curves(pending))
+                .collect::<Vec<_>>(),
         )
     };
     let blends = std::mem::take(&mut history.blends);
@@ -1694,10 +1700,13 @@ pub(crate) fn prove_blends(
                         history,
                         &remaining,
                         faces,
-                        blends
+                        &blends
                             .iter()
+                            .zip(&after)
                             .skip(index.saturating_add(1))
-                            .any(blend::needs_curves),
+                            .filter(|(_, marker)| marker.is_some())
+                            .map(|(pending, _)| blend::needs_curves(pending))
+                            .collect::<Vec<_>>(),
                     );
                     step = 0;
                 }
@@ -1734,10 +1743,13 @@ pub(crate) fn prove_blends(
                             history,
                             &remaining,
                             faces,
-                            blends
+                            &blends
                                 .iter()
+                                .zip(&after)
                                 .skip(index.saturating_add(1))
-                                .any(blend::needs_curves),
+                                .filter(|(_, marker)| marker.is_some())
+                                .map(|(pending, _)| blend::needs_curves(pending))
+                                .collect::<Vec<_>>(),
                         );
                         step = 0;
                     }
