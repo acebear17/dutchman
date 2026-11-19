@@ -3313,10 +3313,10 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
             assert!(!app.running());
-            assert!(app
-                .notice
-                .as_ref()
-                .is_some_and(|notice| notice.contains("HTTPS")));
+            assert_eq!(
+                app.notice.as_deref(),
+                Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+            );
             assert!(!app.notice.as_ref().unwrap().contains("synthetic"));
             let scratch = app.download_root.as_ref().unwrap().path().to_path_buf();
             assert!(scratch.exists());
@@ -3344,11 +3344,11 @@ mod tests {
             harness.state_mut().receive(&ctx);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert!(harness
-            .state()
-            .notice
-            .as_ref()
-            .is_some_and(|notice| notice.contains("HTTPS")));
+        assert!(!harness.state().running());
+        assert_eq!(
+            harness.state().notice.as_deref(),
+            Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+        );
     }
 
     #[test]
