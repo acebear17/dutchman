@@ -466,9 +466,27 @@ cadmpeg's cause and add recovery advice and a link to the
 Normal JSON reports contain file names and paths. For sharing, request `--report-anon FILE`
 (MCP `report_anon`) and review that file first; keep logs, journals, keys, and salts private.
 
-The desktop app shows Info messages with subject `history` directly on result cards,
-including Standard's explanation when history is left out to fit in free memory.
-These are existing `losses` entries; desktop estimates and preset labels add no report fields.
+The desktop RESULTS card presents existing `history.features`, `history.parts`, `verification`,
+and `losses` in summary chips, an open timeline, and loss cards. Its severity labels map
+`Dropped` to Lost, `Degraded` to Changed, and `Info` to Note; report values do not change.
+Standard's explanation when history is left out to fit free memory stays visible in the detail.
+Raw codes and messages remain under Details. Optional local PNG previews add no report fields.
+Preview PNGs beside the design carry Dutchman ownership and source size/time metadata.
+Unmarked PNGs silently skip the preview and are never reused or changed. Cache publication
+never replaces an occupied path; stale owned PNGs can be deleted to cache fresh renders.
+Assembly loss filenames join history names only for unique matches; ambiguous losses remain
+in a separate loss section without a history claim. Unreadable source records have a specific
+loss title.
+
+Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+The full verification explanation stays in **Save the full log…**; the card uses chips
+and the feature timeline instead of repeating it above the timeline.
+Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
+**Source order** restores report order. Loss titles name the affected data; **Details**
+retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.
+
+See [reading desktop results](desktop.md#read-the-results).
+Desktop estimates and preset labels also add no report fields.
 The desktop file row shows a live total, including checking only when
 checking is on and a usable CLI was found, and showing Standard's reduced history choice.
 Its separate read, conversion and check figures and remembered controls are desktop
@@ -1307,3 +1325,10 @@ No report fields or schema versions change.
 
 The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
 and **GitHub issue** (a public issue under the user’s GitHub name).
+
+A muted line between the desktop report steps and these pills reassures users: "Only the
+Dutchman team sees it. It's never published or used in public tests, and we delete it on request."
+
+The desktop DM Dutchy card always says "Paste the message, then drag the file in." and
+"Big files: Dutchy replies with an upload link." on two lines. File size still determines
+whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.

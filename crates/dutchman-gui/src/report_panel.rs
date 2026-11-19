@@ -19,8 +19,11 @@ pub const RUNNING_INTRO: &str = "Taking a long time, or stuck? Tell us while it 
 pub const STEP_TEXT: &str =
     "A STEP export of the same design, at the same version and part positions, lets us check \
      every part.";
-/// The DM card's hint when no finished file is chosen.
-pub const DM_GENERAL: &str = "Paste the message and say what's wrong.";
+/// The DM card's two-line hint for every file size.
+pub const DM_GENERAL: &str =
+    "Paste the message, then drag the file in.\nBig files: Dutchy replies with an upload link.";
+/// The privacy reassurance between the step cards and the backup buttons.
+pub const PRIVACY: &str = "Only the Dutchman team sees it. It's never published or used in public tests, and we delete it on request.";
 /// Shown on the Discord card once its invite has opened.
 pub const JOIN_DONE: &str = "The invite opened in your browser. Then go to step 2.";
 /// Shown on the DM card once its message is copied, for a file dragged into the DM.
@@ -88,55 +91,82 @@ pub fn cards(
         .unwrap_or(0.0);
     let mut measured = 0.0_f32;
     for (line, chunk) in all.chunks(across).enumerate() {
-        ui.columns(across, |columns| {
-            for (column, (ui, card)) in columns.iter_mut().zip(chunk).enumerate() {
-                let number = line * across + column + 1;
-                let natural_id = base.with(("natural", number));
-                let natural = ui
-                    .data(|data| data.get_temp::<f32>(natural_id))
-                    .unwrap_or(0.0);
-                let spare = (tallest - natural).max(0.0);
-                let advice = card.button.is_none();
-                let frame = if advice {
-                    Frame::new()
+        let available = ui.available_width() - gap * across.saturating_sub(1) as f32;
+        // Give the DM instructions two full lines when all three steps share a row.
+        let wide_dm = across == 3 && chunk.iter().any(|card| card.hint == DM_GENERAL);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (column, card) in chunk.iter().enumerate() {
+                let share = if wide_dm {
+                    if card.hint == DM_GENERAL {
+                        0.48
+                    } else {
+                        0.26
+                    }
                 } else {
-                    Frame::new()
-                        .fill(p.surface_2)
-                        .stroke(Stroke::new(1.0_f32, p.hairline))
+                    1.0 / across as f32
                 };
-                frame
-                    .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-                    .inner_margin(Margin::same(theme::CARD_PADDING as i8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        theme::compact_rows(ui);
-                        let top = ui.cursor().top();
-                        ui.horizontal(|ui| {
-                            badge(ui, p, number, advice);
-                            ui.add(
-                                egui::Label::new(RichText::new(card.title).strong().color(p.ink))
-                                    .wrap(),
-                            );
-                        });
-                        ui.add_space(spare);
-                        if let Some((label, step)) = card.button {
-                            if ui.add(filled(p, label)).clicked() {
-                                pressed = Some(step);
-                            }
-                        }
-                        // Left-aligned: a justified column would stretch the gaps between words.
-                        ui.with_layout(Layout::top_down(Align::Min), |ui| match card.done {
-                            Some(done) => {
-                                ui.label(RichText::new(done).small().strong().color(p.ink));
-                            }
-                            None => {
-                                ui.label(RichText::new(card.hint).small().color(p.tide));
-                            }
-                        });
-                        let height = ui.cursor().top() - top - spare;
-                        ui.data_mut(|data| data.insert_temp(natural_id, height));
-                        measured = measured.max(height);
-                    });
+                ui.allocate_ui_with_layout(
+                    egui::vec2(available * share, 0.0),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        let number = line * across + column + 1;
+                        let natural_id = base.with(("natural", number));
+                        let natural = ui
+                            .data(|data| data.get_temp::<f32>(natural_id))
+                            .unwrap_or(0.0);
+                        let spare = (tallest - natural).max(0.0);
+                        let advice = card.button.is_none();
+                        let frame = if advice {
+                            Frame::new()
+                        } else {
+                            Frame::new()
+                                .fill(p.surface_2)
+                                .stroke(Stroke::new(1.0_f32, p.hairline))
+                        };
+                        frame
+                            .corner_radius(CornerRadius::same(theme::RADIUS_LG))
+                            .inner_margin(Margin::same(theme::CARD_PADDING as i8))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                theme::compact_rows(ui);
+                                let top = ui.cursor().top();
+                                ui.horizontal(|ui| {
+                                    badge(ui, p, number, advice);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(card.title).strong().color(p.ink),
+                                        )
+                                        .wrap(),
+                                    );
+                                });
+                                ui.add_space(spare);
+                                if let Some((label, step)) = card.button {
+                                    if ui.add(filled(p, label)).clicked() {
+                                        pressed = Some(step);
+                                    }
+                                }
+                                // Left-aligned: a justified column would stretch the gaps between words.
+                                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                    match card.done {
+                                        Some(done) => {
+                                            ui.label(
+                                                RichText::new(done).small().strong().color(p.ink),
+                                            );
+                                        }
+                                        None => {
+                                            ui.label(
+                                                RichText::new(card.hint).small().color(p.tide),
+                                            );
+                                        }
+                                    }
+                                });
+                                let height = ui.cursor().top() - top - spare;
+                                ui.data_mut(|data| data.insert_temp(natural_id, height));
+                                measured = measured.max(height);
+                            });
+                    },
+                );
             }
         });
         ui.add_space(theme::SPACE_1);

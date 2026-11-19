@@ -417,6 +417,27 @@ new-body feature mapped) is `blocked` before replay, with a reason asking for it
 body-producing feature to resolve first. Source storage order does not
 change replay order: the neutral ordinal controls it.
 
+### Desktop results
+
+The [desktop RESULTS card](desktop.md#read-the-results) shows rebuilt feature counts, checking
+status, a source feature timeline, and losses with plain titles. Lost / Changed / Note map
+to Dropped / Degraded / Info in the existing reports. Detail starts open and scrolls below
+the action buttons; optional cached 3D previews arrive after conversion. A matching STEP
+export can appear beside the converted preview. No report fields or conversion defaults change.
+Preview PNGs beside the design carry Dutchman ownership and source size/time metadata.
+Unmarked PNGs silently skip the preview and are never reused or changed. Cache publication
+never replaces an occupied path; stale owned PNGs can be deleted to cache fresh renders.
+Assembly loss filenames join history names only for unique matches; ambiguous losses remain
+in a separate loss section without a history claim. Unreadable source records have a specific
+loss title.
+
+Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+The full verification explanation stays in **Save the full log…**; the card uses chips
+and the feature timeline instead of repeating it above the timeline.
+Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
+**Source order** restores report order. Loss titles name the affected data; **Details**
+retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.
+
 ### Diagnostic logs for unfinished runs
 
 [Diagnostic logs for unfinished runs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
@@ -550,8 +571,10 @@ in view. Click its folder path or **Change…** to reopen all output settings. *
 removes the designs and results and restores the expanded settings.
 
 Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
-pills sit directly below the three steps in **Is there a problem? Is something missing?**,
-and also appear under **More**. **Anonymous report** opens a review for the chosen file
+pills sit below the three steps in **Is there a problem? Is something missing?**,
+and also appear under **More**. A muted privacy line between the steps and pills says:
+"Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
+on request." **Anonymous report** opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
@@ -659,3 +682,7 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+The desktop DM Dutchy card always says "Paste the message, then drag the file in." and
+"Big files: Dutchy replies with an upload link." on two lines. File size still determines
+whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.
