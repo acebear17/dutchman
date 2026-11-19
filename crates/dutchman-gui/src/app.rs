@@ -127,6 +127,12 @@ pub struct App {
     pub updater: crate::update::Updater,
     diagnosis: Option<crate::diagnose::Wizard>,
     inputs: Vec<PathBuf>,
+    share_link: String,
+    pending_links: Vec<String>,
+    downloading: bool,
+    downloads: Vec<dutchman::share_links::Downloaded>,
+    /// Owned on the window thread so closing the app removes active partial downloads.
+    download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     project_summary: String,
     has_inventor: bool,
@@ -433,6 +439,11 @@ impl App {
         App {
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
+            share_link: String::new(),
+            pending_links: Vec::new(),
+            downloading: false,
+            downloads: Vec::new(),
+            download_root: None,
             doctor: None,
             project_summary: String::new(),
             has_inventor: false,
@@ -576,6 +587,11 @@ impl App {
     /// Adds design files and folders to convert, each once.
     pub fn add_inputs(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
+            if dutchman::share_links::is_url(&path.to_string_lossy()) || worker::is_link_file(&path)
+            {
+                self.queue_links(&path.to_string_lossy());
+                continue;
+            }
             if self.out_dir.is_none() {
                 self.out_dir = Some(dutchman::batch::default_output(&path));
             }
@@ -583,6 +599,29 @@ impl App {
                 self.inputs.push(path);
             }
         }
+    }
+
+    fn queue_links(&mut self, text: &str) {
+        for link in text
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        {
+            if self.pending_links.len() >= 16 {
+                self.notice = Some("Add at most 16 share links at a time.".into());
+                break;
+            }
+            if !self.pending_links.iter().any(|old| old == link) {
+                self.pending_links.push(link.to_owned());
+            }
+        }
+    }
+
+    fn keep_used_downloads(&mut self) {
+        self.downloads.retain(|file| {
+            self.inputs.iter().any(|path| file.contains(path))
+                || self.rows.iter().any(|row| file.contains(&row.input))
+        });
     }
 
     /// Sets the folder designs are written to.
@@ -946,7 +985,7 @@ impl App {
 
     /// Whether a run is in progress.
     pub fn running(&self) -> bool {
-        self.run.is_some() || self.pending.is_some()
+        self.run.is_some() || self.pending.is_some() || self.downloading
     }
 
     fn refresh_blocked_checker(&mut self) {
@@ -1159,6 +1198,25 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::Downloaded(results) => {
+                    self.downloading = false;
+                    for result in results {
+                        match result {
+                            Ok(file) => {
+                                if self.out_dir.is_none() {
+                                    // A download's output must survive removal of its scratch folder.
+                                    self.out_dir = Some(dutchman::batch::default_output(
+                                        Path::new(file.path().file_name().unwrap_or_default()),
+                                    ));
+                                }
+                                self.add_inputs([file.path().to_path_buf()]);
+                                self.downloads.push(file);
+                            }
+                            Err(message) => self.notice = Some(message),
+                        }
+                    }
+                    self.keep_used_downloads();
+                }
                 Message::ProjectSummary {
                     generation,
                     text,
@@ -1213,6 +1271,7 @@ impl App {
                             size: None,
                         }))
                         .collect();
+                    self.keep_used_downloads();
                     if let Some(path) = &self.diagnostic_path {
                         self.row_logs = (0..self.rows.len())
                             .map(|index| (index, path.clone()))
@@ -1306,15 +1365,72 @@ impl App {
     }
 
     fn take_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
+        if self.running() {
+            return;
+        }
+        let accepts_paste = !ctx.wants_keyboard_input();
+        let (dropped, links) = ctx.input(|i| {
+            let paths: Vec<_> = i
+                .raw
                 .dropped_files
                 .iter()
                 .filter_map(|file| file.path.clone())
-                .collect()
+                .collect();
+            let mut links = Vec::new();
+            for file in &i.raw.dropped_files {
+                if let Some(bytes) = file.bytes.as_ref().filter(|bytes| bytes.len() <= 8192) {
+                    if let Ok(text) = std::str::from_utf8(bytes) {
+                        links.extend(
+                            text.lines()
+                                .map(str::trim)
+                                .filter(|line| dutchman::share_links::is_url(line))
+                                .map(str::to_owned),
+                        );
+                    }
+                } else if dutchman::share_links::is_url(&file.name) {
+                    links.push(file.name.clone());
+                }
+            }
+            if accepts_paste {
+                for event in &i.events {
+                    if let egui::Event::Paste(text) = event {
+                        if text.len() <= 8192 && dutchman::share_links::is_url(text) {
+                            links.push(text.clone());
+                        }
+                    }
+                }
+            }
+            (paths, links)
         });
-        if !dropped.is_empty() && !self.running() {
-            self.add_inputs(dropped);
+        self.add_inputs(dropped);
+        for link in links {
+            self.queue_links(&link);
+        }
+        if !self.pending_links.is_empty() {
+            let links = std::mem::take(&mut self.pending_links);
+            let root = match &self.download_root {
+                Some(folder) => folder.path().to_path_buf(),
+                None => match tempfile::Builder::new()
+                    .prefix("dutchman-shares-")
+                    .tempdir()
+                {
+                    Ok(folder) => {
+                        let path = folder.path().to_path_buf();
+                        self.download_root = Some(folder);
+                        path
+                    }
+                    Err(_) => {
+                        self.notice = Some(
+                            "Cannot create a temporary download folder. Check free disk space."
+                                .into(),
+                        );
+                        return;
+                    }
+                },
+            };
+            self.downloading = true;
+            self.notice = None;
+            worker::download_links(links, root, self.sender.clone(), ctx.clone());
         }
     }
 
@@ -1774,7 +1890,7 @@ impl App {
             if self.inputs.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(theme::SPACE_4);
-                    ui.label(RichText::new("Drop design files, folders or ZIPs here").heading());
+                    ui.label(RichText::new("Drop design files, folders, ZIPs or link shortcuts here").heading());
                     ui.label(
                         RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Rhino, ACIS, STEP and IGES")
                         .small()
@@ -1876,6 +1992,7 @@ impl App {
                     });
                 if let Some(index) = remove {
                     self.inputs.remove(index);
+                    self.keep_used_downloads();
                 }
             }
             if !self.inputs.is_empty() && !self.project_summary.is_empty() {
@@ -1889,6 +2006,28 @@ impl App {
                 );
             }
             ui.add_space(theme::SPACE_2);
+            ui.add_enabled_ui(!self.running(), |ui| {
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.share_link)
+                            .hint_text("Public Fusion or Google Drive file link")
+                            .char_limit(8192)
+                            .desired_width(260.0),
+                    );
+                    if ui.button("Add link").clicked()
+                        || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    {
+                        let link = std::mem::take(&mut self.share_link);
+                        self.queue_links(&link);
+                    }
+                });
+            });
+            if self.downloading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Downloading shared files…");
+                });
+            }
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(
                     !self.running() && !self.updater.blocks_conversions(),
@@ -1911,6 +2050,7 @@ impl App {
                             self.private_send = None;
                             self.consent.card = None;
                             self.output_expanded = false;
+                            self.keep_used_downloads();
                         }
                     },
                 );
@@ -3391,6 +3531,90 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn share_links_queue_separately_from_local_files() {
+        let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| App::new(cc));
+        let app = harness.state_mut();
+        app.add_inputs([
+            PathBuf::from("https://a360.co/synthetic"),
+            PathBuf::from("cube.f3d"),
+        ]);
+        assert_eq!(app.inputs, vec![PathBuf::from("cube.f3d")]);
+        assert_eq!(app.pending_links, vec!["https://a360.co/synthetic"]);
+        assert_eq!(app.out_dir, Some(PathBuf::from("cube (SolidCraft)")));
+        app.queue_links("https://a360.co/synthetic");
+        assert_eq!(app.pending_links.len(), 1);
+    }
+
+    #[test]
+    fn share_links_accept_pasted_and_dropped_uri_text_without_network() {
+        for dropped in [false, true] {
+            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| App::new(cc));
+            let app = harness.state_mut();
+            let ctx = egui::Context::default();
+            let mut input = egui::RawInput::default();
+            // HTTP is refused before any connection, including when entered through the UI.
+            if dropped {
+                input.dropped_files.push(egui::DroppedFile {
+                    mime: "text/uri-list".into(),
+                    bytes: Some(std::sync::Arc::from(
+                        b"# public link\r\nhttp://a360.co/synthetic\r\n".as_slice(),
+                    )),
+                    ..Default::default()
+                });
+            } else {
+                input
+                    .events
+                    .push(egui::Event::Paste("http://a360.co/synthetic".into()));
+            }
+            let _ = ctx.run(input, |ctx| app.take_dropped_files(ctx));
+            assert!(app.running());
+            assert!(app.inputs.is_empty());
+            assert!(app.out_dir.is_none());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while app.downloading && std::time::Instant::now() < deadline {
+                app.receive(&ctx);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(!app.running());
+            assert_eq!(
+                app.notice.as_deref(),
+                Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+            );
+            assert!(!app.notice.as_ref().unwrap().contains("synthetic"));
+            let scratch = app.download_root.as_ref().unwrap().path().to_path_buf();
+            assert!(scratch.exists());
+            drop(harness);
+            assert!(!scratch.exists());
+        }
+    }
+
+    #[test]
+    fn share_links_field_adds_a_link_and_reports_download_errors() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_eframe(|cc| App::new(cc));
+        harness.state_mut().share_link = "http://a360.co/synthetic".into();
+        harness.run_steps(2);
+        harness.get_by_label("Add link").click();
+        harness.run_steps(4);
+        assert!(harness.state().share_link.is_empty());
+        assert!(harness.state().inputs.is_empty());
+        assert!(harness.state().pending_links.is_empty());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while harness.state().downloading && std::time::Instant::now() < deadline {
+            let ctx = harness.ctx.clone();
+            harness.state_mut().receive(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!harness.state().running());
+        assert_eq!(
+            harness.state().notice.as_deref(),
+            Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+        );
+    }
 
     #[test]
     fn anonymous_versions_describe_the_conversion_instead_of_current_settings() {
