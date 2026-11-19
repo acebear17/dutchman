@@ -980,6 +980,7 @@ pub(crate) fn map_with_source_profile_check(
             true,
             check,
             progress,
+            source_losses,
         );
         if trial.as_ref().is_ok_and(|history| {
             history.stop.is_none()
