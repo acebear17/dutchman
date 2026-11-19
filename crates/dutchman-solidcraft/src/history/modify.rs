@@ -1,8 +1,8 @@
 //! Body mirror, boolean and split operations.
 //!
 //! Both act on whole bodies named by earlier mapped features, never on faces of the final
-//! body, which a later feature may already have removed or moved. Native and generated body
-//! selections are refused.
+//! body, which a later feature may already have removed or moved. Native and historical body
+//! selections remain unresolved; a single generated result can resolve through its producer.
 
 use serde_json::{json, Value};
 
@@ -31,6 +31,11 @@ fn members(selection: &Value) -> Result<Vec<&Value>, String> {
 }
 
 pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
+    if crate::VersionGate::ScopedBodies.supported(ctx.target_version)
+        && selection.get("kind").and_then(Value::as_str) == Some("generated")
+    {
+        return generated_names(selection, ctx);
+    }
     let mut names = Vec::new();
     for value in members(selection)? {
         let id = value.as_str().ok_or("its body reference is malformed")?;
@@ -50,6 +55,67 @@ pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>
     }
     if names.is_empty() {
         return Err("it selects no bodies".to_owned());
+    }
+    Ok(names)
+}
+
+/// A single generated body can be identified with its producer's single named output.
+/// Multi-body result order alone cannot establish that correspondence. The declared result
+/// state must contain exactly that local body and belong to the mapped producer.
+fn generated_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
+    let bodies = selection
+        .pointer("/value/bodies")
+        .and_then(Value::as_array)
+        .ok_or("its generated bodies are not resolved")?;
+    let mut names = Vec::new();
+    for body in bodies {
+        let producer = body
+            .get("feature")
+            .and_then(Value::as_str)
+            .filter(|id| ctx.feature_names.contains_key(*id))
+            .ok_or("its generated body has no earlier mapped producer")?;
+        let local = body
+            .get("local_id")
+            .and_then(Value::as_str)
+            .ok_or("its generated body identity is missing")?;
+        let mut result = ctx
+            .arena("feature_result_topologies")
+            .iter()
+            .filter(|row| row.get("output_of").and_then(Value::as_str) == Some(producer))
+            .flat_map(|row| {
+                row.get("members")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter(|member| member.get("kind").and_then(Value::as_str) == Some("body"));
+        if !result
+            .next()
+            .is_some_and(|member| member.get("id").and_then(Value::as_str) == Some(local))
+            || result.next().is_some()
+        {
+            return Err("its generated body is not the producer's sole result body".to_owned());
+        }
+        let outputs = ctx
+            .row("features", producer)
+            .and_then(|row| row.get("outputs"))
+            .and_then(Value::as_array)
+            .filter(|outputs| outputs.len() == 1)
+            .ok_or("its generated body has no single named output")?;
+        let selected = json!({"kind": "bodies", "value": outputs});
+        let resolved = body_names(&selected, ctx)?;
+        names.extend(resolved);
+    }
+    if names.is_empty() {
+        return Err("it selects no bodies".to_owned());
+    }
+    if names
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        != names.len()
+    {
+        return Err("its generated selections repeat a body".to_owned());
     }
     Ok(names)
 }
@@ -171,12 +237,43 @@ pub(super) fn mirror(
     let normal =
         v3(pattern.get("plane_normal")).ok_or("its mirror plane normal is not resolved")?;
     let plane = plane(origin, normal)?;
-    Ok(feature(
+    // One copied body and one new output have an unambiguous correspondence. A result
+    // already named before this mirror is not a new copy, and duplicate display names
+    // cannot identify the copy in SolidCraft.
+    let names = if crate::VersionGate::ScopedBodies.supported(ctx.target_version)
+        && bodies.len() == 1
+        && source
+            .get("outputs")
+            .and_then(Value::as_array)
+            .is_some_and(|outputs| {
+                outputs.len() == 1
+                    && outputs.iter().all(|output| {
+                        output.as_str().is_some_and(|id| {
+                            !ctx.named_bodies.iter().any(|(known, _)| known == id)
+                                && ctx
+                                    .row("bodies", id)
+                                    .and_then(|row| row.get("name"))
+                                    .and_then(Value::as_str)
+                                    .is_none_or(|name| {
+                                        !ctx.named_bodies.iter().any(|(_, known)| known == name)
+                                    })
+                        })
+                    })
+            }) {
+        super::extrude::body_names(source, ctx, "new_body")
+    } else {
+        None
+    };
+    let mut mapped = feature(
         source,
         ctx,
         "mirror",
         json!({"features": [], "bodies": bodies, "plane": plane, "combine": false}),
-    ))
+    );
+    if let (Some(names), Some(fields)) = (names, mapped.as_object_mut()) {
+        fields.insert("body_names".to_owned(), json!(names));
+    }
+    Ok(mapped)
 }
 
 /// The topology arenas a body's vertices are reached through.

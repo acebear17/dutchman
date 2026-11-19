@@ -30,6 +30,22 @@ Local CLI and desktop progress can name the current timeline feature, such as
 These updates use `dutchman.progress/1`; MCP final conversion reports stay unchanged.
 Feature names are private local text and are excluded from anonymous diagnostics.
 
+For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
+selected body scope at the final body-building feature when the reader names
+modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
+records this confirmation. Intermediate body centres cannot confirm body scope,
+so intermediate features keep the previous mapping. Without confirmation the
+previous mapping applies; older targets keep their existing output.
+
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
+
 ## Public share links in the app and CLI
 
 The desktop app's **Add link**, paste, and shortcut/URI drop flows and `dutchman convert <url>` accept
@@ -935,11 +951,15 @@ preview a proven bundle; a new report without a bundle offers summary. Nothing i
 `report_submit` takes `folder`, `choice` (`bundle` or `summary`), `public_test`
 (default false) and `explicit_yes`. Ask the user for explicit consent to this exact
 preview and choice before passing true. A failure does not authorize a later resend.
-No tool accepts whole files for anonymous upload. Use the private-send card instead.
+No tool accepts whole files for anonymous upload. Use the private Discord steps instead.
 
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
+
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
 
 The desktop report review selects the anonymous summary when no bundle is available.
 Its **Send** button becomes **Retry** after a delivery failure.
@@ -953,7 +973,7 @@ never paths, checker messages, entity identities, or geometry. Neither sends any
 `report_preview` can use that same folder to review the saved bundle. Bundles are the
 default when available. The entire multipart request must fit 25 MiB; a 64 KiB
 reserve keeps bundles below the cap. Preview checks metadata and framing overhead
-before marking a bundle sendable. Use the private-send card or summary when it will not fit.
+before marking a bundle sendable. Use the private Discord steps or summary when it will not fit.
 Decode refusals have no bundle yet.
 
 A cut refused by the fragment limits returns a normal unavailable-bundle result,
@@ -998,6 +1018,9 @@ existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
+The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
+and **GitHub issue** (a public issue under the user’s GitHub name).
+
 Meeting 3D curve endpoints do not create relations without a decoded source relation.
 
 Decoded 3D sketches retain supported neutral joins, dimensions, axis directions
@@ -1029,3 +1052,9 @@ existing sketch, an unsupported option or an unconfirmed measurement keeps its
 usual refusal. The Degraded loss `history/body-fallback-imported` explains the
 absent input. Recover the original external design to recover the editable recipe.
 Cuts and joins cannot use this fallback.
+
+Each history row in `dutchman.convert/1` and `dutchman.inspect/1` now includes
+`output_ids` and `output_match`, linking it to features in the saved design. A split
+can have several ids; dropped or merged rows have none. Inspection returns empty ids
+with `not_written`. These fields are additive; schemas and existing fields are unchanged.
+See [the JSON report reference](json.md) for the matching values.

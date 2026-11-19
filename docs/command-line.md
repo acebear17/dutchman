@@ -311,8 +311,7 @@ names the design that was left out (at most three per archive). A stuck single-d
 fails with a message naming it. Mapping and writing have no independent wall-clock limit.
 `convert-all --timeout` is a separate whole-file limit (900 s by default): it stops that
 file's worker and reports failure. The desktop has no practical whole-file timeout, but the
-per-design limit above applies there too. **Stop** starts no further files;
-files already converting finish. Closing the app ends its workers through their parent-exit
+per-design limit above applies there too. **Stop** starts no further files and promptly terminates the isolated converter and its children. Closing the app ends its workers through their parent-exit
 guard. The shared CLI supervisor separately allows a 30 s grace period when a shutdown
 flag is supplied; the desktop does not supply that flag. CLI version queries stop after 3 s; a CLI that gives no version can still be used for
 checks. Memory guards remain independent of these time limits.

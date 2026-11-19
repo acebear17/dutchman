@@ -17,6 +17,7 @@ pub mod compare;
 mod container;
 mod document;
 mod evaluator;
+mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
 pub use evaluator::SolidCraftEvaluator;
@@ -356,6 +357,7 @@ impl SolidCraftWriter {
             report.losses(),
         );
         self.plan_blends(&mut mapping);
+        output_links::not_written(&mut mapping.features);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
             Ok(ref history) if history.stop.is_some() => {
@@ -1669,7 +1671,18 @@ impl Writer for SolidCraftWriter {
                     }
                 }
             };
-            written
+            let (bytes, mut outcome) = written;
+            let flattened = mapping.result.is_err() || matches!(outcome.check, Check::Flattened(_));
+            if flattened {
+                output_links::retain(
+                    &mut outcome.features,
+                    &mapping.references.features,
+                    document::FEATURE,
+                );
+            } else if let Ok(history) = &mapping.result {
+                output_links::history(&mut outcome.features, history, 0);
+            }
+            (bytes, outcome)
         };
         if outcome.mode == Mode::Import {
             self.check_import(model, &bytes, report, progress);
@@ -1716,6 +1729,9 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
         |_, _, _| Err("only a SolidCraft design is replayed to find them".to_owned()),
         |_, _| history::infer::Fit::Unknown,
     );
+    for feature in &mut mapping.features {
+        feature.output = Default::default();
+    }
     MappedHistory {
         features: mapping.result.and_then(|history| match history.stop {
             Some(why) => Err(why),
