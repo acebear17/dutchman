@@ -102,6 +102,11 @@ or `editable history, unverified`). After progress updates, the lines on stderr 
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
 
+Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
+L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
+see [sheet-metal limits](history.md#sheet-metal). Unproven picks or base perimeters with curved,
+open, crossing, disconnected, or collinear edges keep geometry and name the blocked feature.
+
 SolidCraft output accepts `.sc`, `.solidcraft`, and `.solvecraft`; each uses the same container.
 Other targets use their own extension.
 To get one machine-readable report on stdout instead
