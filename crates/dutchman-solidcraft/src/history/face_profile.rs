@@ -284,6 +284,43 @@ fn points_on(
     Ok(points)
 }
 
+/// The one plane every face `value` selects lies on, as a point on the first face and the
+/// plane's unit normal (its side is not known from the boundaries). Faces that do not all lie
+/// on one plane are refused.
+pub(super) fn coplanar_faces(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<(V3, V3), String> {
+    let ids = value
+        .get("faces")
+        .and_then(Value::as_array)
+        .filter(|ids| !ids.is_empty() && ids.len() <= FACES)
+        .ok_or("its face selection is empty or exceeds the face limit")?;
+    let mut faces = Vec::new();
+    let mut total = 0usize;
+    for (index, id) in ids.iter().enumerate() {
+        if ids.iter().take(index).any(|previous| previous == id) {
+            return Err("its splitting face is selected more than once".to_owned());
+        }
+        // Tool faces may meet at an edge. Read each boundary independently so the
+        // disjoint-profile rule for extrusions does not reject adjacent coplanar tools.
+        let one = json!({"state": value.get("state"), "faces": [id]});
+        let boundary = boundaries(feature, &one, ctx)?;
+        let [face] = boundary.as_slice() else {
+            return Err(BAD.to_owned());
+        };
+        total = total.saturating_add(face.edges.len());
+        if total > EDGES {
+            return Err("its faces have more boundary edges than the face limit".to_owned());
+        }
+        plane(&boundary, &samples(face))?;
+        faces.extend(boundary);
+    }
+    let points: Vec<V3> = faces.iter().flat_map(samples).collect();
+    plane(&faces, &points).map_err(|_| "its faces are not planar together".to_owned())
+}
+
 /// A point inside the one planar face `value` selects, clear of its edges and its holes, and
 /// the unit normal of its plane, from the boundary samples of its input topology.
 pub(super) fn planar_face(
