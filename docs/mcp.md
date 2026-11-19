@@ -697,7 +697,15 @@ checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB s
 formatter. The file row shows a live total, counting checking only with a usable CLI and checking on. Choices and the checking preference are remembered. Calibrated formats split reading, extra
 conversion work after decoding and extra checking in the desktop. MCP keeps the existing
 numeric estimate fields; the split is desktop presentation. History
-Info messages, including history left out by Standard, appear on its result cards.
+Info messages, including history left out by Standard, appear in its open result detail.
+The desktop uses Lost / Changed / Note for Dropped / Degraded / Info, with a feature timeline
+and optional local 3D previews; CLI and MCP report values stay unchanged.
+Preview PNGs beside the design carry Dutchman ownership and source size/time metadata.
+Unmarked PNGs silently skip the preview and are never reused or changed. Cache publication
+never replaces an occupied path; stale owned PNGs can be deleted to cache fresh renders.
+Assembly loss filenames join history names only for unique matches; ambiguous losses remain
+in a separate loss section without a history claim. Unreadable source records have a specific
+loss title.
 
 SolidCraft conversion results include `solidcraft: {target, found, known_newest, status}`: the selected
 target release, discovered CLI release (or null), newest known release, and installed-version
@@ -916,3 +924,10 @@ Dutchman team sees it. It's never published or used in public tests, and we dele
 The desktop DM Dutchy card always says "Paste the message, then drag the file in." and
 "Big files: Dutchy replies with an upload link." on two lines. File size still determines
 whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.
+
+Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+The full verification explanation stays in **Save the full log…**; the card uses chips
+and the feature timeline instead of repeating it above the timeline.
+Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
+**Source order** restores report order. Loss titles name the affected data; **Details**
+retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.

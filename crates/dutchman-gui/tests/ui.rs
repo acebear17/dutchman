@@ -32,7 +32,9 @@ fn test_app(cc: &eframe::CreationContext<'_>) -> App {
         ))
     });
     dutchman_gui::set_diagnostics_folder(folder.clone());
-    App::new(cc)
+    let mut app = App::new(cc);
+    app.set_previews_enabled(false);
+    app
 }
 use eframe::egui::{self, ThemePreference};
 use egui_kittest::kittest::Queryable;
@@ -551,9 +553,7 @@ fn screenshots() {
                     report: Some(loss_fixture::report()),
                 });
             harness.run_steps(8);
-            harness.get_by_label_contains("Losses:").scroll_to_me();
-            harness.run_steps(8);
-            harness.get_by_label_contains("Losses:").click_accesskit();
+            harness.get_by_label("Feature timeline").scroll_to_me();
             harness.run_steps(8);
             harness.get_by_label("Save the full log…").scroll_to_me();
             harness.run_steps(8);
@@ -2974,9 +2974,7 @@ fn unchecked_regions_screenshots() {
                     report: Some(report.clone()),
                 });
             harness.run_steps(8);
-            harness
-                .get_by_label_contains("may use the wrong sketch region")
-                .scroll_to_me();
+            harness.get_by_label("5 unchecked").scroll_to_me();
             harness.run_steps(8);
             shot(
                 &mut harness,
@@ -3038,7 +3036,7 @@ fn body_mismatch_screenshots() {
                 });
             harness.run_steps(8);
             harness
-                .get_by_label_contains("don't match the original")
+                .get_by_label_contains("Rebuilt features differ from the original")
                 .scroll_to_me();
             harness.run_steps(8);
             shot(
@@ -3481,11 +3479,14 @@ fn a_very_long_result_name_wraps_instead_of_eliding() {
     h.state_mut().set_verify(false);
     h.run_steps(8);
     convert(&mut h);
-    let titles: Vec<_> = h
+    // Open result detail can scroll the title nearer the header. Identify the result's
+    // name by the action row immediately below it, independently of the page offset.
+    let actions_top = h.get_by_label("Open in SolidCraft").rect().top();
+    let title = h
         .get_all_by_label(&long)
-        .filter(|node| node.rect().top() > 300.0)
-        .collect();
-    let title = titles.last().expect("result title");
+        .filter(|node| node.rect().bottom() <= actions_top + 0.5)
+        .max_by(|a, b| a.rect().bottom().total_cmp(&b.rect().bottom()))
+        .expect("result title");
     // Wrapped onto several lines, so taller than one heading line.
     assert!(title.rect().height() > 40.0, "{:?}", title.rect());
     assert!(title.rect().right() <= 520.0);
@@ -4243,5 +4244,143 @@ fn report_flow_case_screenshots() {
     } else {
         std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
         std::fs::write(dir.join("INDEX.md"), index).unwrap();
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn results_card_shows_inline_part_status_and_restores_source_order() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.state_mut().preview_result_for_test(dutchman_gui::app::Row {
+            input: PathBuf::from("Synthetic assembly.f3z"),
+            output: Some(PathBuf::from("converted/assembly.sc")),
+            status: Status::Converted, progress: None, job: None, size: None,
+            report: Some(serde_json::json!({"ok":true, "mode":"partial_history",
+                "history":{"rebuilt":5,"needing":6,"parts":[
+                    {"name":"Part 1","rebuilt":3,"needing":3,"status":"verified"},
+                    {"name":"Part 2","rebuilt":2,"needing":3,"status":"partial",
+                     "reason":"history stopped at feature \"Chamfer 2\": edge not resolved"}]}, "losses":[]})),
+        });
+        h.run_steps(10);
+        let complete = "✓ Part 1 · 3/3 rebuilt · checked";
+        let partial = "! Part 2 · 2/3 rebuilt · stops at Chamfer 2";
+        assert!(h.get_by_label(partial).rect().top() < h.get_by_label(complete).rect().top());
+        for hidden in ["Lost: 0", "Changed: 0", "Note: 0"] {
+            assert!(h.query_by_label(hidden).is_none());
+        }
+        h.get_by_label("Source order").click_accesskit();
+        h.run_steps(6);
+        assert!(h.get_by_label(complete).rect().top() < h.get_by_label(partial).rect().top());
+        h.get_by_label("history stopped at feature \"Chamfer 2\": edge not resolved");
+        for action in [
+            "Open in SolidCraft",
+            "Show in folder",
+            "Save the full log…",
+            "Report this file…",
+        ] {
+            assert!(h.get_by_label(action).rect().bottom() < 750.0);
+        }
+    }
+}
+
+// The card explains partial history through its chips and timeline.
+#[cfg(feature = "test-support")]
+#[test]
+fn partial_results_omit_duplicate_reason() {
+    use egui_kittest::kittest::Queryable;
+    let reason = "history stopped at feature \"Chamfer 1\"; retained features replay in SolidCraft; the full history is not verified";
+    let report = serde_json::json!({
+        "ok":true, "mode":"partial_history",
+        "verification":{"status":"partial","reason":reason},
+        "history":{"rebuilt":2,"needing":3,"features":[
+            {"name":"Sketch 1","ordinal":1,"status":"mapped"},
+            {"name":"Extrude 1","ordinal":2,"status":"mapped"},
+            {"name":"Chamfer 1","ordinal":3,"status":"blocked","reason":"Blends on closed edges aren't supported yet"}
+        ]}, "losses":[]
+    });
+    for (theme, suffix) in [
+        (ThemePreference::Light, "1280-day"),
+        (ThemePreference::Dark, "1280-night"),
+    ] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.state_mut().set_previews_enabled(false);
+        h.state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: PathBuf::from("Synthetic partial.f3d"),
+                output: Some(PathBuf::from("converted/partial.sc")),
+                status: Status::Converted,
+                progress: None,
+                job: None,
+                size: None,
+                report: Some(report.clone()),
+            });
+        h.run_steps(12);
+        assert!(h.query_by_label(reason).is_none());
+        h.get_by_label("Feature timeline");
+        h.get_by_label("2 of 3 features rebuilt");
+        h.get_by_label("Chamfer 1: Blends on closed edges aren't supported yet");
+        if let Some(dir) = std::env::var_os("DUTCHMAN_RESULTS_SHOTS").map(PathBuf::from) {
+            std::fs::create_dir_all(&dir).unwrap();
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("partial-{suffix}.png")))
+                .unwrap();
+        }
+    }
+}
+
+// Synthetic external assembly report: history uses stems; loss subjects use filenames.
+#[cfg(feature = "test-support")]
+#[test]
+fn assembly_losses_share_the_checked_part_and_ambiguous_stems_stay_separate() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.state_mut().set_previews_enabled(false);
+        h.state_mut().preview_result_for_test(dutchman_gui::app::Row {
+            input: PathBuf::from("synthetic-assembly.iam"),
+            output: Some(PathBuf::from("converted/synthetic-assembly.sc")),
+            status: Status::Converted, progress: None, job: None, size: None,
+            report: Some(serde_json::json!({"ok":true,"mode":"history",
+                "history":{"rebuilt":3,"needing":3,"parts":[
+                    {"name":"Bracket","rebuilt":1,"needing":1,"status":"verified"},
+                    {"name":"Pin","rebuilt":1,"needing":1,"status":"verified"},
+                    {"name":"Pin","rebuilt":1,"needing":1,"status":"verified"}]},
+                "losses":[
+                    {"level":"Degraded","subject":"Bracket.ipt: appearance",
+                     "code":"dutchman/appearance.material-not-transferred","message":"material omitted"},
+                    {"level":"Degraded","subject":"Pin.ipt: appearance",
+                     "code":"dutchman/appearance.texture-unlocated","message":"texture omitted"}]})),
+        });
+        h.run_steps(10);
+        let heading = "✓ Bracket · 1/1 rebuilt · checked";
+        let material = "Materials weren't carried over";
+        h.get_by_label(heading);
+        h.get_by_label(material);
+        h.get_by_label("Other part loss details: Pin.ipt");
+        assert_eq!(h.query_all_by_label_contains("✓ Pin ·").count(), 2);
+        assert!(h.query_by_label_contains("no history recorded").is_none());
+        // The material loss belongs to Bracket's disclosure, not a second filename group.
+        h.get_by_label(heading).click_accesskit();
+        h.run_steps(8);
+        assert!(h.query_by_label(material).is_none());
+        h.get_by_label("Other part loss details: Pin.ipt");
+        for action in [
+            "Open in SolidCraft",
+            "Show in folder",
+            "Save the full log…",
+            "Report this file…",
+        ] {
+            assert!(h.get_by_label(action).rect().bottom() < 950.0);
+        }
     }
 }
