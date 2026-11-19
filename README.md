@@ -45,6 +45,8 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 ## How to use it
 
 1. **Drop files or folders in.** Or choose **Add files…**, then choose an output folder.
+   For a public Fusion or Google Drive file, paste its share link and choose **Add link**.
+   Saved `.url` and `.webloc` shortcuts can be dropped too; see the [share link guide](docs/guide.md#public-share-links).
 
    <a href="https://dutchmancad.xyz/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-drop-day.png&alt=Start%20screen%20with%20the%20drop%20area%20and%20Add%20files%20button"><img alt="Start screen with the drop area and Add files button" src="docs/images/readme-drop-day.png" width="100%"></a>
 
