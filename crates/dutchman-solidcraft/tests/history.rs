@@ -333,9 +333,13 @@ fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Mo
 
 #[test]
 fn a_spatial_sketch_becomes_a_3d_sketch_and_a_sweep_follows_its_curves() {
+    // Wire constraints are written from SolidCraft 0.44, so the target is named rather than
+    // taken from whichever SolidCraft the test run finds.
     let (document, report) = convert(
         &spatial_sweep_history(|_, _| {}),
-        &SolidCraftWriter::new().verification(Verification::Off),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some("0.44.0".parse().unwrap())),
     );
     let features = document["features"].as_array().unwrap();
     let rail = features
