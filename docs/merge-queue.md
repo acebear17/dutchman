@@ -8,27 +8,20 @@ squash-merges it only if the required checks pass.
 
 ## What runs in the queue
 
-| Workflow | In the queue |
-|---|---|
-| `ci.yml` | Full tests on Linux x86_64, ARM64, Windows and macOS, plus fmt, Clippy, MSRV, WebAssembly, Docker, release checks and SolidCraft round trips. No path skips and no cache writes. |
-| `placements.yml` | Called by `ci.yml`; builds once and checks all three assemblies, including Voron. |
-| `docker.yml` | No separate queue run; `ci.yml` owns the Docker check. Main, scheduled and manual runs stay available. |
-| `release-build.yml` | Tags and explicit dispatches only; the queue already checks compilation and tests on every platform. Main has nightly builds. |
+Pull requests and merge groups run formatting, Clippy, Linux x86_64 tests (or focused docs
+tests), release notes, changelog and version gates. Code merge groups also build the shared
+Linux command, MCP and web programs in Bookworm and check the small railcore and robot-arm
+assemblies. They do not build Docker images or run Voron.
 
-PRs run only fast Linux checks, with focused docs tests for docs-only changes, plus release
-notes, changelog and version gates. `gh workflow run ci.yml --ref <branch>` runs the full
-queue matrix on a PR branch by hand. Add `-F release-builds=true` for full release packaging. Packaging changes and the `release-build` label no longer
-start full builds on a PR. Candidate and stable tag pushes also run the full matrix; their
-release builds run directly in `release-build.yml` to preserve candidate artifact discovery.
+Windows, ARM64, macOS, MSRV, WebAssembly, SolidCraft round trips (including the 0.18.2 floor),
+full placements and Docker run on main after merge, nightly, on tags and by hand. Platform-only
+breaks are caught on main right after merge instead of before. Main failures open or update
+one CI issue, closed when current main is green. Tag packaging and release creation wait for
+successful full CI on the exact tag and commit.
 
-## macOS in the merge queue
-
-macOS tests still run in code merge groups, but are non-blocking there.
-Release builds and packaging run on tags, nightly and explicit dispatches. Hosted macOS runners are scarce: missing runners caused jobs to be cancelled. For
-merge groups, `ci-result` prints the macOS test result. Every
-non-macOS failure, cancellation or unexpected skip still blocks the queue.
-macOS stays required on main pushes, tags and manual runs, so a macOS break shows within
-hours and blocks a release.
+`gh workflow run ci.yml --ref <branch>` runs the full matrix on a branch. Add
+`-F release-builds=true` for release packaging. Candidate and stable tag pushes also run the
+full matrix; release builds remain in `release-build.yml` for candidate artifact discovery.
 
 ## Ruleset
 
@@ -96,18 +89,17 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
 - The one required check is `ci-result`, a job in `ci.yml` that always runs, needs every other
   CI job, including the reusable placement checks in the queue and release builds when explicitly requested. It checks explicit
   expected results for the event and paths, rejecting failures, cancellations and unexpected
-  skips, except for macOS in the merge queue as described above. Requiring the test jobs by
+  skips. Requiring the test jobs by
   name doesn't work: a docs-only change skips the test matrix, and a skipped matrix job reports
   once under its bare name (`test`), so `test (ubuntu-latest)` and the others never appear and
   the pull request waits forever. Heavy jobs are intentionally skipped on PRs and required in
-  the queue, including `solidcraft-roundtrip`. Main keeps its path filters and informational
-  round trips. On tags, release builds report independently from `ci-result`. CodeQL checks
+  main, nightly, tags and manual runs, including `solidcraft-roundtrip`. Main runs the full matrix. On tags, release builds report independently from `ci-result`. CodeQL checks
   do not run in the queue.
-- Windows and ARM tests are the slowest required checks (ARM took 34 minutes on one run).
+- Linux checks and the shared tool build determine the queue critical path; platform tests run after merge.
 - GitHub's ARM runners are sometimes shut down mid-job (exit code 143, "The runner has received
   a shutdown signal"). The ARM tests run as their own job, `test (ubuntu-24.04-arm)`; when it
-  fails, `test (ubuntu-24.04-arm, again)` checks the failed job's annotations and, only after
-  such a shutdown, runs the tests once more. `ci-result` then counts the second try in place of
+  times out or fails, `test (ubuntu-24.04-arm, again)` checks its conclusion and annotations.
+  It retries a timeout without needing logs, or a failure with a runner-shutdown annotation. `ci-result` then counts the second try in place of
   the first. Any other failure is not retried and still fails `ci-result`.
 
 ## Enqueue
@@ -120,3 +112,7 @@ gh pr merge <n> --squash --auto
 
 With the ruleset active this adds the pull request to the queue. Remove it with
 `gh pr merge <n> --disable-auto` or from the pull request page.
+
+Linux test and round-trip jobs report free disk before building. Images with at least
+64 GiB free skip unused toolchain deletion; smaller images keep the previous cleanup.
+The audited x86_64 and ARM64 images started with 88 GiB and 107 GiB free respectively.
