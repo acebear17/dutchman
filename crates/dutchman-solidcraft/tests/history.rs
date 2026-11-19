@@ -356,6 +356,7 @@ fn a_spatial_sketch_becomes_a_3d_sketch_and_a_sweep_follows_its_curves() {
         &json!([50.0, 10.0, 60.0])
     );
     assert_eq!(rail["sketch"]["counters"], json!({"q": 0, "w": 3}));
+    assert_eq!(rail["sketch"]["wire_constraints"], json!([]));
     let sweep = features.iter().find(|f| f["type"] == "sweep").unwrap();
     assert_eq!(sweep["path_sketch"], rail["id"]);
     assert_eq!(sweep["path"], json!(["w1", "w2", "w3"]));
@@ -395,7 +396,9 @@ fn circles_points_and_unmappable_geometry_in_a_spatial_sketch_are_reported() {
     });
     let (document, report) = convert(
         &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
+        &SolidCraftWriter::new()
+            .target_version(Some("0.43.0".parse().unwrap()))
+            .verification(Verification::Off),
     );
     let rail = document["features"]
         .as_array()
@@ -14323,6 +14326,453 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
         history_line(&report).contains("ordered selections and evaluation states"),
         "{report:?}"
     );
+}
+
+/// Add neutral spatial relations to a synthetic non-planar path; no native file is used.
+fn spatial_044_model() -> Model {
+    let base = spatial_sweep_history(|entities, _| {
+        entities.push(spatial_entity(
+            4,
+            json!({"kind": "point", "position": xyz([0.0, 0.0, 0.0])}),
+        ));
+        entities.push(spatial_entity(
+            5,
+            json!({"kind": "point", "position": xyz([0.0, 0.0, 30.0])}),
+        ));
+    });
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    model["parameters"].as_array_mut().unwrap().push(json!({"id": "f3d:model:parameter#44", "owner": "f3d:model:feature#3", "ordinal": 44, "name": "rise", "expression": "30 mm", "value": {"kind": "length", "value": 30.0}, "dependencies": [], "properties": {}}));
+    model["spatial_sketch_constraints"] = json!([
+        {"id": "f3d:model:sketch-constraint#441", "sketch": SPATIAL, "definition": {"kind": "line_length", "entity": spatial_id(1), "parameter": "f3d:model:parameter#44"}},
+        {"id": "f3d:model:sketch-constraint#442", "sketch": SPATIAL, "definition": {"kind": "parallel_to_direction", "entity": spatial_id(1), "direction": xyz([0.0, 0.0, -1.0])}},
+        {"id": "f3d:model:sketch-constraint#443", "sketch": SPATIAL, "definition": {"kind": "point_distance", "first": spatial_id(4), "second": spatial_id(5), "parameter": "f3d:model:parameter#44"}},
+        {"id": "f3d:model:sketch-constraint#444", "sketch": SPATIAL, "definition": {"kind": "tangent", "first": spatial_id(1), "second": spatial_id(2)}},
+    ]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+fn spatial_044_writer() -> SolidCraftWriter {
+    SolidCraftWriter::new()
+        .target_version(Some("0.44.0".parse().unwrap()))
+        .verification(Verification::Off)
+}
+
+#[test]
+fn spatial_044_constraints_keep_parameters_axis_and_endpoint_tangency() {
+    let (document, report) = convert(&spatial_044_model(), &spatial_044_writer());
+    let rail = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Rail sketch")
+        .unwrap();
+    let constraints = rail["sketch"]["wire_constraints"].as_array().unwrap();
+    assert_eq!(rail["sketch"]["counters"]["q"], 2);
+    assert_eq!(rail["sketch"]["counters"]["w"], 3);
+    assert_eq!(rail["sketch"]["counters"]["k"], json!(constraints.len()));
+    assert!(constraints
+        .iter()
+        .any(|c| c["type"] == "distance" && c["param"] == "rise" && c["value"] == 30.0));
+    assert!(constraints
+        .iter()
+        .any(|c| c["type"] == "along_axis" && c["axis"] == "z"));
+    assert!(constraints
+        .iter()
+        .any(|c| c["type"] == "tangent" && c["line_end"] == 1 && c["arc_end"] == 0));
+    assert_eq!(constraints.len(), 4);
+    assert!(!constraints.iter().any(|c| c["type"] == "coincident"));
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|l| l.subject.starts_with("3D sketch") && l.detail.contains("not carried")),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn spatial_044_older_targets_keep_the_legacy_sketch_bytes() {
+    let model = spatial_044_model();
+    for version in ["0.18.2", "0.43.0", "0.43.9"] {
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new()
+                .target_version(Some(version.parse().unwrap()))
+                .verification(Verification::Off),
+        );
+        let rail = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == "Rail sketch")
+            .unwrap();
+        use sha2::Digest;
+        let (bytes, _) = written_with(
+            &model,
+            &SolidCraftWriter::new()
+                .target_version(Some(version.parse().unwrap()))
+                .verification(Verification::Off),
+        );
+        let digest = |bytes: &[u8]| {
+            sha2::Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        println!("legacy_bytes {version} {}", digest(&bytes));
+        let (profile_bytes, _) = written_with(
+            &spatial_044_extrude(0.0),
+            &SolidCraftWriter::new()
+                .target_version(Some(version.parse().unwrap()))
+                .verification(Verification::Off),
+        );
+        println!("legacy_bytes profile-{version} {}", digest(&profile_bytes));
+        assert!(rail["sketch"].get("wire_constraints").is_none());
+        assert_eq!(rail["sketch"]["counters"], json!({"q": 2, "w": 3}));
+        assert!(report
+            .losses()
+            .iter()
+            .any(|l| l.detail.starts_with("4 constraints not carried:")));
+        // Changing neutral relations cannot alter the legacy geometry representation.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["spatial_sketch_constraints"] = json!([]);
+        let no_relations = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        };
+        let (without, _) = convert(
+            &no_relations,
+            &SolidCraftWriter::new()
+                .target_version(Some(version.parse().unwrap()))
+                .verification(Verification::Off),
+        );
+        let other = without["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == "Rail sketch")
+            .unwrap();
+        assert_eq!(
+            serde_json::to_vec(rail).unwrap(),
+            serde_json::to_vec(other).unwrap()
+        );
+    }
+}
+
+/// A spatial sketch with a closed XY square and an unrelated out-of-plane leg.
+fn spatial_044_extrude(lift: f64) -> Model {
+    let base = spatial_sweep_history(|entities, _| {
+        let corners = [
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [10.0, 10.0, lift],
+            [0.0, 10.0, 0.0],
+        ];
+        *entities = (0..4)
+            .map(|i| {
+                spatial_entity(
+                    i as u32 + 1,
+                    json!({"kind": "line", "start": xyz(corners[i]), "end": xyz(corners[(i+1)%4])}),
+                )
+            })
+            .collect();
+        entities.push(spatial_entity(
+            5,
+            json!({"kind": "line", "start": xyz([0.0,0.0,0.0]), "end": xyz([0.0,0.0,8.0])}),
+        ));
+    });
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["spatial_sketches"][0]["profiles"] = json!([{ "origin": xyz([0.0,0.0,0.0]), "normal": xyz([0.0,0.0,1.0]), "u_axis": xyz([1.0,0.0,0.0]), "boundary": (1..=4).map(|i| json!({"entity": spatial_id(i), "reversed": false})).collect::<Vec<_>>() }]);
+    wire["model"]["spatial_sketch_constraints"] = json!([
+        {"id":"f3d:model:sketch-constraint#4444", "sketch":SPATIAL, "definition":{"kind":"repeated_line_length","entities":(1..=4).map(spatial_id).collect::<Vec<_>>(),"parameter":"f3d:model:parameter#2"}},
+        {"id":"f3d:model:sketch-constraint#4445", "sketch":SPATIAL, "definition":{"kind":"parallel_to_direction","entity":spatial_id(1),"direction":xyz([1.0,0.0,0.0])}},
+        {"id":"f3d:model:sketch-constraint#4446", "sketch":SPATIAL, "definition":{"kind":"parallel_to_direction","entity":spatial_id(2),"direction":xyz([0.0,1.0,0.0])}},
+        {"id":"f3d:model:sketch-constraint#4447", "sketch":SPATIAL, "definition":{"kind":"parallel_to_direction","entity":spatial_id(3),"direction":xyz([-1.0,0.0,0.0])}},
+        {"id":"f3d:model:sketch-constraint#4448", "sketch":SPATIAL, "definition":{"kind":"parallel_to_direction","entity":spatial_id(4),"direction":xyz([0.0,-1.0,0.0])}},
+    ]);
+    wire["model"]["features"][2]["definition"]["value"] = json!({"kind":"extrude", "value": {"profile": {"kind": "spatial_sketch_profiles", "value": {"sketch": SPATIAL, "profiles": [0]}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 10.0}}}, "op": "new_body"}});
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn spatial_044_extrudes_require_a_planar_loop_and_source_proof() {
+    let (_, report) = convert(&spatial_044_extrude(1.0), &spatial_044_writer());
+    assert!(
+        history_line(&report).contains("3D sketch profile boundary is not planar"),
+        "{}",
+        history_line(&report)
+    );
+    let (_, report) = convert(&spatial_044_extrude(0.0), &spatial_044_writer());
+    assert!(
+        history_line(&report).contains("has not been confirmed against the source body"),
+        "{}",
+        history_line(&report)
+    );
+    let (_, report) = convert(
+        &spatial_044_extrude(0.0),
+        &SolidCraftWriter::new()
+            .target_version(Some("0.43.0".parse().unwrap()))
+            .verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("its sketch is not an earlier mapped sketch"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn spatial_044_extrudes_use_host_measurements_without_profile_inference() {
+    for different_history in [false, true] {
+        let host = std::sync::Arc::new(RecordedEvaluator {
+            different_history,
+            ..RecordedEvaluator::default()
+        });
+        let (_, report) = convert(
+            &spatial_044_extrude(0.0),
+            &SolidCraftWriter::new()
+                .target_version(Some("0.44.0".parse().unwrap()))
+                .evaluator(host.clone()),
+        );
+        let outcome = report.outcome().unwrap();
+        let extrude = outcome
+            .features
+            .iter()
+            .find(|f| f.kind == "extrude")
+            .unwrap();
+        assert!(extrude.inferred.is_none(), "{report:?}");
+        if different_history {
+            assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+            assert!(extrude.reason.as_deref().unwrap().contains(
+                "its planar 3D sketch profile has not been confirmed against the source body"
+            ));
+        } else {
+            assert_eq!(extrude.status, dutchman_core::FeatureStatus::Mapped);
+            assert!(!extrude.profile_unverified);
+            assert!(report.losses().iter().any(|loss| {
+                loss.severity == dutchman_core::Severity::Info
+                    && loss.detail == "its planar 3D sketch profile is written as a separate planar sketch; the source body check confirmed it"
+            }), "{report:?}");
+        }
+        assert!(!report.losses().iter().any(|loss| {
+            matches!(
+                loss.code.as_deref(),
+                Some("history/profile-region-inferred" | "history/profile-region-measured")
+            )
+        }));
+        assert!(host
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|label| label == "history"));
+    }
+}
+
+fn spatial_044_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    // detected() caps at the writer's newest default; read the CLI's actual release here.
+    let version = dutchman_solidcraft::solidcraft_version(&Verification::With(cli.clone()))
+        .and_then(|line| dutchman_solidcraft::solidcraft_minor(&line))
+        .and_then(|minor| {
+            format!("{minor}.0")
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .ok()
+        })?;
+    if version < "0.44.0".parse().unwrap() {
+        eprintln!("skipped: 3D sketch constraints require SolidCraft 0.44 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
+#[test]
+fn spatial_044_constraints_and_extrude_replay_against_the_source_cube() {
+    let Some(cli) = spatial_044_cli() else {
+        return;
+    };
+    let writer = SolidCraftWriter::new()
+        .target_version(Some("0.44.0".parse().unwrap()))
+        .verification(Verification::With(cli.clone()));
+    let model = spatial_044_extrude(0.0);
+    let mut bytes = Vec::new();
+    let mut report = Report::default();
+    writer.write(&model, &mut bytes, &mut report).unwrap();
+    assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
+    assert!(
+        matches!(report.outcome().unwrap().check, Check::Verified),
+        "{report:?}"
+    );
+    assert!((volumes(&cli, &bytes)[0] - 1000.0).abs() < 1e-6);
+    let grown_profile = with_param(&bytes, "side", "20 mm");
+    assert!((volumes(&cli, &grown_profile)[0] - 4000.0).abs() < 0.01);
+    let (path_bytes, _) = written_with(&spatial_044_model(), &spatial_044_writer());
+    evaluated(&cli, &path_bytes);
+    // A straight 3D path makes dimension edits measurable independently of spline fitting.
+    let base = spatial_044_model();
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["spatial_sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|e| {
+            [spatial_id(1), spatial_id(4), spatial_id(5)]
+                .contains(&e["id"].as_str().unwrap().to_owned())
+        });
+    wire["model"]["spatial_sketch_constraints"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|c| c["definition"]["kind"] != "tangent");
+    wire["model"]["features"][2]["definition"]["value"]["value"]["path"]["value"]["curves"] =
+        json!([spatial_id(1)]);
+    let entities = wire["model"]["spatial_sketch_entities"]
+        .as_array_mut()
+        .unwrap();
+    entities
+        .iter_mut()
+        .find(|e| e["id"] == spatial_id(1))
+        .unwrap()["geometry"]["end"] = xyz([0.0, 0.0, 10.0]);
+    entities
+        .iter_mut()
+        .find(|e| e["id"] == spatial_id(5))
+        .unwrap()["geometry"]["position"] = xyz([0.0, 0.0, 10.0]);
+    // These unused branches make the carrier non-planar without changing its selected path.
+    entities.push(spatial_entity(
+        6,
+        json!({"kind":"line","start":xyz([0.0,0.0,10.0]),"end":xyz([8.0,0.0,10.0])}),
+    ));
+    entities.push(spatial_entity(
+        7,
+        json!({"kind":"line","start":xyz([0.0,0.0,10.0]),"end":xyz([0.0,8.0,10.0])}),
+    ));
+    let rise = wire["model"]["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|p| p["name"] == "rise")
+        .unwrap();
+    rise["expression"] = json!("10 mm");
+    rise["value"]["value"] = json!(10.0);
+    let straight = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let (bytes, proof) = written_with(&straight, &writer);
+    assert_eq!(proof.outcome().unwrap().check, Check::Verified, "{proof:?}");
+    assert!((volumes(&cli, &bytes)[0] - 1000.0).abs() < 0.01);
+    let grown = with_param(&bytes, "rise", "40 mm");
+    assert!((volumes(&cli, &grown)[0] - 4000.0).abs() < 0.01);
+    // This path deliberately sweeps a shape different from the source cube.
+    // The source check must retain the imported cube instead of declaring the path verified.
+    let (_, report) = convert(&spatial_044_model(), &writer);
+    assert_ne!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
+}
+
+#[test]
+fn spatial_044_failed_constraint_replay_retries_the_solved_geometry() {
+    let Some(cli) = spatial_044_cli() else {
+        return;
+    };
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let spatial = serde_json::to_value(&spatial_044_model().ir).unwrap();
+    for key in [
+        "spatial_sketches",
+        "spatial_sketch_entities",
+        "spatial_sketch_constraints",
+    ] {
+        wire["model"][key] = spatial["model"][key].clone();
+    }
+    let mut feature = spatial["model"]["features"][1].clone();
+    feature["ordinal"] = json!(2);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(feature);
+    let mut parameter = spatial["model"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "rise")
+        .unwrap()
+        .clone();
+    parameter["expression"] = json!("-30 mm");
+    parameter["value"]["value"] = json!(30.0);
+    wire["model"]["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .push(parameter);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let (doc, report) = convert(
+        &model,
+        &SolidCraftWriter::new()
+            .target_version(Some("0.44.0".parse().unwrap()))
+            .verification(Verification::With(cli)),
+    );
+    assert_eq!(
+        report.outcome().unwrap().mode,
+        Mode::PartialHistory,
+        "{report:?}"
+    );
+    let rail = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Rail sketch")
+        .unwrap();
+    assert_eq!(rail["sketch"]["wire_constraints"], json!([]));
+    assert_eq!(rail["sketch"]["wires_joined"], false);
+    assert_eq!(rail["sketch"]["wires"].as_array().unwrap().len(), 5);
+    assert!(
+        report.outcome().unwrap().features.iter().any(|f| f
+            .reason
+            .as_ref()
+            .is_some_and(|r| r.contains("not carried after replay failed"))),
+        "{report:?}"
+    );
+    assert!(report.outcome().unwrap().features.iter().any(|f|f.kind=="spatial_sketch" && f.status==dutchman_core::FeatureStatus::Mapped),"{report:?}");
+}
+
+#[test]
+fn spatial_044_independent_sketches_survive_an_earlier_blocker() {
+    let base = spatial_044_model();
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["features"][1]["ordinal"] = json!(2);
+    wire["model"]["features"][2]["ordinal"] = json!(3);
+    wire["model"]["features"].as_array_mut().unwrap().push(json!({"id":"f3d:model:feature#44", "ordinal":1, "name":"Earlier blocker", "suppressed":false,"definition":{"kind":"operation","value":{"kind":"native","value":{"kind":"Synthetic unsupported operation","parameters":{}}}},"dependencies":[],"source_properties":{},"source_content":[],"outputs":[]}));
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let (doc, report) = convert(&model, &spatial_044_writer());
+    assert!(
+        doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["name"] == "Rail sketch"
+                && f["sketch"]["wire_constraints"]
+                    .as_array()
+                    .is_some_and(|c| !c.is_empty())),
+        "{doc}"
+    );
+    assert!(report
+        .outcome()
+        .unwrap()
+        .features
+        .iter()
+        .any(|f| f.name.as_deref() == Some("Rail sketch")
+            && f.status == dutchman_core::FeatureStatus::Mapped));
 }
 
 /// The cube's sketch with a second 10 mm square beside the first, 20 mm along X, and an opaque
