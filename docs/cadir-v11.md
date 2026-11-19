@@ -22,7 +22,7 @@ placement admission, and minimum reproductions follow these mappings:
 | fields on a feature operation | the operation enum's `value` |
 | fields on a solved curve or surface | `geometry.value` inside the `solved` arm |
 | appearance target `id` | `target.entity.value`; the discriminator is `target.entity.kind` |
-| prototype `scope`, external document `resolution` | `kind` |
+| occurrence prototype, parent, and ordinal | prototype definition id; ordered children on the owning definition; external identity in definition `storage` |
 | joint operands `arity` | `kind`, with operands in `value` |
 | datum reference `reference`, sketch binding `space`, profile region `region`, face loops `classification`, NURBS poles `form` | `kind` |
 | extrusion `ProfileRef` planar operand | `{"kind":"planar","value": <PlanarProfileRef>}` |
@@ -133,3 +133,58 @@ curve placement and converts it to degrees for text entities. Angular annotation
 measurements and tolerances also use radians, so DXF converts both back to degrees
 for the existing labels. Drawing radii use `PositiveLength`, and a drawing's native
 reference is optional. These type changes preserve the previous DXF presentation.
+
+## Definition-owned product structure
+
+Commit `b3bcdb267c513774acc39bf36dc4c07ceb348190` replaces occurrence parents
+and tagged prototypes with `ProductDefinition.occurrences` and an occurrence's
+prototype definition id. Fusion's `tree::own_once`, FreeCAD's
+`product::transfer_neutral` and SolidWorks'
+`NativeAssembly::into_projection` emit this structure. External paths and
+configuration/object names now live in the prototype definition's `storage`.
+This is an API change; the readers retain the product tree.
+
+Dutchman projects that neutral graph into an internal placed tree for component
+extraction, external resolution, and project reference grouping. The root is the
+file definition without a separate source. Child order comes from each definition's
+occurrence list, and shared children expand for every placed use with distinct
+internal identities. Expanded identities retain their native child key so an
+explicit nested joint path resolves inside the requested insertion, rather than
+selecting another copy with the same source key. Depth and expanded count retain
+the existing assembly limits.
+The projection leaves the decoded CADIR and geometry slices unchanged. Bodies owned
+by the root remain root geometry. Suppressed placements and inactive definitions
+are omitted. Nested overrides match source occurrence paths before transforms,
+visibility, and
+suppression are resolved for each insertion. FreeCAD hidden-body classification
+uses the same placed view so a shown insertion keeps shared geometry. Parent and child transforms compose
+in the existing placement builder; overrides never transform source geometry.
+Alternate representations and instance bodies receive a named refusal instead of
+silently using the prototype's default geometry.
+
+Commit `9522b16732` (#1437) adds definition-owned `tessellations` for bodiless STEP
+meshes. It does not change the Fusion, FreeCAD, or SolidWorks occurrence walk.
+Saved meshes remain outside the exact-body conversion path, as before.
+
+
+The same commit folds identity root components into file definitions. The placed
+view retains the surrounding document container that previous conversions wrote.
+The codec's component and document identity namespaces distinguish those roles,
+including scoped member identities (`model:component` and
+`archive:product-definition`). Xrefs, unresolved insertion declarations, and
+stored-frame groups remain at file level; the component's children stay below
+its identity placement. The file keeps its inherited label, and the component
+keeps its source name or the existing fallback name. Override paths count source
+occurrences, keeping the added display level transparent to source overrides.
+
+The pinned public assembly has 69 file definitions: 20 component roots and 49
+document roots. The shared definition walk reaches the component roots 59 times.
+Those 59 context levels restore the expected 367 named occurrences. The unchanged
+placement comparison still fails: 56 matching paths move and 151 generated names
+differ. This pin also loses insertion paths when `SharedIdentities::rewrite`
+canonicalizes joint operands. The upstream synthetic test
+`tree::tests::a_reference_to_one_instance_names_its_occurrence` explicitly changes
+a joint selecting `b:bolt` into a selection of the shared `bolt` with an empty
+occurrence path. Product placement overrides retain both bolts but cannot say
+which one that joint selected. Exact placement compatibility therefore remains
+unverified; the occurrence adaptation does not reconstruct missing selections.

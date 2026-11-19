@@ -12,8 +12,7 @@ pub(super) fn resolve(
     open: &mut Vec<PathBuf>,
     reads: &mut SolidWorksReads,
 ) -> Result<Option<Assembly>, Error> {
-    let wire = serde_json::to_value(&model.ir.model.occurrences)
-        .map_err(|err| Error::Decode(err.to_string()))?;
+    let wire = products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let rows = wire.as_array().map_or(&[][..], Vec::as_slice);
     if rows.len() > MAX_PLACEMENTS {
         return Err(Error::Assembly(format!(

@@ -25,6 +25,13 @@ includes hidden bodies as well as the visible final shape.
 
 ## What converts
 
+The pinned reader lists child occurrences on their product definitions. Dutchman
+walks that structure for component catalogs and linked-part selection, including
+shared definitions inserted more than once. The document root remains separate
+from its placed parts. Hidden-body filtering checks each insertion: a shown
+instance keeps shared geometry even when another instance is under a hidden
+container.
+
 - **Geometry**, written as a SolidCraft import and checked in SolidCraft like any other.
   Only the bodies FreeCAD shows convert: a body cadmpeg marks hidden (`visible: false`, as it
   marks the shape of each step inside a PartDesign Body) is left out, with the geometry only

@@ -217,8 +217,7 @@ pub fn assembly_references(
         return Ok(Vec::new());
     }
     let model = decode_file(format, input, &mut Report::default(), None)?;
-    let value = serde_json::to_value(&model.ir.model.occurrences)
-        .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
+    let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
     let folder = input.parent().unwrap_or(Path::new("."));
     let mut references: std::collections::BTreeSet<_> = value
@@ -272,13 +271,8 @@ pub fn assembly_references(
             .map(|definition| (definition.id.as_str(), definition))
             .collect();
         for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
-            if row
-                .pointer("/parent/kind")
-                .and_then(serde_json::Value::as_str)
-                == Some("root")
-            {
-                continue;
-            }
+            // The document root is now a definition rather than a placed holder.
+            // Its direct children can themselves be saved local sub-assemblies.
             let definition = row
                 .pointer("/prototype/definition")
                 .and_then(serde_json::Value::as_str)

@@ -1,5 +1,12 @@
 # Machine-readable reports
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 ## Share link inputs
 
 `dutchman convert <url>` and the desktop app resolve public Fusion and Google Drive file

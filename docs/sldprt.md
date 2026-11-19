@@ -6,7 +6,7 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`9249a19b`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`1a8c520c`).
 `dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
 
 Compact extrusion continuation records now supply their join or cut operation when their
@@ -88,6 +88,12 @@ feature history. The original geometry remains visible; unavailable sketch geome
 placement is reported.
 
 ## Assemblies (`.sldasm`)
+
+Ordered child occurrences now belong to product definitions, and external file
+paths and configuration names belong to the prototype definition's storage.
+Dutchman follows those references through local sub-assemblies when planning
+folder and ZIP projects, so parts claimed by an assembly are not converted again
+as unused parts.
 
 Assemblies convert as placed parts and nested components. cadmpeg supplies product definitions,
 occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` references

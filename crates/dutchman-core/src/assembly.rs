@@ -11,6 +11,7 @@ mod poses;
 mod position_bounds;
 mod position_skeleton;
 mod position_smart;
+pub(crate) mod products;
 mod sketch_instance;
 mod slicing;
 mod solidworks;
@@ -442,11 +443,9 @@ pub(crate) fn resolve(
     finder: &Finder,
     open: &mut Vec<PathBuf>,
 ) -> Result<Assembly, Error> {
-    let wire = serde_json::to_value(&model.ir.model)
-        .map_err(|err| Error::Decode(format!("cannot read the assembly: {err}")))?;
+    let wire = products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let mut occurrences: Vec<&Value> = wire
-        .get("occurrences")
-        .and_then(Value::as_array)
+        .as_array()
         .map(|rows| rows.iter().collect())
         .unwrap_or_default();
     if occurrences.len() > MAX_PLACEMENTS {
@@ -737,6 +736,9 @@ fn local_components_with_threads(
     let packed = serde_json::to_string(&model.ir).map_err(|err| err.to_string())?;
     let source = slicing::Packed::read(&packed)?;
     let mut document = source.document()?;
+    if let Some(model) = document.get_mut("model") {
+        products::project(model)?;
+    }
     let displayed = poses::select(model, &mut document, positions, report)?;
     let wire = document.get("model").unwrap_or(&Value::Null);
     let arena = |name: &str| {
@@ -786,6 +788,12 @@ fn local_components_with_threads(
         .collect();
     let owned: Vec<&str> = definitions
         .values()
+        // The root definition owns the document's loose bodies, rather than a
+        // separately placed child. Keep those on the root as before.
+        .filter(|row| {
+            row.pointer("/storage/kind").and_then(Value::as_str) != Some("file")
+                || row.pointer("/storage/source").is_some()
+        })
         .filter_map(|row| row.get("bodies").and_then(Value::as_array))
         .flatten()
         .filter_map(Value::as_str)
@@ -896,11 +904,12 @@ fn local_components_with_threads(
     };
     // A design's root component is held by what holds the design: the document, or the
     // occurrence that inserts it. cadmpeg names its occurrence `root-…`.
-    let mut held: Vec<Vec<usize>> = tree
-        .paths
+    let mut held: Vec<Vec<usize>> = occurrences
         .iter()
-        .filter(|(id, _)| id.contains("occurrence#root-"))
-        .map(|(_, located)| located.path.clone())
+        .filter(|row| is_root_component(row))
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .filter_map(|id| tree.paths.get(id))
+        .map(|located| located.path.clone())
         .collect();
     held.sort();
     held.dedup();
@@ -959,6 +968,14 @@ fn local_components_with_threads(
     let texts = left_out.iter().map(|note| note.text.clone()).collect();
     assembly.joint_notes = left_out;
     Ok(Some((assembly, texts)))
+}
+
+fn is_root_component(row: &Value) -> bool {
+    row.get("file_root_component").and_then(Value::as_bool) == Some(true)
+        || row
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.contains("occurrence#root-"))
 }
 
 /// The occurrences placed at a source pose, which a Fusion design
@@ -2273,35 +2290,37 @@ fn side_path(
             // inserted into it, end in their key.
             let object = operand.get("object").and_then(Value::as_str).unwrap_or("");
             let prefix = id.strip_suffix(object).filter(|_| !object.is_empty());
-            let below = paths.get(id).map(|located| located.own.as_slice());
-            let inside = |key: &str| {
-                let below = below?;
-                let mut found = paths.iter().filter(|(nested, located)| {
-                    nested.rsplit(['#', ':']).next() == Some(key)
-                        && located.own.len() > below.len()
-                        && located.own.starts_with(below)
-                });
-                match (found.next(), found.next()) {
-                    (Some((nested, _)), None) => Some(*nested),
-                    _ => None,
-                }
-            };
-            let nested = listed(container.get("occurrence_path"))
+            let mut named = id;
+            for key in listed(container.get("occurrence_path"))
                 .iter()
                 .chain(listed(operand.get("subelements")))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
                 .filter_map(Value::as_str)
-                .find_map(|key| {
-                    prefix
-                        .and_then(|prefix| {
-                            let nested = format!("{prefix}{key}");
-                            paths.get_key_value(nested.as_str()).map(|(id, _)| *id)
-                        })
-                        .or_else(|| inside(key))
+            {
+                let below = paths.get(named).map(|located| located.own.as_slice());
+                let within = |located: &Located| {
+                    below.is_some_and(|below| {
+                        located.own.len() > below.len() && located.own.starts_with(below)
+                    })
+                };
+                let prefixed = prefix.and_then(|prefix| {
+                    let nested = format!("{prefix}{key}");
+                    paths
+                        .get_key_value(nested.as_str())
+                        .filter(|(_, located)| within(located))
+                        .map(|(id, _)| *id)
                 });
-            let named = nested.unwrap_or(id);
+                let mut found = paths.iter().filter(|(nested, located)| {
+                    nested.rsplit(['#', ':']).next() == Some(key) && within(located)
+                });
+                let nested = match (found.next(), found.next()) {
+                    (Some((nested, _)), None) => Some(*nested),
+                    (None, None) => prefixed,
+                    _ => None,
+                };
+                if let Some(nested) = nested {
+                    named = nested;
+                }
+            }
             let located = paths
                 .get(named)
                 .ok_or("it joins a component the design does not place")?;
@@ -2349,7 +2368,7 @@ type Built = (usize, Vec<usize>);
 const LAYOUT_TOLERANCE: f64 = 1e-7;
 
 /// What a layout holds: the layout and local placement of each child.
-type Held = Vec<(usize, [[f64; 4]; 3])>;
+type Held = Vec<(usize, [[f64; 4]; 3], bool)>;
 
 /// The layouts occurrences of one component hold. Two occurrences of a component share a layout
 /// when they hold the same components (compared deepest first, so a difference anywhere below
@@ -2365,15 +2384,18 @@ struct Layouts<'a> {
 }
 
 impl<'a> Layouts<'a> {
-    fn same(a: &[(usize, [[f64; 4]; 3])], b: &[(usize, [[f64; 4]; 3])]) -> bool {
+    fn same(a: &Held, b: &Held) -> bool {
         a.len() == b.len()
-            && a.iter().zip(b).all(|((layout, t), (other, u))| {
-                layout == other
-                    && t.iter()
-                        .flatten()
-                        .zip(u.iter().flatten())
-                        .all(|(x, y)| (x - y).abs() <= LAYOUT_TOLERANCE)
-            })
+            && a.iter()
+                .zip(b)
+                .all(|((layout, t, hidden), (other, u, other_hidden))| {
+                    hidden == other_hidden
+                        && layout == other
+                        && t.iter()
+                            .flatten()
+                            .zip(u.iter().flatten())
+                            .all(|(x, y)| (x - y).abs() <= LAYOUT_TOLERANCE)
+                })
     }
 
     /// The layout of `occurrence`, and of everything below it.
@@ -2399,7 +2421,7 @@ impl<'a> Layouts<'a> {
         };
         let held: Held = if depth > MAX_DEPTH {
             // Too deep to compare: a layout of its own, which the build refuses.
-            vec![(usize::MAX, [[f64::NAN; 4]; 3])]
+            vec![(usize::MAX, [[f64::NAN; 4]; 3], false)]
         } else {
             id.and_then(|id| children.get(id))
                 .into_iter()
@@ -2409,6 +2431,7 @@ impl<'a> Layouts<'a> {
                         self.classify(child, children, external, depth + 1),
                         // A malformed placement never matches; the build reports it.
                         transform(child).unwrap_or([[f64::NAN; 4]; 3]),
+                        child.get("visible").and_then(Value::as_bool) == Some(false),
                     )
                 })
                 .collect()
@@ -2997,19 +3020,34 @@ fn slice(
             .filter_map(Value::as_str)
             .any(|id| bodies.contains(&id))
     };
-    fn product_definition(row: &Value) -> Option<&str> {
-        row.get("product_definition").and_then(Value::as_str)
+    let root_definitions: BTreeSet<&str> = wire
+        .get("product_definitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.pointer("/storage/kind").and_then(Value::as_str) == Some("file")
+                && row.pointer("/storage/source").is_none()
+        })
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .collect();
+    fn product_definition<'a>(row: &'a Value, roots: &BTreeSet<&str>) -> Option<&'a str> {
+        row.get("product_definition")
+            .and_then(Value::as_str)
+            .filter(|id| !roots.contains(id))
     }
     let definition = match owner {
-        HistoryOwner::Definition(id) => Some(id),
+        HistoryOwner::Definition(id) => Some(id).filter(|id| !root_definitions.contains(id)),
         HistoryOwner::Root | HistoryOwner::Unknown => None,
     };
     let owned = |row: &Value| match owner {
-        HistoryOwner::Definition(id) => product_definition(row) == Some(id),
-        HistoryOwner::Root => product_definition(row).is_none(),
+        HistoryOwner::Definition(_) | HistoryOwner::Root => {
+            product_definition(row, &root_definitions) == definition
+        }
         HistoryOwner::Unknown => false,
     };
     let here_world = match owner {
+        HistoryOwner::Definition(id) if root_definitions.contains(id) => Some(IDENTITY),
         HistoryOwner::Definition(id) => single_world(
             wire.get("occurrences")
                 .and_then(Value::as_array)
@@ -3021,7 +3059,7 @@ fn slice(
     };
     // Explicit ownership takes precedence over output links from older files.
     let foreign = |row: &Value| {
-        if let Some(owner) = product_definition(row) {
+        if let Some(owner) = product_definition(row, &root_definitions) {
             return Some(owner) != definition;
         }
         // A root sketch has no ownership field: repeated parts must resolve its instance
@@ -3174,15 +3212,20 @@ fn slice(
             let mut owners = BTreeSet::new();
             for id in builders {
                 if let Some(entry) = rows.get(*id) {
-                    owners
-                        .insert(product_definition(entry.row.value()?.as_ref()).map(str::to_owned));
+                    owners.insert(
+                        product_definition(entry.row.value()?.as_ref(), &root_definitions)
+                            .map(str::to_owned),
+                    );
                 }
             }
             let owners: Vec<Option<String>> = owners.into_iter().collect();
             let [there] = owners.as_slice() else {
                 continue;
             };
-            let Some(there) = single_world(occurrences, there.as_deref()) else {
+            let Some(there) = single_world(
+                occurrences,
+                there.as_deref().filter(|id| !root_definitions.contains(id)),
+            ) else {
                 continue;
             };
             let resolved = rows

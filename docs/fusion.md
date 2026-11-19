@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`9249a19b`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`1a8c520c`).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -305,6 +305,17 @@ and `part_positions` counts and fallback reasons. Counts describe source occurre
 including assembly holders, rather than additional history representations in the output.
 
 ## Components
+
+At this pin, each product definition lists its children once. Dutchman expands
+those children for every insertion and applies nested placement, visibility and
+suppression overrides along that insertion path. File definitions that also stand
+for a root component retain the document container in the written component tree.
+
+Exact placement compatibility remains blocked for archives whose joint operands
+lose an insertion path during cadmpeg's shared-occurrence rewrite. The product
+placements survive, but the joint can no longer select one copy. This is an
+upstream limitation, not a reason to substitute a guessed placement; see
+[the product API notes](cadir-v11.md#definition-owned-product-structure).
 
 Assemblies with multiple top-level designs group each design's features into a uniquely
 named timeline folder, including the root design's own features when present, while keeping

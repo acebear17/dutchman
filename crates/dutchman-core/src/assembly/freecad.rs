@@ -56,12 +56,8 @@ pub(super) fn resolve(
         )));
     }
     let folder = input.parent().unwrap_or(Path::new("."));
-    let wire =
-        serde_json::to_value(&model.ir.model).map_err(|err| Error::Decode(err.to_string()))?;
-    let rows = wire
-        .get("occurrences")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice);
+    let wire = products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
+    let rows = wire.as_array().map_or(&[][..], Vec::as_slice);
     let mut external = ExternalParts::new();
     let mut selected_parts = BTreeMap::new();
     let mut files: BTreeMap<PathBuf, Result<Model, (Stage, String)>> = BTreeMap::new();
@@ -254,7 +250,10 @@ pub(super) fn resolve(
 /// Select the linked definition, never the other objects in the same document. Definition
 /// geometry is already in its own frame; LinkTransform decides whether to carry its pose.
 fn select(model: &Model, object: &str) -> Result<(Model, Placement3x4), String> {
-    let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    if let Some(model) = document.get_mut("model") {
+        products::project(model)?;
+    }
     let definitions = document
         .pointer("/model/product_definitions")
         .and_then(Value::as_array)

@@ -1,5 +1,12 @@
 # Getting started
 
+Component catalogs follow assembly nesting, including repeated insertions.
+Assembly files claim their referenced parts, so a project converts its roots
+and then its unused parts. Nested placement, visibility, and suppression
+overrides apply separately to each insertion.
+Alternate representations and instance bodies are not supported yet;
+the report names that limitation rather than treating the design as empty.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
