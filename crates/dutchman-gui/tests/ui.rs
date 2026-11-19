@@ -943,11 +943,13 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
 /// Opening a missing-CLI preview retries discovery. Isolate its environment without
 /// changing the process-wide environment of the other, concurrently running tests.
 fn isolate_missing_cli_preview(test: &str) -> bool {
-    if std::env::var_os("SOLIDCRAFT_CLI").is_none() {
+    const ISOLATED: &str = "DUTCHMAN_GUI_MISSING_CLI_PREVIEW";
+    if std::env::var(ISOLATED).as_deref() == Ok(test) {
         return false;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
+        .env(ISOLATED, test)
         .env_remove("SOLIDCRAFT_CLI")
         .env("PATH", "")
         .output()
