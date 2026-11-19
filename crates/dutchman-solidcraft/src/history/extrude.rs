@@ -36,7 +36,14 @@ pub(crate) fn map(
                 .to_owned(),
         );
     }
-    let (sketch_id, profiles) = if face_profile {
+    let spatial_profile = reference
+        .and_then(|r| r.get("kind"))
+        .and_then(Value::as_str)
+        == Some("spatial_sketch_profiles")
+        && ctx.target_version >= crate::SolidCraftVersion::V0_44_0;
+    let (sketch_id, profiles) = if spatial_profile {
+        super::spatial::profile::map(reference.ok_or("it has no profile")?, ctx)?
+    } else if face_profile {
         // The sketch of the face's boundary runs along the face's outward normal; mapping
         // assumes that side and the replay corrects it, so nothing here may depend on the
         // side beyond travelling along or against the profile normal.
