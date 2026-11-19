@@ -339,7 +339,7 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (ge
            Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history
 2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)
-Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 Each converted file's loss report is listed beneath it, summarised by component when it has
