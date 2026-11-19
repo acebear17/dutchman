@@ -150,3 +150,8 @@ project root selection and recursive resolution; no third-party design supplied 
 `local_cubes.sldasm` uses that generator with an authored local sub-assembly holder
 and an embedded cube reference. It covers matching a local holder's neutral source name
 to a saved sub-assembly file when choosing project roots.
+
+Closed-circle blend regressions in `dutchman-solidcraft/tests/history.rs` use authored
+CADIR only, including a hidden synthetic historical wire with exact circular or elliptical
+carrier geometry. Writer unit tests cover coincident rims on two bodies and an ellipse
+whose source samples coincide with a circle while its replay seam moves independently.

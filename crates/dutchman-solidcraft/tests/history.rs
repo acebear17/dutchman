@@ -9812,7 +9812,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
     };
     let mut group = dimension;
     group["edges"] = json!({"kind": "historical", "value": {
-        "state": "synthetic:closed:feature-input-topology#0", "edges": ["rim"], "native": "synthetic rim"}});
+        "state": "synthetic:closed:feature-input-topology#0", "edges": ["synthetic:closed:edge#0"], "native": "synthetic rim"}});
     let mut definition = json!({"groups": [group]});
     if hole {
         definition["flip_direction"] = json!(false);
@@ -9827,11 +9827,40 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
     let point = |a: f64| json!({"x": c + r * a.cos(), "y": c + r * a.sin(), "z": 10.0});
     m["feature_input_topologies"] = json!([{
         "id": "synthetic:closed:feature-input-topology#0", "input_of": "synthetic:closed:feature#0",
-        "edges": ["rim"], "faces": [], "bodies": [], "vertices": [],
-        "edge_geometry": [{"edge": "rim", "start": point(seam), "end": point(seam),
+        "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "vertices": [],
+        "edge_geometry": [{"edge": "synthetic:closed:edge#0", "start": point(seam), "end": point(seam),
             "interior": point(seam + std::f64::consts::PI),
             "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": []}]
     }]);
+    // Exact historical carrier in a hidden synthetic input body, separate from final geometry.
+    let source = "synthetic:closed:body#0";
+    let old = json!("synthetic:cube:body#0");
+    for feature in wire["model"]["features"].as_array_mut().unwrap() {
+        for output in feature["outputs"].as_array_mut().unwrap() {
+            if *output == old {
+                *output = json!(source);
+            }
+        }
+    }
+    let g = &mut wire["geometry"];
+    g["bodies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": source, "kind": "wire", "visible": false}));
+    g["regions"].as_array_mut().unwrap().push(json!({"id": "synthetic:closed:region#0", "body": source, "shells": ["synthetic:closed:shell#0"]}));
+    g["shells"].as_array_mut().unwrap().push(json!({"id": "synthetic:closed:shell#0", "region": "synthetic:closed:region#0", "members": [{"kind": "wire_edge", "id": "synthetic:closed:edge#0"}]}));
+    g["edges"].as_array_mut().unwrap().push(json!({"id": "synthetic:closed:edge#0", "carrier": {"curve": "synthetic:closed:curve#0", "param_range": [seam, seam + std::f64::consts::TAU]}, "ends": {"start": "synthetic:closed:vertex#0", "end": "synthetic:closed:vertex#0"}}));
+    g["vertices"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": "synthetic:closed:vertex#0", "point": "synthetic:closed:point#0"}));
+    g["points"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": "synthetic:closed:point#0", "position": point(seam)}));
+    g["curves"].as_array_mut().unwrap().push(json!({"id": "synthetic:closed:curve#0", "geometry": {"kind": "solved", "value": {
+        "kind": "circle", "center": {"x": c, "y": c, "z": 10.0}, "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "radius": r
+    }}}));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -9852,6 +9881,33 @@ fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][0]["tangent"] =
         json!({"x": 1.0, "y": 0.0, "z": 0.0});
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.44.1".parse().unwrap()));
+    let (_, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("closed input curves other than proven circles"),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn closed_circle_blends_refuse_ellipses_whose_samples_alias_a_circle() {
+    let base = closed_circle_blend(false, 0.0);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let curve = wire["geometry"]["curves"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["id"] == "synthetic:closed:curve#0")
+        .unwrap();
+    curve["geometry"]["value"] = json!({"kind": "ellipse", "center": {"x": 0.0, "y": 0.0, "z": 10.0},
+        "axis": {"x": 0.0, "y": 0.0, "z": 1.0}, "major_direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+        "major_radius": 5.0, "minor_radius": 3.0});
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
