@@ -104,9 +104,13 @@ note. See [Fusion visibility](fusion.md#parts-and-history).
 
 Sheet-metal history follows the same mapping limits in [Feature history](history.md#sheet-metal) as the CLI:
 base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
-input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,
+input-edge geometry proves each pick. An attached rectangular plate and its paired bend also
+map on an unchanged simple polygonal base, including L-shaped and notched sheets, by picking
+the actual straight profile edge. Curved, open, crossing, disconnected, or collinear base edges
+and base profiles with holes or partial regions remain blocked for attachments.
+Unsupported flange dimensions or selections, and hems,
 appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
-relief use the target rule defaults because CADIR does not supply them.
+relief use the target rule defaults.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain

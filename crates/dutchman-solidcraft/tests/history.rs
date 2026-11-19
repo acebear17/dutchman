@@ -8579,6 +8579,399 @@ fn an_attached_plate_that_is_not_a_plain_edge_flange_is_refused() {
     }
 }
 
+/// Synthetic polygonal base and a square plate spanning its selected actual edge. The
+/// source B-rep remains the test cube; these tests inspect/replay the unverified history.
+fn polygon_attached_plate(points: &[[f64; 2]], edge: usize, top: bool) -> Model {
+    let mut model = attached_plate(3.0, 2.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    m["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| row["sketch"] == PLATE);
+    let mut members = Vec::new();
+    for (i, (&a, &b)) in points.iter().zip(points.iter().cycle().skip(1)).enumerate() {
+        let row = line(i as u32 + 1, a, b);
+        members.push(json!({"entity": row["id"], "reversed": false}));
+        m["sketch_entities"].as_array_mut().unwrap().push(row);
+    }
+    m["sketches"][0]["profiles"] = json!([members]);
+    let (a, b) = (points[edge], points[(edge + 1) % points.len()]);
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length = dx.hypot(dy);
+    let (ux, uy) = (dx / length, dy / length);
+    let sign = if top { 1.0 } else { -1.0 };
+    let point = |x, y, z| json!({"x": x, "y": y, "z": z});
+    m["sketches"][1]["placement"]["frame"] = json!({
+        "origin": point(a[0], a[1], if top { 0.0 } else { 1.0 }),
+        "normal": point(sign * uy, -sign * ux, 0.0),
+        "u_axis": point(ux, uy, 0.0),
+    });
+    for row in m["sketch_entities"].as_array_mut().unwrap() {
+        if row["sketch"] == PLATE {
+            for endpoint in ["start", "end"] {
+                if row["geometry"][endpoint]["u"] == 10.0 {
+                    row["geometry"][endpoint]["u"] = json!(length);
+                }
+            }
+        }
+    }
+    for state in m["feature_input_topologies"].as_array_mut().unwrap() {
+        state["edge_geometry"][0]["start"] = point(a[0], a[1], if top { 1.0 } else { 0.0 });
+        state["edge_geometry"][0]["end"] = point(b[0], b[1], if top { 1.0 } else { 0.0 });
+        state["edge_geometry"][0]["interior"] = point(
+            (a[0] + b[0]) / 2.0,
+            (a[1] + b[1]) / 2.0,
+            if top { 1.0 } else { 0.0 },
+        );
+        state["edge_geometry"][0]["tangent"] = point(ux, uy, 0.0);
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+const L_BASE: [[f64; 2]; 6] = [
+    [0.0, 0.0],
+    [30.0, 0.0],
+    [30.0, 10.0],
+    [10.0, 10.0],
+    [10.0, 30.0],
+    [0.0, 30.0],
+];
+
+#[test]
+fn translated_attached_plates_keep_rectangular_and_concave_base_edges() {
+    for (points, edge) in [
+        (vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], 0),
+        (
+            L_BASE.iter().map(|[x, y]| [x / 80.0, y / 80.0]).collect(),
+            3,
+        ),
+    ] {
+        for reverse in [false, true] {
+            let mut points = points.clone();
+            let edge = if reverse {
+                points.reverse();
+                (points.len() * 2 - edge - 2) % points.len()
+            } else {
+                edge
+            };
+            for offset in [0.0, 100_000_000.0, 100_000_001.0] {
+                let translated: Vec<_> = points
+                    .iter()
+                    .map(|[x, y]| [x + offset, y + offset])
+                    .collect();
+                for top in [false, true] {
+                    let mut model = polygon_attached_plate(&translated, edge, top);
+                    if points.len() > 4 {
+                        // Inset the plate at the concave edge: the flush-face proof must
+                        // use the outward winding sign, not just admit a nonzero area.
+                        let mut wire = serde_json::to_value(&model.ir).unwrap();
+                        wire["model"]["sketches"][1]["placement"]["frame"]["origin"]["x"] =
+                            json!(translated[edge][0] - 1.0);
+                        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                    }
+                    let (document, report) = convert(
+                        &model,
+                        &SolidCraftWriter::new().verification(Verification::Off),
+                    );
+                    assert!(
+                        history_line(&report).starts_with("4 of 4 features rebuilt"),
+                        "reverse={reverse}, offset={offset}, top={top}: {}",
+                        history_line(&report)
+                    );
+                    let flange = document["features"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|f| f["type"] == "sheet_flange")
+                        .unwrap();
+                    let (a, b) = (translated[edge], translated[(edge + 1) % translated.len()]);
+                    assert_eq!(
+                        flange["edges"],
+                        json!([[
+                            (a[0] + b[0]) / 2.0,
+                            (a[1] + b[1]) / 2.0,
+                            if top { 1.0 } else { 0.0 },
+                        ]])
+                    );
+                    assert_eq!(flange["height"], "20 mm");
+                    assert_eq!(flange["position"], "inside");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn attached_plates_use_the_actual_concave_base_edge_on_either_face_and_winding() {
+    for reverse in [false, true] {
+        let mut points = L_BASE.to_vec();
+        if reverse {
+            points.reverse();
+        }
+        // The inside vertical edge, pointing outward toward +X. A direction from the
+        // bounding-box centre would point toward -X instead. Put the plate 1 mm inward
+        // to make that wrong sign observable in the flush-face proof.
+        let edge = if reverse { 1 } else { 3 };
+        for top in [false, true] {
+            let mut model = polygon_attached_plate(&points, edge, top);
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["sketches"][1]["placement"]["frame"]["origin"]["x"] = json!(9.0);
+            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).starts_with("4 of 4 features rebuilt"),
+                "{}",
+                history_line(&report)
+            );
+            let flange = document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["type"] == "sheet_flange")
+                .unwrap();
+            assert_eq!(
+                flange["edges"],
+                json!([[10.0, 20.0, if top { 1.0 } else { 0.0 }]])
+            );
+            assert_eq!(flange["height"], "20 mm");
+            assert_eq!(flange["position"], "inside");
+        }
+    }
+}
+
+#[test]
+fn attached_plates_accept_explicit_single_base_profile_selections() {
+    for profile in [
+        first_profile(),
+        json!({"kind":"sketch_regions", "value":{"sketch":SKETCH, "regions":[{"kind":"loops", "outer":0, "holes":[]}]}}),
+    ] {
+        let mut model = polygon_attached_plate(&L_BASE, 3, true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] = profile;
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
+            "{}",
+            history_line(&report)
+        );
+        let flange = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "sheet_flange")
+            .unwrap();
+        assert_eq!(flange["edges"], json!([[10.0, 20.0, 1.0]]));
+    }
+}
+
+#[test]
+fn attached_plates_refuse_unproven_nonrectangular_base_picks() {
+    for (field, point, reason) in [
+        (
+            "interior",
+            json!({"x":30.0,"y":20.0,"z":1.0}),
+            "exactly one rebuilt edge",
+        ),
+        (
+            "end",
+            json!({"x":10.0,"y":29.0,"z":1.0}),
+            "vertices or tangent",
+        ),
+        (
+            "tangent",
+            json!({"x":1.0,"y":0.0,"z":0.0}),
+            "vertices or tangent",
+        ),
+    ] {
+        let mut model = polygon_attached_plate(&L_BASE, 3, true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["feature_input_topologies"][0]["edge_geometry"][0][field] = point;
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn attached_plates_name_base_profiles_that_cannot_be_proven() {
+    for points in [
+        // Crossing perimeter.
+        vec![[0.0, 0.0], [30.0, 30.0], [0.0, 30.0], [30.0, 0.0]],
+        // Two consecutive collinear sides would merge in SolidCraft.
+        vec![
+            [0.0, 0.0],
+            [15.0, 0.0],
+            [30.0, 0.0],
+            [30.0, 30.0],
+            [0.0, 30.0],
+        ],
+    ] {
+        let model = polygon_attached_plate(&points, 0, true);
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report)
+                .contains("one closed, non-crossing base perimeter with distinct straight edges"),
+            "{}",
+            history_line(&report)
+        );
+    }
+    let mut model = polygon_attached_plate(&L_BASE, 3, true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // A second disjoint closed region is not the single base body this proof requires.
+    for (i, (a, b)) in [
+        ([40.0, 0.0], [50.0, 0.0]),
+        ([50.0, 0.0], [45.0, 10.0]),
+        ([45.0, 10.0], [40.0, 0.0]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        wire["model"]["sketch_entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(line(10 + i as u32, a, b));
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report)
+            .contains("one closed, non-crossing base perimeter with distinct straight edges"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
+    let mut model = polygon_attached_plate(&L_BASE, 3, true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(entity(
+            10,
+            json!({
+                "kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 2.0,
+            }),
+        ));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("curved, disconnected, or collinear base edges"),
+        "{}",
+        history_line(&report)
+    );
+
+    let mut model = polygon_attached_plate(&L_BASE, 3, true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["feature_input_topologies"][0]["edge_geometry"][0] = json!({
+        "edge": "test:sheet:historical-edge#front",
+        "start": {"x":10.0,"y":10.0,"z":0.0},
+        "end": {"x":10.0,"y":10.0,"z":1.0},
+        "interior": {"x":10.0,"y":10.0,"z":0.5},
+        "tangent": {"x":0.0,"y":0.0,"z":1.0},
+        "faces": ["test:sheet:historical-face#top", "test:sheet:historical-face#rim"],
+    });
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("select a thickness edge"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_replays_attached_plates_on_nonrectangular_base_edges() {
+    let Some(cli) = solidcraft() else { return };
+    for (points, edge, pick) in [
+        (L_BASE.to_vec(), 3, [10.0, 20.0, 1.0]),
+        (L_BASE.iter().copied().rev().collect(), 1, [10.0, 20.0, 0.0]),
+        // Notch across the far side, attaching to its bottom edge.
+        (
+            vec![
+                [0.0, 0.0],
+                [40.0, 0.0],
+                [40.0, 30.0],
+                [30.0, 30.0],
+                [30.0, 10.0],
+                [10.0, 10.0],
+                [10.0, 30.0],
+                [0.0, 30.0],
+            ],
+            4,
+            [20.0, 10.0, 1.0],
+        ),
+    ] {
+        let model = polygon_attached_plate(&points, edge, pick[2] == 1.0);
+        let dir = tempfile::tempdir().unwrap();
+        let design = dir.path().join("mapped.sc");
+        let (bytes, report) = written(&model);
+        assert!(
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
+            "{}",
+            history_line(&report)
+        );
+        std::fs::write(&design, bytes).unwrap();
+        // Independent command construction uses the explicit intended profile and pick.
+        let reference = json!([
+            {"command":"sketch.create", "params":{"plane":"XY", "name":"Base"}},
+            {"command":"sketch.line", "params":{"points":points, "closed":true}},
+            {"command":"sketch.finish", "params":{}},
+            {"command":"sheet.manage_rules", "params":{"name":"Sheet 1 mm", "thickness":"1 mm", "active":true}},
+            {"command":"sheet.flange", "params":{"sketch":"Base"}},
+            {"command":"sheet.flange", "params":{"edges":[pick], "height":"20 mm", "angle":"90 deg", "radius":"2 mm", "position":"inside"}},
+        ]);
+        let script = dir.path().join("expected.json");
+        std::fs::write(&script, serde_json::to_vec(&reference).unwrap()).unwrap();
+        let actual = sheet_measurements(&cli, &design, &dir.path().join("actual.json"));
+        let expected = sheet_measurements(&cli, &script, &dir.path().join("reference.json"));
+        let volume = expected["volume_mm3"].as_f64().unwrap();
+        assert!((actual["volume_mm3"].as_f64().unwrap() - volume).abs() / volume < 1e-4);
+        assert_eq!(actual["faces"], expected["faces"]);
+        for corner in ["min", "max"] {
+            for axis in 0..3 {
+                assert!(
+                    (actual["bbox"][corner][axis].as_f64().unwrap()
+                        - expected["bbox"][corner][axis].as_f64().unwrap())
+                    .abs()
+                        < 1e-6,
+                    "{actual} != {expected}"
+                );
+            }
+        }
+    }
+}
+
 /// The example cube under a timeline of `features`, each `(name, definition)`.
 fn cube_under(features: &[(&str, Value)]) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();

@@ -432,7 +432,11 @@ and newer; for an older target they report
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
-`mapped`. Other flanges report `blocked` with the specific selection or dimension reason
+`mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
+unchanged simple polygonal base, using the actual straight profile edge. A base that is not
+one closed, non-crossing perimeter with distinct straight edges reports a base-profile reason;
+base holes or partial regions remain unsupported by this proof. These reasons use the existing
+`blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
 to geometry. These use the existing report fields; no schema fields change.
