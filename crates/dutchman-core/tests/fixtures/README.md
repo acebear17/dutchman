@@ -150,3 +150,29 @@ project root selection and recursive resolution; no third-party design supplied 
 `local_cubes.sldasm` uses that generator with an authored local sub-assembly holder
 and an embedded cube reference. It covers matching a local holder's neutral source name
 to a saved sub-assembly file when choosing project roots.
+
+### Definition-owned product graph unit fixtures
+
+The in-memory CADIR fixtures in `src/assembly.rs`, `src/assembly/solidworks.rs`,
+`src/assembly/freecad.rs`, `src/decode.rs`, and `src/hidden.rs` are authored Rust test data. They
+combine the synthetic cube and sketch files documented above with generic
+component identities, placements, joints, appearances, and visibility records.
+`src/test_products.rs` builds the pinned cadmpeg `30b85247` wire directly:
+definitions state storage and required arenas, prototypes are definition IDs,
+and the owning definition lists its occurrences in source order. No native
+fixture file was rewritten and no old-wire adapter is used by these builders.
+
+Shared definitions list their children once. Saved poses give shared instances different displayed layouts. Cases needing
+different child sets author distinct definitions with the same component label; CADIR now
+requires occurrence overrides to vary one definition per instance, and Dutchman
+refuses those overrides explicitly. The layout-tolerance test also compares
+synthetic placement matrices directly. Missing-parent refusal is represented by
+a missing prototype, because a new-schema occurrence has no parent field.
+Joint operands name existing containers and their nested native keys. Synthetic
+displayed-pose rows identify expanded shared placements where the conversion
+view needs an instance identity.
+
+The native assembly-joint history tests in `dutchman-solidcraft` are authored
+CADIR rows on the same synthetic cube/sketch history, with the stable `Assemble`
+source tag and an unrelated native-operation negative control. They contain no
+public-corpus geometry or names.

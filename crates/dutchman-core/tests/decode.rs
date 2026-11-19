@@ -415,7 +415,8 @@ fn solidworks_assembly_resolves_parts_and_keeps_reader_losses() {
     )
     .unwrap();
     let assembly = model.assembly.unwrap();
-    let parts = assembly.parts[0].assembly.as_ref().unwrap();
+    // Definition-owned occurrences are already children of the file's assembly root.
+    let parts = &assembly;
     assert_eq!(parts.placements.len(), 2);
     assert_eq!(parts.parts.len(), 1);
     assert_eq!(

@@ -1726,7 +1726,7 @@ fn a_sketch_and_extrude_history_is_written() {
 
 #[test]
 fn as_built_joints_between_features_do_not_stop_history() {
-    for source_tag in ["As-built", "As-built Joint"] {
+    for source_tag in ["Assemble", "As-built", "As-built Joint"] {
         let model = cube_with_history(10.0, first_profile(), None);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["model"]["features"][1]["ordinal"] = json!(2);
@@ -12938,7 +12938,7 @@ fn hidden_cube_with_history() -> Model {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["geometry"]["bodies"][0]["visible"] = json!(false);
-    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": []}]);
+    wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#root", "kind": "part", "storage": {"kind":"file", "document":{}}, "bodies": [body], "bom_properties": {}, "sketches": [], "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model

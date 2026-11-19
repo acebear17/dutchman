@@ -868,3 +868,12 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+Reader product graphs retain shared components as placed parts with their own
+history. Component instance body overrides, occurrence overrides and alternate
+representations are not supported yet: conversion keeps the original geometry
+and reports the specific component limitation.
+
+Assembly joints stay outside rebuilt part history, including when the reader
+retains them as native rows. Placements already carry their result, so those
+rows do not count as blocked features, even after another feature blocks.

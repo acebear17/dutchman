@@ -12,8 +12,11 @@ pub(super) fn resolve(
     open: &mut Vec<PathBuf>,
     reads: &mut SolidWorksReads,
 ) -> Result<Option<Assembly>, Error> {
-    let wire = serde_json::to_value(&model.ir.model.occurrences)
-        .map_err(|err| Error::Decode(err.to_string()))?;
+    let mut product = products::model_view(&model.ir.model).map_err(Error::Decode)?;
+    let wire = product
+        .get_mut("occurrences")
+        .map(Value::take)
+        .unwrap_or(Value::Null);
     let rows = wire.as_array().map_or(&[][..], Vec::as_slice);
     if rows.len() > MAX_PLACEMENTS {
         return Err(Error::Assembly(format!(
@@ -191,6 +194,7 @@ pub(super) fn resolve(
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::test_products::{definition, external, set_placements, Instance, ROOT};
     use serde_json::json;
     use std::cell::Cell;
 
@@ -203,17 +207,24 @@ mod tests {
         .unwrap()
     }
 
-    fn occurrence(key: usize, path: &str, parent: Value) -> Value {
-        json!({"id": format!("synthetic:assembly:occurrence#{key}"), "ordinal": key,
-            "prototype": {"kind": "external", "document": {"kind": "path", "path": path}, "object": "Default"},
-            "parent": parent, "name": format!("Part {key}"),
-            "transform": [[1,0,0,30 * key],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]})
+    fn occurrence(key: usize, path: &str, owner: &str) -> Instance {
+        let mut instance = external(
+            &format!("synthetic:assembly:occurrence#{key}"),
+            &format!("synthetic:assembly:component#external-{key}"),
+            owner,
+            path,
+            (30 * key) as f64,
+        );
+        instance.row["name"] = json!(format!("Part {key}"));
+        instance.definition.as_mut().unwrap()["storage"]["object"] = json!("Default");
+        instance
     }
 
-    fn assembly(cube: &Model, rows: Vec<Value>) -> Model {
+    fn assembly(cube: &Model, rows: Vec<Instance>) -> Model {
         let mut wire = serde_json::to_value(&cube.ir).unwrap();
         wire["geometry"]["bodies"] = json!([]);
-        wire["model"]["occurrences"] = json!(rows);
+        wire["model"]["product_definitions"] = json!([]);
+        set_placements(&mut wire, rows);
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..cube.clone()
@@ -227,8 +238,8 @@ mod tests {
         let source = assembly(
             &cube,
             vec![
-                occurrence(1, "renamed-a.sldprt", json!({"kind":"root"})),
-                occurrence(2, r"C:\old\renamed-b.SLDPRT", json!({"kind":"root"})),
+                occurrence(1, "renamed-a.sldprt", ROOT),
+                occurrence(2, r"C:\old\renamed-b.SLDPRT", ROOT),
             ],
         );
         let decode = |_: Format, _: &Path, _: &mut Report| Ok(cube.clone());
@@ -272,15 +283,21 @@ mod tests {
         let mut source = assembly(
             &cube,
             vec![
-                occurrence(1, r"C:\old\PIN.sldprt", json!({"kind":"root"})),
-                occurrence(2, r"C:\old\pin.SLDPRT", json!({"kind":"root"})),
-                occurrence(3, r"C:\old\other.sldprt", json!({"kind":"root"})),
-                occurrence(4, "missing.sldprt", json!({"kind":"root"})),
-                occurrence(5, "bad.sldprt", json!({"kind":"root"})),
+                occurrence(1, r"C:\old\PIN.sldprt", ROOT),
+                occurrence(2, r"C:\old\pin.SLDPRT", ROOT),
+                occurrence(3, r"C:\old\other.sldprt", ROOT),
+                occurrence(4, "missing.sldprt", ROOT),
+                occurrence(5, "bad.sldprt", ROOT),
             ],
         );
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        wire["model"]["occurrences"][1]["prototype"]["object"] = json!("Long");
+        let prototype = wire["model"]["occurrences"][1]["prototype"].clone();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|d| d["id"] == prototype)
+            .unwrap()["storage"]["object"] = json!("Long");
         source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut part = cube.clone();
         part.ir.model.configurations.clear();
@@ -440,7 +457,7 @@ mod tests {
             .map(|key| {
                 let file = format!("Sub{key}.sldasm");
                 std::fs::write(dir.path().join(&file), b"").unwrap();
-                occurrence(key, &file, json!({"kind":"root"}))
+                occurrence(key, &file, ROOT)
             })
             .collect();
         std::fs::write(dir.path().join("Pin.sldprt"), b"").unwrap();
@@ -457,7 +474,7 @@ mod tests {
                         } else {
                             "Pin.sldprt"
                         },
-                        json!({"kind":"root"}),
+                        ROOT,
                     )
                 })
                 .collect(),
@@ -507,22 +524,22 @@ mod tests {
         let top = assembly(
             &cube,
             vec![
-                occurrence(1, "Left.sldasm", json!({"kind":"root"})),
-                occurrence(2, "Right.sldasm", json!({"kind":"root"})),
+                occurrence(1, "Left.sldasm", ROOT),
+                occurrence(2, "Right.sldasm", ROOT),
             ],
         );
         let left = assembly(
             &cube,
             vec![
-                occurrence(1, "Right.sldasm", json!({"kind":"root"})),
-                occurrence(2, "Pin.sldprt", json!({"kind":"root"})),
+                occurrence(1, "Right.sldasm", ROOT),
+                occurrence(2, "Pin.sldprt", ROOT),
             ],
         );
         let right = assembly(
             &cube,
             vec![
-                occurrence(1, "Left.sldasm", json!({"kind":"root"})),
-                occurrence(2, "Pin.sldprt", json!({"kind":"root"})),
+                occurrence(1, "Left.sldasm", ROOT),
+                occurrence(2, "Pin.sldprt", ROOT),
             ],
         );
         let calls = Cell::new(0);
@@ -564,15 +581,12 @@ mod tests {
             std::fs::write(dir.path().join(name), b"").unwrap();
         }
         let cube = cube();
-        let top = assembly(
-            &cube,
-            vec![occurrence(1, "Sub.SLDASM", json!({"kind":"root"}))],
-        );
+        let top = assembly(&cube, vec![occurrence(1, "Sub.SLDASM", ROOT)]);
         let sub = assembly(
             &cube,
             vec![
-                occurrence(2, "Pin.SLDPRT", json!({"kind":"root"})),
-                occurrence(3, "Top.SLDASM", json!({"kind":"root"})),
+                occurrence(2, "Pin.SLDPRT", ROOT),
+                occurrence(3, "Top.SLDASM", ROOT),
             ],
         );
         let decode = |format: Format, path: &Path, _: &mut Report| {
@@ -606,25 +620,20 @@ mod tests {
     #[test]
     fn local_subassembly_and_unresolved_virtual_component_are_accounted_for() {
         let cube = cube();
-        let mut local = occurrence(1, "unused", json!({"kind":"root"}));
-        local["prototype"] =
-            json!({"kind":"local", "definition":"synthetic:assembly:component#holder"});
-        let mut source = assembly(
+        let holder = "synthetic:assembly:component#holder";
+        let mut local = occurrence(1, "unused", ROOT);
+        local.row["prototype"] = json!(holder);
+        let mut holder_definition = definition(holder, json!({"kind":"embedded"}));
+        holder_definition["source_name"] = json!("Holder");
+        local.definition = Some(holder_definition);
+        let source = assembly(
             &cube,
             vec![
                 local,
-                occurrence(
-                    2,
-                    "Pin.SLDPRT",
-                    json!({"kind":"occurrence", "occurrence":"synthetic:assembly:occurrence#1"}),
-                ),
-                json!({"id":"synthetic:assembly:occurrence#3", "ordinal":3, "parent":{"kind":"root"},
-                "prototype":{"kind":"unresolved"}, "transform":IDENTITY, "scale":[1,1,1]}),
+                occurrence(2, "Pin.SLDPRT", holder),
+                occurrence(3, "", ROOT),
             ],
         );
-        let mut wire = serde_json::to_value(&source.ir).unwrap();
-        wire["model"]["product_definitions"] = json!([{"id": "synthetic:assembly:component#holder", "kind": "part", "source_name": "Holder", "bodies": [], "bom_properties": {}, "sketches": []}]);
-        source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Pin.SLDPRT"), b"").unwrap();
         let decode = |_: Format, _: &Path, _: &mut Report| Ok(cube.clone());

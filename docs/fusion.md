@@ -5,7 +5,10 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`9249a19b`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`30b85247`, after cadmpeg 0.6.12).
+The reader retains distance-angle chamfer dimensions with reversed distances (#1513),
+planar sketches with null-reference placement heads (#1551), and body snapshots before
+initial solid cuts (#1562). Snapshot decoding does not add a new Dutchman history import.
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -432,3 +435,6 @@ Optional [diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-run
 member ids, sizes, actual decode starts/finishes/failures, and re-decode counts. Per-member
 records appear when the decoder reports them; they do not establish a unique design total
 for the progress bar. The pinned decoder's observer is installed on the decoding thread.
+
+Unresolved native assembly-joint timeline rows with source tag `Assemble` need
+no rebuilt part-history operation; assembly placements carry their result.

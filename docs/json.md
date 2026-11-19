@@ -1300,3 +1300,12 @@ Appearance bindings scoped to one placed instance or an evaluation state use
 source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
+
+The reader's definition-owned product graph uses the existing assembly
+and history reports after bounded placement expansion. Unsupported component
+instance body overrides, occurrence overrides and alternate representations use
+the existing component fallback reason. No report fields or schemas change.
+
+Native assembly-joint timeline rows marked `Assemble` are `not_needed`, like
+typed assembly joints, including after a blocked feature: placements already
+carry them, so they do not count as blocked part history.

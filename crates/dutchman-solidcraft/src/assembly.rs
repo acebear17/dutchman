@@ -1713,6 +1713,17 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
         {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}},
         {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": []}
     ]);
+    for definition in wire["model"]["product_definitions"].as_array_mut().unwrap() {
+        definition["storage"] = json!({"kind":"embedded"});
+        for key in [
+            "tessellations",
+            "occurrences",
+            "instance_bodies",
+            "representations",
+        ] {
+            definition[key] = json!([]);
+        }
+    }
     wire["model"]["features"] = json!([
         {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": listed}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
         {"id": "test:model:feature#feature", "ordinal": 1, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": feature_only}}}}, "dependencies": [], "source_properties": {}, "source_content": []},

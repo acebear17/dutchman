@@ -82,7 +82,9 @@ impl<'a> Packed<'a> {
                 fields.insert("native".to_owned(), serde_json::json!({ "f3d": selected }));
             }
         }
-        Ok(Value::Object(fields))
+        let mut document = Value::Object(fields);
+        super::products::project(&mut document)?;
+        Ok(document)
     }
 }
 
@@ -226,7 +228,15 @@ impl<'a> Index<'a> {
                         Entry {
                             arena,
                             ordinal,
-                            row: Row::Packed(row),
+                            row: if matches!(arena, "features" | "parameters") {
+                                document
+                                    .pointer(&format!("/model/{arena}"))
+                                    .and_then(Value::as_array)
+                                    .and_then(|rows| rows.get(ordinal))
+                                    .map_or(Row::Packed(row), Row::Value)
+                            } else {
+                                Row::Packed(row)
+                            },
                         },
                     );
                 }

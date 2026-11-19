@@ -1970,11 +1970,11 @@ fn map_feature(
 fn is_assembly_feature(feature: &Value) -> bool {
     match operation_kind(feature) {
         Some("insert_component" | "component_transfer" | "assembly_joint") => true,
-        // cadmpeg retains unresolved As-built joints as native operations with a stable
+        // cadmpeg retains unresolved assembly joints as native operations with a stable
         // source tag. Display names may be edited and must never identify an operation.
         Some("native") => matches!(
             feature.get("source_tag").and_then(Value::as_str),
-            Some("As-built" | "As-built Joint")
+            Some("Assemble" | "As-built" | "As-built Joint")
         ),
         _ => false,
     }
@@ -2540,6 +2540,54 @@ mod tests {
         );
         let statuses: Vec<FeatureStatus> = mapping.features.iter().map(|f| f.status).collect();
         assert_eq!(statuses, [FeatureStatus::NotNeeded; 3]);
+    }
+
+    #[test]
+    fn native_assembly_joints_remain_not_needed_after_a_history_blocker() {
+        let mut joint = feature(
+            3,
+            2,
+            "Renamed joint",
+            json!({
+                "kind":"native", "value":{"kind":"Assemble", "parameters":{}}
+            }),
+        );
+        joint["source_tag"] = json!("Assemble");
+        let model = with(cube(), json!([opaque(2, 1, "Earlier"), joint]), json!([]));
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "feature \"Earlier\": native is not mapped yet"
+        );
+        assert_eq!(
+            mapping
+                .features
+                .iter()
+                .map(|f| f.status)
+                .collect::<Vec<_>>(),
+            [FeatureStatus::Blocked, FeatureStatus::NotNeeded]
+        );
+    }
+
+    #[test]
+    fn a_native_operation_with_an_assembly_display_name_still_blocks_history() {
+        let mut other = opaque(2, 1, "Assemble");
+        other["source_tag"] = json!("Other operation");
+        let model = with(cube(), json!([other]), json!([]));
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "feature \"Assemble\": native is not mapped yet"
+        );
+        assert_eq!(mapping.features[0].status, FeatureStatus::Blocked);
     }
 
     #[test]

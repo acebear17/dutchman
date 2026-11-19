@@ -11,6 +11,7 @@ mod poses;
 mod position_bounds;
 mod position_skeleton;
 mod position_smart;
+pub(crate) mod products;
 mod sketch_instance;
 mod slicing;
 mod solidworks;
@@ -442,7 +443,7 @@ pub(crate) fn resolve(
     finder: &Finder,
     open: &mut Vec<PathBuf>,
 ) -> Result<Assembly, Error> {
-    let wire = serde_json::to_value(&model.ir.model)
+    let wire = products::model_view(&model.ir.model)
         .map_err(|err| Error::Decode(format!("cannot read the assembly: {err}")))?;
     let mut occurrences: Vec<&Value> = wire
         .get("occurrences")
@@ -2277,7 +2278,13 @@ fn side_path(
             let inside = |key: &str| {
                 let below = below?;
                 let mut found = paths.iter().filter(|(nested, located)| {
-                    nested.rsplit(['#', ':']).next() == Some(key)
+                    nested
+                        .split(":placement#")
+                        .next()
+                        .unwrap_or(nested)
+                        .rsplit(['#', ':'])
+                        .next()
+                        == Some(key)
                         && located.own.len() > below.len()
                         && located.own.starts_with(below)
                 });
@@ -2297,7 +2304,15 @@ fn side_path(
                     prefix
                         .and_then(|prefix| {
                             let nested = format!("{prefix}{key}");
-                            paths.get_key_value(nested.as_str()).map(|(id, _)| *id)
+                            paths
+                                .get_key_value(nested.as_str())
+                                .filter(|(_, located)| {
+                                    below.is_some_and(|below| {
+                                        located.own.len() > below.len()
+                                            && located.own.starts_with(below)
+                                    })
+                                })
+                                .map(|(id, _)| *id)
                         })
                         .or_else(|| inside(key))
                 });
@@ -2741,7 +2756,7 @@ impl<'a> Tree<'a> {
             .and_then(Value::as_array)
             .map(|bodies| bodies.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
-        let inserted_name = if external {
+        let inserted_name = if external || occurrence.pointer("/prototype/document").is_some() {
             inserted_design_name(self.slices.document, occurrence)
         } else {
             None
@@ -2894,7 +2909,7 @@ fn inserted_designs<'a>(occurrences: &[&'a Value]) -> BTreeMap<&'a str, &'a str>
             let Some(row) = by_id.get(up).filter(|_| depth <= MAX_DEPTH) else {
                 break;
             };
-            if scope(row) == Some("external") {
+            if scope(row) == Some("external") || row.pointer("/prototype/document").is_some() {
                 out.insert(*id, up);
                 break;
             }
@@ -3476,6 +3491,7 @@ fn transform(occurrence: &Value) -> Result<[[f64; 4]; 3], String> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
+    use crate::test_products::{external, set_placements, Instance, ROOT};
     use serde_json::json;
 
     use super::*;
@@ -3486,20 +3502,33 @@ mod tests {
             .join(name)
     }
 
-    fn occurrence(key: usize, path: &str, parent: Value, x: f64) -> Value {
-        json!({
-            "id": format!("inventor:assembly:occurrence#{key}"),
-            "prototype": {"kind": "external", "document": {"kind": "path", "path": path}},
-            "parent": parent,
-            "ordinal": key,
-            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-            "scale": [1.0, 1.0, 1.0],
-            "name": format!("Occurrence:{key}"),
-        })
+    fn occurrence(key: usize, path: &str, owner: &str, x: f64) -> Instance {
+        let mut instance = external(
+            &format!("inventor:assembly:occurrence#{key}"),
+            &format!("synthetic:test:component#external-{key}"),
+            owner,
+            path,
+            x,
+        );
+        instance.row["name"] = json!(format!("Occurrence:{key}"));
+        instance
     }
 
-    fn root() -> Value {
-        json!({"kind": "root"})
+    fn root() -> &'static str {
+        ROOT
+    }
+
+    fn placed(key: u32, definition: &str, owner: &str, x: f64) -> Instance {
+        Instance {
+            definition: None,
+            owner: format!("f3d:model:component#{owner}"),
+            row: json!({
+                "id": format!("f3d:model:occurrence#{key}"),
+                "prototype": format!("f3d:model:component#{definition}"),
+                "overrides": [],
+                "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            }),
+        }
     }
 
     /// A folder of placeholder files and a decoder that gives each its model: the synthetic
@@ -3508,11 +3537,11 @@ mod tests {
     struct Project {
         dir: tempfile::TempDir,
         cube: Model,
-        assemblies: BTreeMap<String, Vec<Value>>,
+        assemblies: BTreeMap<String, Vec<Instance>>,
     }
 
     impl Project {
-        fn new(assemblies: &[(&str, Vec<Value>)]) -> Project {
+        fn new(assemblies: &[(&str, Vec<Instance>)]) -> Project {
             let dir = tempfile::tempdir().unwrap();
             let cube = crate::read(
                 Format::InventorPart,
@@ -3542,7 +3571,8 @@ mod tests {
             }
             let rows = self.assemblies.get(&name).cloned().unwrap_or_default();
             let mut wire = serde_json::to_value(&self.cube.ir).unwrap();
-            wire["model"]["occurrences"] = Value::Array(rows);
+            wire["model"]["product_definitions"] = json!([]);
+            set_placements(&mut wire, rows);
             Ok(Model {
                 ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
                 fidelity: None,
@@ -3579,7 +3609,7 @@ mod tests {
 
     #[test]
     fn parts_and_sub_assemblies_are_read_from_their_files() {
-        let nested = json!({"kind": "occurrence", "occurrence": "inventor:assembly:occurrence#2"});
+        let nested = "synthetic:test:component#external-2";
         let project = Project::new(&[
             (
                 "top.iam",
@@ -3743,7 +3773,7 @@ mod tests {
 
     #[test]
     fn sub_assemblies_nest_only_so_deep() {
-        let chain: Vec<(String, Vec<Value>)> = (0..=MAX_DEPTH + 2)
+        let chain: Vec<(String, Vec<Instance>)> = (0..=MAX_DEPTH + 2)
             .map(|n| {
                 (
                     format!("d{n}.iam"),
@@ -3754,7 +3784,7 @@ mod tests {
                 )
             })
             .collect();
-        let named: Vec<(&str, Vec<Value>)> = chain
+        let named: Vec<(&str, Vec<Instance>)> = chain
             .iter()
             .map(|(name, rows)| (name.as_str(), rows.clone()))
             .collect();
@@ -3889,18 +3919,14 @@ mod tests {
             .unwrap()
             .to_owned();
         let bodies = if owned { json!([body]) } else { json!([]) };
-        wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": bodies, "bom_properties": {}, "sketches": []}]);
-        let placed = |key: u32, x: f64, parent: Value| {
-            json!({
-                "id": format!("f3d:model:occurrence#{key}"),
-                "prototype": {"kind": "local", "definition": "f3d:model:component#block"},
-                "parent": parent,
-                "ordinal": key,
-                "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-                "scale": [1.0, 1.0, 1.0],
-            })
-        };
-        wire["model"]["occurrences"] = json!([placed(0, 0.0, root()), placed(1, 30.0, root())]);
+        wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": bodies, "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}]);
+        set_placements(
+            &mut wire,
+            vec![
+                placed(0, "block", "root", 0.0),
+                placed(1, "block", "root", 30.0),
+            ],
+        );
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
@@ -4031,9 +4057,9 @@ mod tests {
         wire["model"]["product_definitions"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"id": "synthetic:test:component#empty", "kind": "part", "bodies": [], "bom_properties": {}, "sketches": []}));
+            .push(json!({"id": "synthetic:test:component#empty", "kind": "part", "bodies": [], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}));
         for occurrence in wire["model"]["occurrences"].as_array_mut().unwrap() {
-            occurrence["prototype"]["definition"] = json!("synthetic:test:component#empty");
+            occurrence["prototype"] = json!("synthetic:test:component#empty");
         }
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
         wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unplaced", "target": {"entity": {"kind": "body", "value": body}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
@@ -4108,16 +4134,17 @@ mod tests {
         geometry.insert(
             "product_definitions".into(),
             json!([
-                {"id": "synthetic:test:component#a", "kind": "part", "bodies": [body_a], "bom_properties": {}, "sketches": []},
-                {"id": "synthetic:test:component#b", "kind": "part", "bodies": [body_b], "bom_properties": {}, "sketches": []}
+                {"id": "synthetic:test:component#a", "kind": "part", "bodies": [body_a], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
+                {"id": "synthetic:test:component#b", "kind": "part", "bodies": [body_b], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}
             ]),
         );
-        let rows: Vec<Value> = (0..4).map(|key| json!({
-            "id": format!("synthetic:test:occurrence#{key}"), "ordinal": key, "parent": {"kind": "root"},
-            "prototype": {"kind": "local", "definition": if key < 2 {"synthetic:test:component#a"} else {"synthetic:test:component#b"}},
-            "transform": [[1,0,0,key * 30],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
-        })).collect();
-        geometry.insert("occurrences".into(), json!(rows));
+        let rows = (0..4).map(|key| Instance {
+            owner: ROOT.to_owned(), definition: None,
+            row: json!({"id":format!("synthetic:test:occurrence#{key}"), "overrides":[],
+                "prototype":if key < 2 {"synthetic:test:component#a"} else {"synthetic:test:component#b"},
+                "transform":[[1,0,0,key * 30],[0,1,0,0],[0,0,1,0]]}),
+        }).collect();
+        set_placements(&mut wire, rows);
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..model
@@ -4220,6 +4247,11 @@ mod tests {
         )
         .unwrap();
         let mut wire = serde_json::to_value(&part.ir).unwrap();
+        for arena in ["features", "parameters"] {
+            for row in wire["model"][arena].as_array_mut().into_iter().flatten() {
+                row.as_object_mut().unwrap().remove("product_definition");
+            }
+        }
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let sketch = wire["model"]["sketches"][0]["id"].clone();
         let mut copy = wire["geometry"]["bodies"][0].clone();
@@ -4241,13 +4273,16 @@ mod tests {
             json!([])
         };
         wire["model"]["product_definitions"] = json!([
-            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "sketches": sketches, "bom_properties": {}},
-            {"id": "f3d:model:component#other", "kind": "part", "label": "Other", "bodies": ["synthetic:copy:body#copy"], "bom_properties": {}, "sketches": []},
+            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "sketches": sketches, "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}},
+            {"id": "f3d:model:component#other", "kind": "part", "label": "Other", "bodies": ["synthetic:copy:body#copy"], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
         ]);
-        wire["model"]["occurrences"] = json!([
-            placed(0, "block", root(), 0.0),
-            placed(1, "other", root(), 30.0),
-        ]);
+        set_placements(
+            &mut wire,
+            vec![
+                placed(0, "block", "root", 0.0),
+                placed(1, "other", "root", 30.0),
+            ],
+        );
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
@@ -4319,17 +4354,17 @@ mod tests {
             .push(json!({"id": "synthetic:block:feature#extrude", "ordinal": 100, "name": "Extrude", "suppressed": false, "product_definition": "f3d:model:component#block", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "sketch", "value": sketch}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided",
                         "side": {"termination": {"kind": "blind", "length": 5.0}}}, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
         wire["model"]["product_definitions"] = json!([
-            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "bom_properties": {}, "sketches": []},
-            {"id": "f3d:model:component#layout", "kind": "part", "label": "Layout", "bodies": [], "bom_properties": {}, "sketches": []},
+            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
+            {"id": "f3d:model:component#layout", "kind": "part", "label": "Layout", "bodies": [], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
         ]);
         let mut occurrences = vec![
-            placed(0, "block", root(), 0.0),
-            placed(1, "layout", root(), 30.0),
+            placed(0, "block", "root", 0.0),
+            placed(1, "layout", "root", 30.0),
         ];
         for key in 0..extra {
-            occurrences.push(placed(2 + key as u32, "layout", root(), 60.0));
+            occurrences.push(placed(2 + key as u32, "layout", "root", 60.0));
         }
-        wire["model"]["occurrences"] = json!(occurrences);
+        set_placements(&mut wire, occurrences);
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
@@ -4433,11 +4468,14 @@ mod tests {
             {"id": builder, "ordinal": 0, "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": sketch}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
             {"id": id("feature", "extrude"), "ordinal": 1, "suppressed": false, "product_definition": "f3d:model:component#block", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": selection}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 3.0}}}, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}
         ]);
-        wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#block", "kind": "part", "bodies": [body], "bom_properties": {}, "sketches": []}]);
-        wire["model"]["occurrences"] = json!([
-            placed(0, "block", root(), instances[0]),
-            placed(1, "block", root(), instances[1])
-        ]);
+        wire["model"]["product_definitions"] = json!([{"id": "f3d:model:component#block", "kind": "part", "bodies": [body], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}]);
+        set_placements(
+            &mut wire,
+            vec![
+                placed(0, "block", "root", instances[0]),
+                placed(1, "block", "root", instances[1]),
+            ],
+        );
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             fidelity: None,
@@ -4453,7 +4491,8 @@ mod tests {
     }
 
     fn slice_repeated_sketch(model: &Model) -> Model {
-        let wire = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        products::project(&mut wire).unwrap();
         only(
             model,
             &wire,
@@ -4824,18 +4863,22 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(
-                json!({"id": "f3d:model:component#carriage", "kind": "part", "label": "Carriage", "bom_properties": {}, "bodies": [], "sketches": []}),
+                json!({"id": "f3d:model:component#carriage", "kind": "part", "label": "Carriage", "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "bodies": [], "sketches": []}),
             );
+        let instance = placed(2, "carriage", "root", 0.0);
         wire["model"]["occurrences"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "f3d:model:occurrence#2",
-                "prototype": {"kind": "local", "definition": "f3d:model:component#carriage"},
-                "parent": root(), "ordinal": 2,
-                "transform": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-                "scale": [1.0, 1.0, 1.0],
-            }));
+            .push(instance.row);
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|d| d["id"] == ROOT)
+            .unwrap()["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("f3d:model:occurrence#2"));
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..model
@@ -4856,7 +4899,7 @@ mod tests {
     /// cadmpeg's example cube, owned by component `Block`, placed twice inside a `Frame`
     /// placed 100 mm along X. `frame_owns` gives the frame the cube too; `rows` replaces the
     /// occurrences.
-    fn nested(frame_owns: bool, rows: Option<Value>) -> Model {
+    fn nested(frame_owns: bool, rows: Option<Vec<Instance>>) -> Model {
         let part = crate::read(
             Format::InventorPart,
             &fixture("synthetic_cube.ipt"),
@@ -4867,16 +4910,40 @@ mod tests {
         let body = wire["geometry"]["bodies"][0]["id"].clone();
         let frame_bodies = if frame_owns { json!([body]) } else { json!([]) };
         wire["model"]["product_definitions"] = json!([
-            {"id": "f3d:model:component#frame", "kind": "part", "label": "Frame", "bodies": frame_bodies, "bom_properties": {}, "sketches": []},
-            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "bom_properties": {}, "sketches": []},
+            {"id": "f3d:model:component#frame", "kind": "part", "label": "Frame", "bodies": frame_bodies, "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
+            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
         ]);
-        wire["model"]["occurrences"] = rows.unwrap_or_else(|| {
-            json!([
-                placed(0, "frame", root(), 100.0),
-                placed(1, "block", inside(0), 0.0),
-                placed(2, "block", inside(0), 30.0),
-            ])
+        let instances = rows.unwrap_or_else(|| {
+            vec![
+                placed(0, "frame", "root", 100.0),
+                placed(1, "block", "frame", 0.0),
+                placed(2, "block", "frame", 30.0),
+            ]
         });
+        for (name, label) in [
+            ("mid", "Mid"),
+            ("outer", "Outer"),
+            ("outer-2", "Outer"),
+            ("frame-2", "Frame"),
+        ] {
+            let id = format!("f3d:model:component#{name}");
+            if instances
+                .iter()
+                .any(|i| i.owner == id || i.row["prototype"] == id)
+            {
+                let mut definition =
+                    crate::test_products::definition(&id, json!({"kind":"embedded"}));
+                definition["label"] = json!(label);
+                if frame_owns && name == "frame-2" {
+                    definition["bodies"] = frame_bodies.clone();
+                }
+                wire["model"]["product_definitions"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(definition);
+            }
+        }
+        set_placements(&mut wire, instances);
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
@@ -4912,6 +4979,12 @@ mod tests {
     fn connector_at(key: u32, nested: &[&str], frame: Placement3x4) -> Value {
         let mut out = connector(Some((key, nested)));
         out["frame"] = json!(frame);
+        out
+    }
+
+    fn nested_connector_at(container: u32, child: u32, frame: Placement3x4) -> Value {
+        let mut out = connector_at(container, &[], frame);
+        out["operand"]["container"]["occurrence_path"] = json!([child.to_string()]);
         out
     }
 
@@ -4975,18 +5048,22 @@ mod tests {
         // the whole frame, is left out instead of holding it a second time.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 30.0),
-                placed(3, "block", inside(1), 30.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "frame", "root", 100.0),
+                placed(2, "block", "frame", 30.0),
+            ]),
         );
         let fixed = json!({"kind": "fixed"});
         let model = with_joints(
             model,
             json!([
-                joint(1, fixed.clone(), connector(None), connector(Some((3, &[])))),
+                joint(
+                    1,
+                    fixed.clone(),
+                    connector(None),
+                    nested_connector_at(1, 2, IDENTITY)
+                ),
                 joint(2, fixed, connector(None), connector(Some((1, &[])))),
             ]),
         );
@@ -5095,12 +5172,11 @@ mod tests {
         // copy, so it is one joint with the first's and the second copy stays at x = 100.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 30.0),
-                placed(3, "block", inside(1), 30.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "frame", "root", 100.0),
+                placed(2, "block", "frame", 30.0),
+            ]),
         );
         let fixed = json!({"kind": "fixed"});
         let model = with_joints(
@@ -5116,7 +5192,7 @@ mod tests {
                     2,
                     fixed,
                     connector(Some((1, &[]))),
-                    connector(Some((3, &[])))
+                    nested_connector_at(1, 2, IDENTITY)
                 ),
             ]),
         );
@@ -5139,11 +5215,11 @@ mod tests {
             for reverse in [false, true] {
                 let model = nested(
                     false,
-                    Some(json!([
-                        placed(0, "frame", root(), holder_x),
-                        placed(1, "block", inside(0), 20.0 - holder_x),
-                        placed(2, "block", inside(0), -holder_x),
-                    ])),
+                    Some(vec![
+                        placed(0, "frame", "root", holder_x),
+                        placed(1, "block", "frame", 20.0 - holder_x),
+                        placed(2, "block", "frame", -holder_x),
+                    ]),
                 );
                 let mut assembly = local_components(&model).unwrap().unwrap().0;
                 let mut joint = Joint {
@@ -5182,14 +5258,14 @@ mod tests {
         // the other block under the organiser has no connection to that holder.
         let model = with_mid(nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "mid", inside(0), 10.0),
-                placed(2, "block", inside(1), 2.0),
-                placed(3, "block", inside(1), 7.0),
-                placed(4, "block", inside(0), 40.0),
-                placed(5, "block", root(), 20.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "mid", "frame", 10.0),
+                placed(2, "block", "mid", 2.0),
+                placed(3, "block", "mid", 7.0),
+                placed(4, "block", "frame", 40.0),
+                placed(5, "block", "root", 20.0),
+            ]),
         ));
         let mut assembly = local_components(&model).unwrap().unwrap().0;
         let rigid = |a, b, frame_a| Joint {
@@ -5231,14 +5307,14 @@ mod tests {
     fn a_joint_carries_a_holder_through_its_only_origin_body_connector() {
         let model = with_mid(nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "mid", inside(0), 10.0),
-                placed(2, "block", inside(1), 0.0),
-                placed(3, "block", inside(1), 5.0),
-                placed(4, "block", inside(0), 40.0),
-                placed(5, "block", root(), 20.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "mid", "frame", 10.0),
+                placed(2, "block", "mid", 0.0),
+                placed(3, "block", "mid", 5.0),
+                placed(4, "block", "frame", 40.0),
+                placed(5, "block", "root", 20.0),
+            ]),
         ));
         let mut assembly = local_components(&model).unwrap().unwrap().0;
         assembly.joints = vec![Joint {
@@ -5274,13 +5350,13 @@ mod tests {
     fn an_unrelated_internal_joint_does_not_bind_an_identity_organiser() {
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "block", inside(0), 0.0),
-                placed(2, "block", inside(0), 10.0),
-                placed(3, "block", inside(0), 20.0),
-                placed(4, "block", root(), 50.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "block", "frame", 0.0),
+                placed(2, "block", "frame", 10.0),
+                placed(3, "block", "frame", 20.0),
+                placed(4, "block", "root", 50.0),
+            ]),
         );
         let mut assembly = local_components(&model).unwrap().unwrap().0;
         let rigid = |a, b, frame_a| Joint {
@@ -5319,13 +5395,13 @@ mod tests {
     fn conflicting_outside_joints_do_not_promote_a_smaller_posed_holder() {
         let model = with_mid(nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "mid", inside(0), 0.0),
-                placed(2, "block", inside(1), 5.0),
-                placed(3, "block", inside(1), 15.0),
-                placed(4, "block", inside(0), 40.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "mid", "frame", 0.0),
+                placed(2, "block", "mid", 5.0),
+                placed(3, "block", "mid", 15.0),
+                placed(4, "block", "frame", 40.0),
+            ]),
         ));
         let mut assembly = local_components(&model).unwrap().unwrap().0;
         let to_root = |part, x| Joint {
@@ -5365,12 +5441,12 @@ mod tests {
     fn a_child_pose_keeps_the_layout_of_its_identity_holder() {
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "block", inside(0), 5.0),
-                placed(2, "block", inside(0), 30.0),
-                placed(3, "block", root(), 100.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "block", "frame", 5.0),
+                placed(2, "block", "frame", 30.0),
+                placed(3, "block", "root", 100.0),
+            ]),
         );
         let mut assembly = local_components(&model).unwrap().unwrap().0;
         assembly.joints = vec![Joint {
@@ -5405,10 +5481,10 @@ mod tests {
         for open_first in [false, true] {
             let model = nested(
                 false,
-                Some(json!([
-                    placed(0, "frame", root(), 5.0),
-                    placed(1, "block", inside(0), 15.0),
-                ])),
+                Some(vec![
+                    placed(0, "frame", "root", 5.0),
+                    placed(1, "block", "frame", 15.0),
+                ]),
             );
             let mut assembly = local_components(&model).unwrap().unwrap().0;
             let to_root = |part, x| Joint {
@@ -5447,12 +5523,12 @@ mod tests {
         for open_first in [false, true] {
             let model = nested(
                 false,
-                Some(json!([
-                    placed(0, "frame", root(), 100.0),
-                    placed(1, "block", inside(0), 5.0),
-                    placed(2, "block", inside(0), 20.0),
-                    placed(3, "block", inside(0), 30.0),
-                ])),
+                Some(vec![
+                    placed(0, "frame", "root", 100.0),
+                    placed(1, "block", "frame", 5.0),
+                    placed(2, "block", "frame", 20.0),
+                    placed(3, "block", "frame", 30.0),
+                ]),
             );
             let mut assembly = local_components(&model).unwrap().unwrap().0;
             let rigid = |a, b, frame_a| Joint {
@@ -5501,16 +5577,16 @@ mod tests {
             (false, 35.0, Some(20.0)),
         ] {
             for outer_first in [false, true] {
-                let mut holder = placed(0, "frame", root(), 0.0);
-                holder["native_ref"] = json!("f3d:xref:reference#0");
+                let mut holder = placed(0, "frame", "root", 0.0);
+                holder.row["native_ref"] = json!("f3d:xref:reference#0");
                 let model = nested(
                     false,
-                    Some(json!([
+                    Some(vec![
                         holder,
-                        placed(1, "block", inside(0), 5.0),
-                        placed(2, "block", inside(0), q),
-                        placed(3, "block", root(), 0.0),
-                    ])),
+                        placed(1, "block", "frame", 5.0),
+                        placed(2, "block", "frame", q),
+                        placed(3, "block", "root", 0.0),
+                    ]),
                 );
                 let internal = joint(
                     1,
@@ -5598,15 +5674,15 @@ mod tests {
     fn joints_that_place_the_parts_of_a_holder_apart_do_not_move_the_holder() {
         // An identity holder whose two blocks are each joined to the origin at a place of its
         // own: the holder is an organiser, so each joint places its block and the holder stays.
-        let mut holder = placed(0, "frame", root(), 0.0);
-        holder["native_ref"] = json!("f3d:xref:reference#0");
+        let mut holder = placed(0, "frame", "root", 0.0);
+        holder.row["native_ref"] = json!("f3d:xref:reference#0");
         let model = nested(
             false,
-            Some(json!([
+            Some(vec![
                 holder,
-                placed(1, "block", inside(0), 5.0),
-                placed(2, "block", inside(0), 60.0),
-            ])),
+                placed(1, "block", "frame", 5.0),
+                placed(2, "block", "frame", 60.0),
+            ]),
         );
         let to_origin = |id: u32, key: u32, x: f64| {
             let mut origin = connector(None);
@@ -5634,15 +5710,15 @@ mod tests {
     fn a_joint_to_a_part_of_a_holder_leaves_the_parts_nothing_binds_to_it() {
         // An identity holder of two blocks and no joint between them: the joint from the
         // origin to the first places that block alone, and the second stays where it is.
-        let mut holder = placed(0, "frame", root(), 0.0);
-        holder["native_ref"] = json!("f3d:xref:reference#0");
+        let mut holder = placed(0, "frame", "root", 0.0);
+        holder.row["native_ref"] = json!("f3d:xref:reference#0");
         let model = nested(
             false,
-            Some(json!([
+            Some(vec![
                 holder,
-                placed(1, "block", inside(0), 5.0),
-                placed(2, "block", inside(0), 60.0),
-            ])),
+                placed(1, "block", "frame", 5.0),
+                placed(2, "block", "frame", 60.0),
+            ]),
         );
         let mut origin = connector(None);
         origin["frame"] = json!(at([100.0, 0.0, 0.0], 0.0));
@@ -5669,18 +5745,18 @@ mod tests {
         // is kept suppressed rather than moving the first holder to meet it.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
                 posed_child(
-                    placed(1, "block", inside(0), 5.0),
-                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                    placed(1, "block", "frame", 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11",
                 ),
-                placed(2, "frame", root(), 0.0),
+                placed(2, "frame-2", "root", 0.0),
                 posed_child(
-                    placed(3, "block", inside(2), 70.0),
-                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                    placed(3, "block", "frame-2", 70.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12",
                 ),
-            ])),
+            ]),
         );
         let model = with_current_poses(
             model,
@@ -5719,11 +5795,8 @@ mod tests {
     /// so the occurrences that name them as their `native_ref` are posed.
     fn with_current_poses(model: Model, ids: &[&str]) -> Model {
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let occurrences: Vec<_> = wire["model"]["occurrences"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .collect();
+        let view = products::model_view(&model.ir.model).unwrap();
+        let occurrences: Vec<_> = view["occurrences"].as_array().unwrap().iter().collect();
         let worlds = world_placements(&occurrences).unwrap();
         let records = ids.iter().filter_map(|native| {
             let occurrence = occurrences.iter().find(|row| row["native_ref"] == *native)?;
@@ -5740,19 +5813,17 @@ mod tests {
 
     /// Adds a component `mid` to `model`'s definitions.
     fn with_mid(model: Model) -> Model {
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["model"]["product_definitions"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id": "f3d:model:component#mid", "kind": "part", "label": "Mid", "bodies": [], "bom_properties": {}, "sketches": []}));
-        Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
-            ..model
-        }
+        assert!(model
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .any(|d| d.id.as_str() == "f3d:model:component#mid"));
+        model
     }
 
-    fn posed_child(mut row: Value, native: &str) -> Value {
-        row["native_ref"] = json!(native);
+    fn posed_child(mut row: Instance, native: &str) -> Instance {
+        row.row["native_ref"] = json!(native);
         row
     }
 
@@ -5763,18 +5834,18 @@ mod tests {
         // the second part to x = 125: the parts' stored poses are relative to the holder.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
                 posed_child(
-                    placed(1, "block", inside(0), 5.0),
-                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                    placed(1, "block", "frame", 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11",
                 ),
                 posed_child(
-                    placed(2, "block", inside(0), 30.0),
-                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                    placed(2, "block", "frame", 30.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12",
                 ),
-                placed(3, "block", root(), 0.0),
-            ])),
+                placed(3, "block", "root", 0.0),
+            ]),
         );
         let model = with_current_poses(
             model,
@@ -5814,19 +5885,19 @@ mod tests {
         // 30). A joint puts the first part at x = 100: holder 85, middle 95, second part 125.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "mid", inside(0), 10.0),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "mid", "frame", 10.0),
                 posed_child(
-                    placed(2, "block", inside(1), 5.0),
-                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                    placed(2, "block", "mid", 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11",
                 ),
                 posed_child(
-                    placed(3, "block", inside(1), 30.0),
-                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                    placed(3, "block", "mid", 30.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12",
                 ),
-                placed(4, "block", root(), 0.0),
-            ])),
+                placed(4, "block", "root", 0.0),
+            ]),
         );
         let model = with_current_poses(
             with_mid(model),
@@ -5936,15 +6007,15 @@ mod tests {
     fn an_occurrence_the_file_poses_is_checked_by_its_joint_not_moved() {
         // CADIR retained x = 100 from a component operation. The native current pose
         // selects x = 120; a joint that would put it at x = 20 is checked, not solved.
-        let mut frame = placed(0, "frame", root(), 100.0);
-        frame["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#7");
+        let mut frame = placed(0, "frame", "root", 100.0);
+        frame.row["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#7");
         let model = nested(
             false,
-            Some(json!([
+            Some(vec![
                 frame,
-                placed(1, "block", inside(0), 0.0),
-                placed(2, "block", inside(0), 30.0),
-            ])),
+                placed(1, "block", "frame", 0.0),
+                placed(2, "block", "frame", 30.0),
+            ]),
         );
         let fixed = json!({"kind": "fixed"});
         let joints = json!([joint(
@@ -6030,13 +6101,13 @@ mod tests {
 
     #[test]
     fn a_contained_pose_keeps_its_child_while_an_unposed_sibling_can_move() {
-        let mut frame = placed(0, "frame", root(), 100.0);
-        frame["native_ref"] = json!("f3d:xref:reference#1");
-        let mut child = placed(1, "block", inside(0), 0.0);
-        child["native_ref"] = json!("f3d:xref/member/Design:occurrence#1");
-        let mut sibling = placed(2, "block", inside(0), 30.0);
-        sibling["native_ref"] = json!("f3d:xref/member/Design:occurrence#2");
-        let model = nested(false, Some(json!([frame, child, sibling])));
+        let mut frame = placed(0, "frame", "root", 100.0);
+        frame.row["native_ref"] = json!("f3d:xref:reference#1");
+        let mut child = placed(1, "block", "frame", 0.0);
+        child.row["native_ref"] = json!("f3d:xref/member/Design:occurrence#1");
+        let mut sibling = placed(2, "block", "frame", 30.0);
+        sibling.row["native_ref"] = json!("f3d:xref/member/Design:occurrence#2");
+        let model = nested(false, Some(vec![frame, child, sibling]));
         let model = with_joints(
             model,
             json!([
@@ -6209,10 +6280,10 @@ mod tests {
                         if already_closed {
                             (a, b) = (expected_a, expected_b);
                         }
-                        let mut a_row = placed(2, "block", inside(0), 0.0);
-                        a_row["transform"] = json!(a);
-                        let mut b_row = placed(1, "block", inside(0), 0.0);
-                        b_row["transform"] = json!(b);
+                        let mut a_row = placed(2, "block", "frame", 0.0);
+                        a_row.row["transform"] = json!(a);
+                        let mut b_row = placed(1, "block", "frame", 0.0);
+                        b_row.row["transform"] = json!(b);
                         if anchor_a || already_closed {
                             a_row = posed_child(
                                 a_row,
@@ -6236,7 +6307,7 @@ mod tests {
                             with_joints(
                                 nested(
                                     false,
-                                    Some(json!([placed(0, "frame", root(), 100.0), b_row, a_row])),
+                                    Some(vec![placed(0, "frame", "root", 100.0), b_row, a_row]),
                                 ),
                                 json!([row]),
                             ),
@@ -6294,11 +6365,11 @@ mod tests {
         let model = with_joints(
             nested(
                 false,
-                Some(json!([
-                    placed(0, "frame", root(), 3.0),
-                    placed(1, "block", inside(0), 5.0),
-                    placed(2, "block", inside(0), 0.0),
-                ])),
+                Some(vec![
+                    placed(0, "frame", "root", 3.0),
+                    placed(1, "block", "frame", 5.0),
+                    placed(2, "block", "frame", 0.0),
+                ]),
             ),
             json!([
                 aligned(joint(
@@ -6358,16 +6429,16 @@ mod tests {
             [0.0, -1.0, 0.0, 0.0],
         ];
         for stored_y in [0.0, 3.0] {
-            let mut moving = placed(2, "block", inside(0), 0.0);
-            moving["transform"] = json!(at([0.0, stored_y, 0.0], 0.0));
+            let mut moving = placed(2, "block", "frame", 0.0);
+            moving.row["transform"] = json!(at([0.0, stored_y, 0.0], 0.0));
             let model = with_joints(
                 nested(
                     false,
-                    Some(json!([
-                        placed(0, "frame", root(), 0.0),
-                        placed(1, "block", inside(0), 0.0),
-                        moving
-                    ])),
+                    Some(vec![
+                        placed(0, "frame", "root", 0.0),
+                        placed(1, "block", "frame", 0.0),
+                        moving,
+                    ]),
                 ),
                 json!([joint(
                     1,
@@ -6481,13 +6552,13 @@ mod tests {
     /// x = 100, and joined by one joint `kind`: a frame on block 2's origin facing down, and
     /// one on block 1's facing up. Block 2's placement in the world, the joint and the notes.
     fn on_its_axis(kind: Value) -> (Placement3x4, Joint, Vec<String>) {
-        let mut turned = placed(2, "block", inside(0), 0.0);
-        turned["transform"] = json!(at([0.0, 0.0, 10.0], 0.3));
-        let rows = json!([
-            placed(0, "frame", root(), 100.0),
-            placed(1, "block", inside(0), 0.0),
-            turned
-        ]);
+        let mut turned = placed(2, "block", "frame", 0.0);
+        turned.row["transform"] = json!(at([0.0, 0.0, 10.0], 0.3));
+        let rows = vec![
+            placed(0, "frame", "root", 100.0),
+            placed(1, "block", "frame", 0.0),
+            turned,
+        ];
         let model = with_joints(
             nested(false, Some(rows)),
             json!([joint(
@@ -6549,13 +6620,13 @@ mod tests {
         // Block 2 stored where block 1 is, their joint frames coinciding with z the same way:
         // Fusion mated them flipped. They stay; the joint is not turned over to mate them.
         let rows = |turned: f64| {
-            let mut second = placed(2, "block", inside(0), 0.0);
-            second["transform"] = json!(at([0.0, 0.0, 0.0], turned));
-            json!([
-                placed(0, "frame", root(), 100.0),
-                placed(1, "block", inside(0), 0.0),
-                second
-            ])
+            let mut second = placed(2, "block", "frame", 0.0);
+            second.row["transform"] = json!(at([0.0, 0.0, 0.0], turned));
+            vec![
+                placed(0, "frame", "root", 100.0),
+                placed(1, "block", "frame", 0.0),
+                second,
+            ]
         };
         let joined = |turned: f64| {
             let model = with_joints(
@@ -6595,24 +6666,27 @@ mod tests {
     /// A block placed at the origin, and a design inserted into this one (as an .f3z carries
     /// it, named `Gripper`) holding a block 5 mm along x, joined by `joints`.
     fn with_inserted_design(joints: Value) -> Model {
-        let model = nested(false, Some(json!([])));
+        let model = nested(false, Some(vec![]));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let mut finger = placed(9, "block", json!({}), 5.0);
-        finger["id"] = json!("f3d:xref/role-1/model:occurrence#finger");
-        finger["parent"] = inside(8);
-        wire["model"]["occurrences"] = json!([
-            placed(0, "block", root(), 0.0),
-            {
-                "id": "f3d:model:occurrence#8",
-                "prototype": {"kind": "external",
-                    "document": {"kind": "path", "path": "gripper.f3d"}},
-                "parent": root(),
-                "ordinal": 1,
-                "transform": IDENTITY,
-                "scale": [1.0, 1.0, 1.0],
-            },
-            finger,
-        ]);
+        let mut inserted = crate::test_products::definition(
+            "f3d:model:component#gripper",
+            json!({"kind":"file", "document":{"path":"gripper.f3d"}, "source":wire["source"]}),
+        );
+        inserted["label"] = json!("Gripper");
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(inserted);
+        let mut finger = placed(9, "block", "gripper", 5.0);
+        finger.row["id"] = json!("f3d:xref/role-1/model:occurrence#finger");
+        let mut holder = placed(8, "gripper", "root", 0.0);
+        holder.row["native_ref"] = json!("f3d:xref:reference#gripper");
+        set_placements(
+            &mut wire,
+            vec![placed(0, "block", "root", 0.0), holder, finger],
+        );
+        wire["native"]["f3d"]["xref_references"] =
+            json!([{"id":"f3d:xref:reference#gripper", "relative_path":"gripper.f3d"}]);
         wire["model"]["assembly_joints"] = joints;
         wire["native"]["f3d"]["xref_designs"] = json!([
             {"id": "f3d:xref:design#0", "display_name": "Gripper",
@@ -6626,7 +6700,7 @@ mod tests {
 
     /// A connector on the component keyed `key` inside a design inserted into this one.
     fn inserted_connector(key: &str) -> Value {
-        json!({"operand": {"container": {"kind": "external", "external_document": {"kind": "document_id", "document_id": "d"}},
+        json!({"operand": {"container": {"kind": "external", "external_document": {"document_id": "d"}},
               "object": "o", "subelements": [key]},
             "frame": IDENTITY, "detached": false})
     }
@@ -6773,7 +6847,7 @@ mod tests {
                     4,
                     fixed.clone(),
                     connector(Some((1, &[]))),
-                    json!({"operand": {"container": {"kind": "external", "external_document": {"kind": "missing"}}, "object": "x", "subelements": []},
+                    json!({"operand": {"container": {"kind": "external", "external_document": {}}, "object": "x", "subelements": []},
                         "frame": IDENTITY, "detached": false})
                 ),
             ]),
@@ -6796,14 +6870,12 @@ mod tests {
         // Two frames, each holding the two blocks in the same places.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 0.0),
-                placed(3, "block", inside(0), 30.0),
-                placed(4, "block", inside(1), 0.0),
-                placed(5, "block", inside(1), 30.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "frame", "root", 100.0),
+                placed(2, "block", "frame", 0.0),
+                placed(3, "block", "frame", 30.0),
+            ]),
         );
         let fixed = json!({"kind": "fixed"});
         let model = with_joints(
@@ -6813,8 +6885,8 @@ mod tests {
                 joint(
                     1,
                     fixed.clone(),
-                    connector(Some((4, &[]))),
-                    connector(Some((5, &[])))
+                    nested_connector_at(1, 2, IDENTITY),
+                    nested_connector_at(1, 3, IDENTITY)
                 ),
                 joint(
                     2,
@@ -6827,7 +6899,7 @@ mod tests {
                     3,
                     fixed.clone(),
                     connector(Some((2, &[]))),
-                    connector(Some((4, &[])))
+                    nested_connector_at(1, 2, IDENTITY)
                 ),
                 joint(4, fixed, connector(None), connector(Some((3, &[])))),
             ]),
@@ -6874,15 +6946,15 @@ mod tests {
     fn a_nested_occurrence_named_by_its_key_alone_is_found_inside_its_container() {
         // As inside a design inserted into the frame: the block's id ends in its key but is
         // not built from the frame's.
-        let mut block = placed(1, "block", inside(0), 0.0);
-        block["id"] = json!("f3d:inserted/model:occurrence#a1");
+        let mut block = placed(1, "block", "frame", 0.0);
+        block.row["id"] = json!("f3d:inserted/model:occurrence#a1");
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 100.0),
+            Some(vec![
+                placed(0, "frame", "root", 100.0),
                 block,
-                placed(2, "block", inside(0), 30.0),
-            ])),
+                placed(2, "block", "frame", 30.0),
+            ]),
         );
         let model = with_joints(
             model,
@@ -6903,33 +6975,18 @@ mod tests {
         assert_eq!(sides, [(vec![0, 0], vec![0, 1])]);
     }
 
-    fn placed(key: u32, definition: &str, parent: Value, x: f64) -> Value {
-        json!({
-            "id": format!("f3d:model:occurrence#{key}"),
-            "prototype": {"kind": "local", "definition": format!("f3d:model:component#{definition}")},
-            "parent": parent,
-            "ordinal": key,
-            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
-            "scale": [1.0, 1.0, 1.0],
-        })
-    }
-
-    fn inside(key: u32) -> Value {
-        json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
-    }
-
     #[test]
     fn placements_the_source_hides_are_placed_hidden() {
         // Block 2 is a hidden occurrence; the frame and block 1 are shown.
-        let mut hidden_block = placed(2, "block", inside(0), 30.0);
-        hidden_block["visible"] = json!(false);
+        let mut hidden_block = placed(2, "block", "frame", 30.0);
+        hidden_block.row["visible"] = json!(false);
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 100.0),
-                placed(1, "block", inside(0), 0.0),
+            Some(vec![
+                placed(0, "frame", "root", 100.0),
+                placed(1, "block", "frame", 0.0),
                 hidden_block,
-            ])),
+            ]),
         );
         let assembly = local_assembly(&model).unwrap().unwrap();
         let frame = assembly.parts[assembly.placements[0].part]
@@ -6965,14 +7022,13 @@ mod tests {
     fn a_designs_root_component_is_held_where_it_is() {
         // The frame is the document's root component, and the first block the root of a
         // design inserted inside it: both are held; the second block is not.
-        let mut frame = placed(0, "frame", root(), 100.0);
-        frame["id"] = json!("f3d:model:occurrence#root-0");
-        let inside_root =
-            json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#root-0"});
-        let mut first = placed(1, "block", inside_root.clone(), 0.0);
-        first["id"] = json!("f3d:model:occurrence#root-1");
+        let mut frame = placed(0, "frame", "root", 100.0);
+        frame.row["id"] = json!("f3d:model:occurrence#root-0");
+        let inside_root = "frame";
+        let mut first = placed(1, "block", inside_root, 0.0);
+        first.row["id"] = json!("f3d:model:occurrence#root-1");
         let second = placed(2, "block", inside_root, 30.0);
-        let assembly = local_assembly(&nested(false, Some(json!([frame, first, second]))))
+        let assembly = local_assembly(&nested(false, Some(vec![frame, first, second])))
             .unwrap()
             .unwrap();
         let mut held = assembly.held.clone();
@@ -7021,12 +7077,19 @@ mod tests {
         let mut report = Report::default();
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 0.0),
-                placed(3, "block", inside(1), 30.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "frame", "root", 100.0),
+                placed(2, "block", "frame", 0.0),
+            ]),
+        );
+        let model = with_displayed_instances(
+            &model,
+            &[
+                ("f3d:model:occurrence#0".to_owned(), 0.0),
+                ("f3d:model:occurrence#1".to_owned(), 100.0),
+                ("f3d:model:occurrence#2:placement#3".to_owned(), 130.0),
+            ],
         );
         let (assembly, _) = local_components_with_threads(
             &model,
@@ -7044,21 +7107,20 @@ mod tests {
         assert_eq!(assembly.placements[1].part, 1);
         assert_eq!(block_xs(&assembly, 0), [0.0]);
         assert_eq!(block_xs(&assembly, 1), [30.0]);
-        assert!(report.losses().iter().any(|l| l.detail
-            == "1 components written as 2 definitions because their instances hold different layouts"));
+        assert!(report.losses().iter().any(|l| l.detail == "1 components written as 2 definitions because their instances hold different layouts"));
     }
 
     #[test]
     fn a_different_set_of_children_is_a_different_layout() {
         let model = nested(
             true,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 0.0),
-                placed(3, "block", inside(0), 30.0),
-                placed(4, "block", inside(1), 0.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "frame-2", "root", 100.0),
+                placed(2, "block", "frame", 0.0),
+                placed(3, "block", "frame", 30.0),
+                placed(4, "block", "frame-2", 0.0),
+            ]),
         );
         let assembly = local_assembly(&model).unwrap().unwrap();
         assert_eq!(assembly.parts.len(), 2);
@@ -7081,25 +7143,26 @@ mod tests {
         // outer > frame > block, the block in a different place in the second outer.
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "outer", root(), 0.0),
-                placed(1, "outer", root(), 500.0),
-                placed(2, "frame", inside(0), 10.0),
-                placed(3, "frame", inside(1), 10.0),
-                placed(4, "block", inside(2), 0.0),
-                placed(5, "block", inside(3), 30.0),
-            ])),
+            Some(vec![
+                placed(0, "outer", "root", 0.0),
+                placed(1, "outer", "root", 500.0),
+                placed(2, "frame", "outer", 10.0),
+                placed(4, "block", "frame", 0.0),
+            ]),
         );
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["model"]["product_definitions"]
-            .as_array_mut()
+        let model = with_displayed_instances(
+            &model,
+            &[
+                ("f3d:model:occurrence#0".to_owned(), 0.0),
+                ("f3d:model:occurrence#1".to_owned(), 500.0),
+                ("f3d:model:occurrence#2".to_owned(), 10.0),
+                ("f3d:model:occurrence#2:placement#4".to_owned(), 510.0),
+                ("f3d:model:occurrence#4:placement#5".to_owned(), 540.0),
+            ],
+        );
+        let assembly = local_assembly_with_positions(&model, crate::PartPositions::LastShown)
             .unwrap()
-            .push(json!({"id": "f3d:model:component#outer", "kind": "part", "label": "Outer", "bodies": [], "bom_properties": {}, "sketches": []}));
-        let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
-            ..model
-        };
-        let assembly = local_assembly(&model).unwrap().unwrap();
+            .unwrap();
         assert_eq!(assembly.parts.len(), 2);
         let names: Vec<&str> = assembly.parts.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["Outer", "Outer (2)"]);
@@ -7124,18 +7187,23 @@ mod tests {
 
     #[test]
     fn numeric_noise_below_the_tolerance_does_not_split_a_definition() {
-        let mut noisy = placed(3, "block", inside(1), 30.0 + 1e-10);
-        noisy["transform"][1][1] = json!(1.0 - 1e-12);
-        let mut report = Report::default();
+        let base = at([30.0, 0.0, 0.0], 0.0);
+        let mut noisy = at([30.0 + 1e-10, 0.0, 0.0], 0.0);
+        noisy[1][1] = 1.0 - 1e-12;
+        assert!(Layouts::same(&[(0, base)], &[(0, noisy)]));
+        assert!(!Layouts::same(
+            &[(0, base)],
+            &[(0, at([30.001, 0.0, 0.0], 0.0))]
+        ));
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 30.0),
-                noisy,
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 0.0),
+                placed(1, "frame", "root", 100.0),
+                placed(2, "block", "frame", 30.0),
+            ]),
         );
+        let mut report = Report::default();
         let (assembly, _) = local_components_with_threads(
             &model,
             &BTreeMap::new(),
@@ -7151,33 +7219,28 @@ mod tests {
             .losses()
             .iter()
             .any(|l| l.detail.contains("different layouts")));
-        // A difference past the tolerance does split.
-        let model = nested(
-            false,
-            Some(json!([
-                placed(0, "frame", root(), 0.0),
-                placed(1, "frame", root(), 100.0),
-                placed(2, "block", inside(0), 30.0),
-                placed(3, "block", inside(1), 30.001),
-            ])),
+        let differs = with_displayed_instances(
+            &model,
+            &[
+                ("f3d:model:occurrence#0".to_owned(), 0.0),
+                ("f3d:model:occurrence#1".to_owned(), 100.0),
+                ("f3d:model:occurrence#2:placement#3".to_owned(), 130.01),
+            ],
         );
-        assert_eq!(local_assembly(&model).unwrap().unwrap().parts.len(), 2);
+        assert_eq!(local_assembly(&differs).unwrap().unwrap().parts.len(), 2);
     }
 
     #[test]
-    fn nested_components_inside_a_missing_parent_convert_as_stored() {
-        // A block placed inside an occurrence the design does not have.
-        let err = local_assembly(&nested(
-            false,
-            Some(json!([
-                placed(0, "block", root(), 0.0),
-                placed(1, "block", inside(7), 0.0),
-            ])),
-        ))
-        .unwrap_err();
+    fn a_missing_prototype_converts_as_stored() {
+        let mut model = nested(false, None);
+        model
+            .ir
+            .model
+            .product_definitions
+            .retain(|d| d.id.as_str() != "f3d:model:component#block");
         assert_eq!(
-            err,
-            "some components are placed inside components the design does not place"
+            local_assembly(&model).unwrap_err(),
+            "a component prototype is not resolved"
         );
     }
 
@@ -7281,7 +7344,8 @@ mod tests {
             // Selection must preserve source order, even when ids sort differently.
             model.ir.geometry.points.reverse();
             model.ir.fragment = true;
-            let expanded = serde_json::to_value(&model.ir).unwrap();
+            let mut expanded = serde_json::to_value(&model.ir).unwrap();
+            products::project(&mut expanded).unwrap();
             let text = serde_json::to_string(&model.ir).unwrap();
             let packed = slicing::Packed::read(&text).unwrap();
             let document = packed.document().unwrap();
@@ -7388,7 +7452,15 @@ mod tests {
             let mut wire = serde_json::to_value(&model.ir).unwrap();
             let mut third = wire["model"]["occurrences"][1].clone();
             third["id"] = json!("f3d:model:occurrence#third");
-            third["ordinal"] = json!(2);
+            wire["model"]["product_definitions"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|d| d["storage"]["kind"] == "file")
+                .unwrap()["occurrences"]
+                .as_array_mut()
+                .unwrap()
+                .push(third["id"].clone());
             third["transform"] = json!(at([100.0, 0.0, 0.0], 0.0));
             wire["model"]["occurrences"]
                 .as_array_mut()
@@ -7476,14 +7548,45 @@ mod tests {
         assert!(report.part_positions().unwrap().1.joints > 0);
     }
 
+    fn with_displayed_instances(model: &Model, poses: &[(String, f64)]) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["native"]["f3d"]["display_poses"] = json!(poses
+            .iter()
+            .enumerate()
+            .map(|(key, (id, x))| json!({
+                "id":format!("f3d:scene:display-pose#{key}"), "stream":"world", "byte_offset":0,
+                "path":[1,key], "binding":{"state":"bound", "occurrence":id},
+                "transform":[[1,0,0,x],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+            }))
+            .collect::<Vec<_>>());
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        }
+    }
+
     /// `model` with these saved-scene displayed poses (occurrence key, x in mm).
     fn with_displayed(model: &Model, poses: &[(u32, f64)]) -> Model {
         let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let occurrence_id = |key: &u32| {
+            let id = format!("f3d:model:occurrence#{key}");
+            if model
+                .ir
+                .model
+                .occurrences
+                .iter()
+                .any(|row| row.id.as_str() == id)
+            {
+                id
+            } else {
+                format!("f3d:model:occurrence#{}:placement#{key}", key - 3)
+            }
+        };
         wire["native"]["f3d"]["display_poses"] = json!(poses
             .iter()
             .map(|(key, x)| json!({
                 "id": format!("f3d:scene:display-pose#{key}"), "stream": "world", "byte_offset": 0,
-                "path": [1, key], "binding": {"state": "bound", "occurrence": format!("f3d:model:occurrence#{key}")},
+                "path": [1, key], "binding": {"state": "bound", "occurrence": occurrence_id(key)},
                 "transform": [[1,0,0,x],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
             }))
             .collect::<Vec<_>>());
@@ -7497,14 +7600,12 @@ mod tests {
     fn two_frames() -> Model {
         nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 100.0),
-                placed(1, "block", inside(0), 0.0),
-                placed(2, "block", inside(0), 30.0),
-                placed(3, "frame", root(), 300.0),
-                placed(4, "block", inside(3), 0.0),
-                placed(5, "block", inside(3), 30.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 100.0),
+                placed(1, "block", "frame", 0.0),
+                placed(2, "block", "frame", 30.0),
+                placed(3, "frame", "root", 300.0),
+            ]),
         )
     }
 
@@ -7610,13 +7711,13 @@ mod tests {
         use crate::PartPositions::{FirstPlaced, LastShown, Smart};
         let model = nested(
             false,
-            Some(json!([
-                placed(0, "frame", root(), 100.0),
-                placed(1, "frame", inside(0), 0.0),
-                placed(2, "block", inside(1), 0.0),
-                placed(3, "block", inside(1), 30.0),
-                placed(4, "block", inside(0), 60.0),
-            ])),
+            Some(vec![
+                placed(0, "frame", "root", 100.0),
+                placed(1, "frame-2", "frame", 0.0),
+                placed(2, "block", "frame-2", 0.0),
+                placed(3, "block", "frame-2", 30.0),
+                placed(4, "block", "frame", 60.0),
+            ]),
         );
         // Blocks 2 and 3 ask for frame worlds 100 and 130, which disagree, and the outer
         // frame is shown 1 mm along.

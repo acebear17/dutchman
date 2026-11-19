@@ -117,3 +117,19 @@ and scoped entity references remain unresolved and reported; no geometry is
 inferred from a source name. Drawing traversal and projection offsets otherwise
 stay unchanged. Assembly joint operands still use their separate model
 `object`/`subelements` representation; those fields are not drawing references.
+
+## Definition-owned product structure
+
+The cadmpeg main pin `30b85247ff490d8e207338a7df64731aeac5e9fe` replaces
+occurrence parent/prototype records with definition-owned product structure.
+`Occurrence.prototype` is a definition id; each definition lists the occurrences
+it owns, in source order. A root definition has file storage without a separate
+source record. External document identities live in definition storage.
+
+Dutchman's structure-only view expands this bounded graph into placement paths
+for the existing assembly builder. Root bodies remain loose bodies, root feature
+and parameter ownership uses the existing root convention, and compact geometry
+is never expanded by the adapter. Shared placements retain their source frames.
+Cycles and depth/count overflows are refused. Instance body overrides, occurrence
+overrides and alternate representations are not supported yet; conversion keeps
+the original geometry and reports the reason. This adapter reads only CADIR.

@@ -55,9 +55,18 @@ pub(super) fn resolve(
             "the assembly places over {MAX_PLACEMENTS} components"
         )));
     }
+    let retained: BTreeSet<_> = model
+        .ir
+        .model
+        .occurrences
+        .iter()
+        .map(|row| row.id.clone())
+        .collect();
+    for definition in &mut model.ir.model.product_definitions {
+        definition.occurrences.retain(|id| retained.contains(id));
+    }
     let folder = input.parent().unwrap_or(Path::new("."));
-    let wire =
-        serde_json::to_value(&model.ir.model).map_err(|err| Error::Decode(err.to_string()))?;
+    let wire = products::model_view(&model.ir.model).map_err(Error::Decode)?;
     let rows = wire
         .get("occurrences")
         .and_then(Value::as_array)
@@ -272,7 +281,7 @@ fn select(model: &Model, object: &str) -> Result<(Model, Placement3x4), String> 
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|row| row.pointer("/prototype/definition").and_then(Value::as_str) == id)
+        .filter(|row| row.get("prototype").and_then(Value::as_str) == id)
         .collect();
     // A local link can place the same definition elsewhere. The target object's own
     // occurrence supplies its pose, rather than the first link that happens to use it.
@@ -459,6 +468,7 @@ fn select_shape(
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::test_products::{set_placements, Instance, ROOT};
     use serde_json::json;
 
     #[test]
@@ -507,37 +517,40 @@ mod tests {
         let body = model.ir.geometry.bodies[0].id.as_str();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["model"]["product_definitions"] = json!([
-            {"id": "test:assembly:product_definition#part", "kind": "part", "source_name": "TargetPart", "bom_properties": {}, "bodies": [], "sketches": []},
-            {"id": "test:assembly:product_definition#body", "kind": "object", "source_name": "Body", "bodies": [body], "bom_properties": {}, "sketches": []},
+            {"id": "test:assembly:product_definition#part", "kind": "part", "source_name": "TargetPart", "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "bodies": [], "sketches": []},
+            {"id": "test:assembly:product_definition#body", "kind": "object", "source_name": "Body", "bodies": [body], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
         ]);
-        let occurrence = |id: &str, definition: &str, parent: Value, x: f64| {
-            json!({
-                "id": id, "prototype": {"kind": "local", "definition": definition},
-                "parent": parent, "name": id, "ordinal": 0,
+        let occurrence = |id: &str, definition: &str, owner: &str, x: f64| Instance {
+            owner: owner.to_owned(),
+            definition: None,
+            row: json!({
+                "id": id, "prototype": definition, "overrides": [], "name": id,
                 "transform": [[1.0,0.0,0.0,x],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0]],
-                "scale": [1.0,1.0,1.0]
-            })
+            }),
         };
-        wire["model"]["occurrences"] = json!([
-            occurrence(
-                "test:assembly:occurrence#part",
-                "test:assembly:product_definition#part",
-                json!({"kind":"root"}),
-                10.0
-            ),
-            occurrence(
-                "test:assembly:occurrence#inside",
-                "test:assembly:product_definition#body",
-                json!({"kind":"occurrence", "occurrence":"test:assembly:occurrence#part"}),
-                2.0
-            ),
-            occurrence(
-                "test:assembly:occurrence#other",
-                "test:assembly:product_definition#body",
-                json!({"kind":"root"}),
-                100.0
-            ),
-        ]);
+        set_placements(
+            &mut wire,
+            vec![
+                occurrence(
+                    "test:assembly:occurrence#part",
+                    "test:assembly:product_definition#part",
+                    ROOT,
+                    10.0,
+                ),
+                occurrence(
+                    "test:assembly:occurrence#inside",
+                    "test:assembly:product_definition#body",
+                    "test:assembly:product_definition#part",
+                    2.0,
+                ),
+                occurrence(
+                    "test:assembly:occurrence#other",
+                    "test:assembly:product_definition#body",
+                    ROOT,
+                    100.0,
+                ),
+            ],
+        );
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         model.assembly = local_assembly(&model).unwrap();
         let (selected, placement) = select(&model, "TargetPart").unwrap();

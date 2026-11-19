@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::assembly::strings;
 #[cfg(test)]
@@ -140,14 +140,14 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     // FreeCAD hides what a hidden container holds. Other formats say each body's and each
     // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
     let freecad = document.pointer("/native/fcstd").is_some();
-    let visibility_changed = freecad && propagate_visibility(&mut document);
+    let visibility_changed = freecad && propagate_visibility(&mut document)?;
     let owned: BTreeSet<&str> = listed(document.pointer("/model/product_definitions"))
         .iter()
         .flat_map(|definition| listed(definition.get("bodies")))
         .filter_map(Value::as_str)
         .collect();
     let hidden_ids = if freecad && !fusion {
-        hidden_bodies(&document)
+        hidden_bodies(&document)?
     } else {
         listed(document.pointer("/geometry/bodies"))
             .iter()
@@ -291,7 +291,9 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
 
 /// A definition used in any shown occurrence remains available. A hidden occurrence hides
 /// its descendants, even when their own visibility is explicitly true.
-fn hidden_bodies(document: &Value) -> BTreeSet<String> {
+fn hidden_bodies(document: &Value) -> Result<BTreeSet<String>, String> {
+    let view = visibility_view(document)?;
+    let document = &view;
     let model = document.get("model").unwrap_or(&Value::Null);
     let mut hidden: BTreeSet<String> = listed(document.pointer("/geometry/bodies"))
         .iter()
@@ -370,7 +372,7 @@ fn hidden_bodies(document: &Value) -> BTreeSet<String> {
         .filter_map(|body| body.get("id").and_then(Value::as_str))
         .collect();
     hidden.retain(|id| bodies.contains(id.as_str()));
-    hidden
+    Ok(hidden)
 }
 
 fn concealed_occurrences<'a>(
@@ -408,25 +410,65 @@ fn concealed_occurrences<'a>(
     concealed
 }
 
-fn propagate_visibility(document: &mut Value) -> bool {
-    let objects = hidden_objects(document);
-    let concealed: BTreeSet<String> =
-        concealed_occurrences(document.get("model").unwrap_or(&Value::Null), &objects)
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+/// Expand only product structure for visibility checks, retaining each source occurrence
+/// identity so a shared child is concealed only when all its placements are concealed.
+fn visibility_view(document: &Value) -> Result<Value, String> {
+    let mut view = json!({"model": {
+        "product_definitions":document.pointer("/model/product_definitions"),
+        "occurrences":document.pointer("/model/occurrences"),
+        "features":document.pointer("/model/features"),
+    }, "geometry":{"bodies":document.pointer("/geometry/bodies")},
+        "native":{"fcstd":document.pointer("/native/fcstd")}});
+    if let Some(rows) = view
+        .pointer_mut("/model/occurrences")
+        .and_then(Value::as_array_mut)
+    {
+        if rows.len() > crate::assembly::MAX_PLACEMENTS {
+            return Err("its product structure exceeds the component limit".to_owned());
+        }
+        for row in rows {
+            let id = row.get("id").cloned().unwrap_or(Value::Null);
+            if let Some(fields) = row.as_object_mut() {
+                fields.insert("source_occurrence".to_owned(), id);
+            }
+        }
+    }
+    crate::assembly::products::project(&mut view)?;
+    Ok(view)
+}
+
+fn propagate_visibility(document: &mut Value) -> Result<bool, String> {
+    let view = visibility_view(document)?;
+    let objects = hidden_objects(&view);
+    let concealed = concealed_occurrences(view.get("model").unwrap_or(&Value::Null), &objects);
+    let mut hidden_sources = BTreeSet::new();
+    let mut shown_sources = BTreeSet::new();
+    for row in listed(view.pointer("/model/occurrences")) {
+        let Some(source) = row.get("source_occurrence").and_then(Value::as_str) else {
+            continue;
+        };
+        if row
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| concealed.contains(id))
+        {
+            hidden_sources.insert(source);
+        } else {
+            shown_sources.insert(source);
+        }
+    }
     let Some(occurrences) = document
         .pointer_mut("/model/occurrences")
         .and_then(Value::as_array_mut)
     else {
-        return false;
+        return Ok(false);
     };
     let mut changed = false;
     for occurrence in occurrences {
         if occurrence
             .get("id")
             .and_then(Value::as_str)
-            .is_some_and(|id| concealed.contains(id))
+            .is_some_and(|id| hidden_sources.contains(id) && !shown_sources.contains(id))
             && occurrence.get("visible").and_then(Value::as_bool) != Some(false)
         {
             if let Some(fields) = occurrence.as_object_mut() {
@@ -435,7 +477,7 @@ fn propagate_visibility(document: &mut Value) -> bool {
             }
         }
     }
-    changed
+    Ok(changed)
 }
 
 /// cadmpeg retains decoded container membership and GUI properties even for a container
@@ -681,7 +723,7 @@ mod tests {
             .push(json!({"id": id("body", 0), "kind": "solid", "visible": false}));
         let target = m["bodies"][0]["id"].clone();
         let m = &mut wire["model"];
-        m["product_definitions"] = json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target], "bom_properties": {}, "sketches": []}]);
+        m["product_definitions"] = json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target], "storage": {"kind": "file", "document": {}}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}]);
         m["features"] = json!([{"id": "test:model:feature#cut", "ordinal": 0, "suppressed": false, "outputs": [target], "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"op": "cut", "keep_tools": false, "operands": {"target": {"kind": "bodies", "value": [target]},
                     "tools": {"kind": "bodies", "value": [id("body", 0)]}}, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -745,12 +787,13 @@ mod tests {
         wire["model"]["product_definitions"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"id": "test:model:component#tool", "kind": "part", "bodies": [tool], "bom_properties": {}, "sketches": []}));
+            .push(json!({"id": "test:model:component#tool", "kind": "part", "bodies": [tool], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}));
         wire["model"]["occurrences"] = json!([{
-            "id": "test:model:occurrence#tool", "ordinal": 0,
-            "prototype": {"kind": "local", "definition": "test:model:component#tool"},
-            "parent": {"kind": "root"}, "transform": crate::placement::IDENTITY,
-            "scale": [1, 1, 1], "visible": false}]);
+            "id": "test:model:occurrence#tool", "overrides": [],
+            "prototype": "test:model:component#tool",
+            "transform": crate::placement::IDENTITY, "visible": false}]);
+        wire["model"]["product_definitions"][0]["occurrences"] =
+            json!(["test:model:occurrence#tool"]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
@@ -799,21 +842,31 @@ mod tests {
 
     #[test]
     fn a_shown_link_keeps_geometry_hidden_in_the_source_container() {
-        let document = json!({"geometry": {"bodies": [{"id": "b", "visible": true}]}, "model": {
-            "features": [{"native_ref": "Body", "outputs": ["b"]}],
-            "product_definitions": [{"id": "part", "kind": "part", "bodies": ["b"], "bom_properties": {}, "sketches": []}],
-            "occurrences": [
-                {"id": "source", "prototype": {"kind": "local", "definition": "part"}, "native_ref": "Body", "ordinal": 0, "scale": [1, 1, 1]},
-                {"id": "link", "prototype": {"kind": "local", "definition": "part"}, "native_ref": "Link", "ordinal": 0, "scale": [1, 1, 1]}]
-        }, "native": {"fcstd": {
+        let mut document = json!({"geometry": {"bodies": [{"id": "b", "visible": true}]}, "model": {"product_definitions": [], "occurrences": []}, "native": {"fcstd": {
             "objects": [{"id": "Part", "type_name": "App::Part"}],
             "properties": [
                 {"owner": "Part", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "false"}}]},
                 {"owner": "Part", "name": "Group", "links": [{"object": "Body"}]}]
         }}});
-        assert!(hidden_bodies(&document).is_empty());
+        let mut part = crate::test_products::definition("part", json!({"kind":"embedded"}));
+        part["bodies"] = json!(["b"]);
+        document["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(part);
+        let placement = |id: &str, native: &str| crate::test_products::Instance {
+            owner: crate::test_products::ROOT.to_owned(),
+            definition: None,
+            row: json!({"id":id, "prototype":"part", "overrides":[], "native_ref":native,
+                "transform":crate::placement::IDENTITY}),
+        };
+        crate::test_products::set_placements(
+            &mut document,
+            vec![placement("source", "Body"), placement("link", "Link")],
+        );
+        assert!(hidden_bodies(&document).unwrap().is_empty());
         let mut shown_link = document.clone();
-        assert!(propagate_visibility(&mut shown_link));
+        assert!(propagate_visibility(&mut shown_link).unwrap());
         assert_eq!(
             shown_link["model"]["occurrences"][0]["visible"],
             json!(false)
@@ -821,14 +874,11 @@ mod tests {
         assert!(shown_link["model"]["occurrences"][1]
             .get("visible")
             .is_none());
-        assert!(hidden_bodies(&shown_link).is_empty());
+        assert!(hidden_bodies(&shown_link).unwrap().is_empty());
         let mut without_link = document;
-        let _ = without_link["model"]["occurrences"]
-            .as_array_mut()
-            .unwrap()
-            .pop();
+        crate::test_products::set_placements(&mut without_link, vec![placement("source", "Body")]);
         assert_eq!(
-            hidden_bodies(&without_link),
+            hidden_bodies(&without_link).unwrap(),
             BTreeSet::from(["b".to_owned()])
         );
     }
@@ -839,50 +889,70 @@ mod tests {
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         let second = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"] = json!([
-            {"id": "test:model:component#container", "kind": "group", "bom_properties": {}, "bodies": [], "sketches": []},
-            {"id": "test:model:component#nested", "kind": "group", "bom_properties": {}, "bodies": [], "sketches": []},
-            {"id": "test:model:component#part", "kind": "part", "bodies": [second], "bom_properties": {}, "sketches": []},
+            {"id": "test:model:component#container", "kind": "group", "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "bodies": [], "sketches": []},
+            {"id": "test:model:component#nested", "kind": "group", "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "bodies": [], "sketches": []},
+            {"id": "test:model:component#part", "kind": "part", "bodies": [second], "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []},
         ]);
-        let occurrence = |id: &str, definition: &str, parent: Value, visible: bool| {
-            json!({
-            "id": id, "prototype": {"kind": "local", "definition": definition},
-            "parent": parent, "ordinal": 0, "transform": crate::placement::IDENTITY,
-            "scale": [1, 1, 1], "visible": visible})
+        let occurrence = |id: &str, prototype: &str, owner: &str, visible: bool| {
+            crate::test_products::Instance {
+                owner: owner.to_owned(),
+                definition: None,
+                row: json!({"id": id, "prototype": prototype, "overrides": [],
+                    "transform": crate::placement::IDENTITY, "visible": visible}),
+            }
         };
-        wire["model"]["occurrences"] = json!([
+        let instances = vec![
             occurrence(
                 "test:model:occurrence#container",
                 "test:model:component#container",
-                json!({"kind": "root"}),
-                false
+                crate::test_products::ROOT,
+                false,
             ),
             occurrence(
                 "test:model:occurrence#nested",
                 "test:model:component#nested",
-                json!({"kind": "occurrence", "occurrence": "test:model:occurrence#container"}),
-                true
+                "test:model:component#container",
+                true,
             ),
             occurrence(
                 "test:model:occurrence#part",
                 "test:model:component#part",
-                json!({"kind": "occurrence", "occurrence": "test:model:occurrence#nested"}),
-                true
+                "test:model:component#nested",
+                true,
             ),
-        ]);
+        ];
+        crate::test_products::set_placements(&mut wire, instances.clone());
         // The filtering policy consumes the neutral occurrence graph, including deeply nested
         // containers. Keep this independent of source-format visibility projection.
-        assert!(hidden_bodies(&wire).contains(second.as_str().unwrap()));
-        wire["model"]["occurrences"]
-            .as_array_mut()
+        assert!(hidden_bodies(&wire)
             .unwrap()
-            .push(occurrence(
-                "test:model:occurrence#shown",
-                "test:model:component#part",
-                json!({"kind": "root"}),
-                true,
-            ));
-        assert!(!hidden_bodies(&wire).contains(second.as_str().unwrap()));
-        let _ = wire["model"]["occurrences"].as_array_mut().unwrap().pop();
+            .contains(second.as_str().unwrap()));
+        let mut also_shown = instances.clone();
+        also_shown.push(occurrence(
+            "test:model:occurrence#shown",
+            "test:model:component#part",
+            crate::test_products::ROOT,
+            true,
+        ));
+        crate::test_products::set_placements(&mut wire, also_shown);
+        assert!(!hidden_bodies(&wire)
+            .unwrap()
+            .contains(second.as_str().unwrap()));
+        let mut shared = instances.clone();
+        shared.push(occurrence(
+            "test:model:occurrence#shared",
+            "test:model:component#container",
+            crate::test_products::ROOT,
+            true,
+        ));
+        crate::test_products::set_placements(&mut wire, shared);
+        assert!(!hidden_bodies(&wire)
+            .unwrap()
+            .contains(second.as_str().unwrap()));
+        assert!(!propagate_visibility(&mut wire).unwrap());
+        assert_eq!(wire["model"]["occurrences"][1]["visible"], json!(true));
+        assert_eq!(wire["model"]["occurrences"][2]["visible"], json!(true));
+        crate::test_products::set_placements(&mut wire, instances);
         // Other formats state each occurrence's own visibility, so nothing is propagated.
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         assert!(shown(&model).unwrap().is_none());
@@ -1036,7 +1106,7 @@ mod tests {
             .iter()
             .map(|body| body["id"].clone())
             .collect();
-        wire["model"]["product_definitions"] = json!([{"id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids, "bom_properties": {}, "sketches": []}]);
+        wire["model"]["product_definitions"] = json!([{"id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids, "storage": {"kind": "embedded"}, "tessellations": [], "occurrences": [], "instance_bodies": [], "representations": [], "bom_properties": {}, "sketches": []}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (shown, _) = shown(&model).unwrap().unwrap();
         assert_eq!(shown.ir.geometry.bodies.len(), 1);

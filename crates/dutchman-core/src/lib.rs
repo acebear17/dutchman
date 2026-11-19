@@ -214,8 +214,12 @@ pub fn assembly_references(
         return Ok(Vec::new());
     }
     let model = decode_file(format, input, &mut Report::default(), None)?;
-    let value = serde_json::to_value(&model.ir.model.occurrences)
+    let mut products = assembly::products::model_view(&model.ir.model)
         .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
+    let value = products
+        .get_mut("occurrences")
+        .map(serde_json::Value::take)
+        .unwrap_or(serde_json::Value::Null);
     let finder = locate::Finder::new(search);
     let folder = input.parent().unwrap_or(Path::new("."));
     let mut references: std::collections::BTreeSet<_> = value
@@ -269,13 +273,6 @@ pub fn assembly_references(
             .map(|definition| (definition.id.as_str(), definition))
             .collect();
         for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
-            if row
-                .pointer("/parent/kind")
-                .and_then(serde_json::Value::as_str)
-                == Some("root")
-            {
-                continue;
-            }
             let definition = row
                 .pointer("/prototype/definition")
                 .and_then(serde_json::Value::as_str)
@@ -751,3 +748,6 @@ fn check_input(input: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod test_products;
