@@ -17,7 +17,7 @@ See it first: [converted designs in your browser](https://dutchman-cad.github.io
 - **Linux:** download for [x86_64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-unknown-linux-gnu.tar.gz) or [ARM64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz), extract it, and open `dutchman-gui`; or `brew install dutchman-cad/tap/dutchman`.
 - **Arch Linux** (0.2.10 and later): download `dutchman-bin-<version>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest) and run `sudo pacman -U dutchman-bin-<version>-x86_64.pkg.tar.zst`. Once the package is on the AUR: `yay -S dutchman-bin`.
 - **Linux AppImage** (0.2.10 and later): download `dutchman-<version>-x86_64.AppImage` (or `-aarch64`) from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest), run `chmod +x` on it, and run it. It works on any distribution and starts the desktop app. A launcher such as Gear Lever adds it to your menu and `PATH`; the command line programs are in it too ([how](docs/install.md#linux-the-appimage)).
-- **Install in SolidCraft:** the [Dutchman plugin](docs/solidcraft-plugin.md) opens Fusion, Inventor, and SolidWorks files straight from SolidCraft 0.44 or newer (desktop): download `dutchman-plugin.zip` from the release and install it from **Preferences > Plugins** as it is, without unzipping it ([how](docs/solidcraft-plugin.md#install), [how it is built](docs/plugin.md)).
+- **Install in SolidCraft:** the [Dutchman plugin](docs/solidcraft-plugin.md) opens Fusion, Inventor, and SolidWorks files straight from SolidCraft 0.44 or newer (desktop): download [`dutchman-plugin.zip`](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-plugin.zip) ([checksum](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-plugin.zip.sha256)) and install it from **Preferences > Plugins** as it is, without unzipping it ([how](docs/solidcraft-plugin.md#install), [how it is built](docs/plugin.md)).
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
 **More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).
@@ -25,7 +25,7 @@ The Windows installer is unsigned. If SmartScreen says **Windows protected your 
 Release packages include local `skills/`, Markdown `docs/`, and an `AGENTS.md` explaining
 commands and saved reports ([locations and omitted images](docs/install.md#included-guidance)).
 
-Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, and the `dutchman-mcp` server. On macOS, the app needs a [one-time approval](docs/install.md#opening-the-app-the-first-time). [Install](docs/install.md) has Docker, nightly builds, and building from source.
+Desktop downloads include the app (`dutchman-gui`), the `dutchman` command, and the `dutchman-mcp` server. On macOS, the app needs a [one-time approval](docs/install.md#opening-the-app-the-first-time). [Install](docs/install.md) has Docker, nightly builds, and building from source.
 
 <details>
 <summary>All downloads, with checksums</summary>

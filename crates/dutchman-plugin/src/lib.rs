@@ -75,7 +75,7 @@ fn size(bytes: u64) -> String {
     }
 }
 
-/// What the plugin tells the user when a conversion stops: what to do first, then the detail.
+/// What the plugin tells the user when a conversion stops: a plain reason and a next action.
 /// It names only the plugin's own formats and limits.
 pub fn message(error: &Error) -> String {
     match error {
@@ -91,36 +91,34 @@ pub fn message(error: &Error) -> String {
             input_limit_message(*limit),
             size(*bytes)
         ),
-        Error::MemoryBudget(detail) => format!(
+        Error::MemoryBudget(_) => format!(
             "Convert this design with the dutchman command line, which has no plugin memory \
-             limit: {}. Detail: {detail}",
+             limit: {}.",
             dutchman_core::RELEASES
         ),
-        Error::Assembly(detail) => format!(
+        Error::Assembly(_) => String::from(
             "Keep the assembly's part files in its folder, under their saved names, and open it \
-             again. Detail: {detail}"
+             again.",
         ),
-        Error::NoGeometry(detail) => format!(
+        Error::NoGeometry(_) => String::from(
             "Open a design with a solid or surface in it: this one has none SolidCraft can take. \
-             Detail: {detail}"
+             Save a solid or surface in the source program and open that file.",
         ),
-        // Already says what to do: convert fewer parts at once.
-        Error::Encode(detail) if detail.contains("exceeds") => detail.clone(),
-        _ => {
-            let text = error.to_string();
-            // The reader's own advice names the command line's anonymous report; say it here
-            // first, in the plugin's words, and keep only the cause as the detail.
-            let cause = text
-                .split_once(". The file may be incomplete")
-                .map_or(text.as_str(), |(cause, _)| cause);
-            format!(
-                "Download or copy the file again and open it once more. If the original opens \
-                 in the program that made it, report the problem on Dutchman's issue form ({}); \
-                 `dutchman convert FILE --report-anon report.json` makes an anonymous report to \
-                 attach. Detail: {cause}",
-                dutchman_core::FILE_DID_NOT_CONVERT
-            )
+        // These are the two fixed output limits owned by the plugin. Never echo an
+        // arbitrary writer/decoder reason, even when it happens to mention a limit.
+        Error::Encode(detail)
+            if detail == "Converted design exceeds 256 MiB; convert fewer parts at once"
+                || detail == "Conversion report exceeds 1 MiB; convert fewer parts at once" =>
+        {
+            detail.clone()
         }
+        _ => format!(
+            "Download or copy the file again and open it once more. If the original opens \
+             in the program that made it, report the problem on Dutchman's issue form ({}); \
+             `dutchman convert FILE --report-anon report.json` makes an anonymous report to \
+             attach.",
+            dutchman_core::FILE_DID_NOT_CONVERT
+        ),
     }
 }
 

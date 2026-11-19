@@ -62,7 +62,7 @@ env:
 jobs:
   # No macOS dependencies: a missing hosted runner must not affect the queue's required result.
   required:
-    needs: [plan, build, image-check]
+    needs: [plan, build, plugin, image-check]
     if: always()
     runs-on: ubuntu-latest
     outputs:
@@ -70,7 +70,7 @@ jobs:
     steps:
       - id: result
         env:
-          RESULT: ${{ needs.plan.result == 'success' && needs.build.result == 'success' && (needs.image-check.result == 'success' || (inputs.targets == 'linux-x86_64' && needs.image-check.result == 'skipped')) && 'success' || 'failure' }}
+          RESULT: ${{ needs.plan.result == 'success' && needs.build.result == 'success' && (needs.plugin.result == 'success' || (inputs.targets == 'linux-x86_64' && needs.plugin.result == 'skipped')) && (needs.image-check.result == 'success' || (inputs.targets == 'linux-x86_64' && needs.image-check.result == 'skipped')) && 'success' || 'failure' }}
         run: |
           echo "result=$RESULT" >> "$GITHUB_OUTPUT"
           test "$RESULT" = success
@@ -218,6 +218,53 @@ jobs:
             dist/*.AppImage.sha256
             dist/*.AppImage.zsync
             dist/*.AppImage.zsync.sha256
+          retention-days: 30
+
+  # One portable component for every desktop OS. Keep its artifact under the release
+  # downloader's dutchman-[0-9]* pattern; only the zip and checksum belong in dist.
+  plugin:
+    needs: plan
+    if: needs.plan.outputs.full == 'true' && inputs.targets != 'linux-x86_64'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - uses: actions/checkout@v7
+      # docs/plugin.md measured 14.6 GiB in one compiler process. Keep the reviewed size
+      # flags and give this isolated hosted runner swap instead of changing the component.
+      - name: Make room for the component build
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo fallocate -l 16G /swapfile-dutchman-plugin
+          sudo chmod 600 /swapfile-dutchman-plugin
+          sudo mkswap /swapfile-dutchman-plugin
+          sudo swapon /swapfile-dutchman-plugin
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install the component packager
+        run: cargo install --locked wasm-tools --version '=1.263.0'
+      - name: Build the SolidCraft plugin
+        run: cargo build --release --locked --target wasm32-unknown-unknown -p dutchman-plugin
+      - name: Package and check the SolidCraft plugin
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          scripts/package-plugin.sh target/wasm32-unknown-unknown/release/dutchman_plugin.wasm plugin-package "$version"
+          mkdir -p dist
+          cp "plugin-package/dutchman-plugin-$version.zip" "plugin-package/dutchman-plugin-$version.zip.sha256" dist/
+          test -s "dist/dutchman-plugin-$version.zip"
+          test -s "dist/dutchman-plugin-$version.zip.sha256"
+          (cd dist && sha256sum --check --strict "dutchman-plugin-$version.zip.sha256")
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dutchman-${{ env.VERSION }}-plugin
+          path: |
+            dist/dutchman-plugin-${{ env.VERSION }}.zip
+            dist/dutchman-plugin-${{ env.VERSION }}.zip.sha256
+          if-no-files-found: error
           retention-days: 30
 
   # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.

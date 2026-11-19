@@ -278,7 +278,7 @@ fn messages_put_what_to_do_first_and_name_only_plugin_formats() {
     assert!(aggregate.starts_with("Convert fewer parts at once, or use the dutchman command line"));
     assert!(aggregate.contains("Each file must still fit"));
     assert!(aggregate.contains(dutchman_core::RELEASES));
-    // The reader's advice comes first in the plugin's words, then only the reader's cause.
+    // A real truncated synthetic archive gives advice without decoder internals.
     let truncated = convert(
         "cube.f3d",
         Options::default(),
@@ -294,5 +294,43 @@ fn messages_put_what_to_do_first_and_name_only_plugin_formats() {
     );
     assert!(text.contains(dutchman_core::FILE_DID_NOT_CONVERT), "{text}");
     assert_eq!(text.matches("download or copy").count(), 0, "{text}");
-    assert!(text.contains("Detail: cannot read this design: "), "{text}");
+    assert!(!text.contains("Detail:"), "{text}");
+    assert!(!text.contains("EOCD"), "{text}");
+}
+
+#[test]
+fn refusal_messages_do_not_echo_internal_reasons() {
+    use dutchman_core::Error;
+    let detail = "EOCD: plugin: invalid input file; internal detail exceeds a limit";
+    let errors = [
+        Error::Decode(detail.into()),
+        Error::Checks {
+            message: detail.into(),
+            facts: Default::default(),
+        },
+        Error::Assembly(detail.into()),
+        Error::NoGeometry(detail.into()),
+        Error::MemoryBudget(detail.into()),
+        Error::Restate(detail.into()),
+        Error::Encode(detail.into()),
+    ];
+    for error in errors {
+        let text = crate::message(&error);
+        for internal in ["EOCD", "invalid input", "internal detail", "Detail:"] {
+            assert!(!text.contains(internal), "{text}");
+        }
+        assert!(
+            text.starts_with("Download or copy")
+                || text.starts_with("Keep the assembly")
+                || text.starts_with("Open a design")
+                || text.starts_with("Convert this design"),
+            "{text}"
+        );
+    }
+    for reason in [
+        "Converted design exceeds 256 MiB; convert fewer parts at once",
+        "Conversion report exceeds 1 MiB; convert fewer parts at once",
+    ] {
+        assert_eq!(crate::message(&Error::Encode(reason.into())), reason);
+    }
 }

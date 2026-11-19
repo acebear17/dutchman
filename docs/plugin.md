@@ -88,6 +88,12 @@ clock that never advances on `wasm32-unknown-unknown`; cadmpeg's Fusion codec do
 (cadmpeg/cadmpeg#1283, included in Dutchman's cadmpeg pin).
 The plugin uses one worker and no progress heartbeat thread.
 
+Full `release-build.yml` runs also build and package the component. Their
+`dutchman-X.Y.Z-plugin` artifact contains `dutchman-plugin-X.Y.Z.zip` and its `.sha256`.
+The tag release flow requires both, creates `dutchman-plugin.zip` and its checksum, and
+checks that all four files reached the draft release. A missing plugin fails the release.
+The Linux-only measurement build intentionally skips the plugin and cannot supply a release.
+
 The host tests are opt-in so the Wasmtime test compiler does not raise the normal
 workspace's Rust 1.88 requirement. Use a toolchain supported by Wasmtime 50 for them.
 They require an actual component and fail if it is absent:
@@ -130,7 +136,9 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
   even when other members are readable; no further input calls or output writes follow it.
   A missing member (`source.resolve` returns none) remains an ordinary assembly loss.
   The plugin's own reasons (`message` in `src/lib.rs`) say what to do first and
-  give the cause after `Detail:`. A file in no plugin format names only the plugin's formats,
+  omit raw decoder, writer, and option-parser details. SolidCraft 0.44.1 adds the typed
+  `plugin: invalid input file` prefix itself; changing that display belongs to the host.
+  A file in no plugin format names only the plugin's formats,
   not the command line's whole list; `.FCStd` points at File > Open. A single input over 1 GiB
   asks for smaller parts saved in the source program, since the command line shares that cap. Inputs
   together over the plugin's 1 GiB aggregate budget, or over its memory budget, point at the

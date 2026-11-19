@@ -919,3 +919,7 @@ loss items; only known source-bookkeeping diagnostics and informational notes ar
 For input limits, both the plugin and CLI cap each file at 1 GiB. The plugin also caps an
 assembly's combined input at 1 GiB; the CLI can convert larger totals when each file fits.
 Save smaller parts in the source program when one file exceeds the shared cap.
+
+Plugin refusals give a next action without raw decoder, writer, or option-parser details.
+SolidCraft 0.44.1 adds its own typed error prefix. These messages do not change the
+CLI/MCP error reports or the `dutchman.plugin.loss/1` fields.
