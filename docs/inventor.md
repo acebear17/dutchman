@@ -49,6 +49,19 @@ Contour-flange history still needs upstream decoding: the pinned Inventor codec 
 emit CADIR contour-flange operations. Dutchman can map that neutral operation when a codec
 supplies an open line/arc chain and a blind normal sweep; see [sheet metal](history.md#sheet-metal).
 
+On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
+at the final body-building feature from resolved modified-body outputs and a
+matching replay against the final source geometry. Intermediate body centres
+cannot confirm scope. A consumed Combine tool without a final body row keeps
+its name only when the source retains exactly one history body whose
+`produced_by` matches its single-output producer, or a complete replay matches
+the final source geometry. Failed or unavailable checks keep the previous mapping.
+Output IDs alone do not prove identity; without proof, later selections keep the
+existing unnamed-body blocker.
+The pinned Inventor reader
+still leaves native body references unresolved; those remain blockers. Dutchman
+does not interpret the native references to infer participants.
+
 Sheet-metal attached plates with their paired bends map to SolidCraft `sheet.flange` using
 a proven point on the base sheet's actual profile edge. On SolidCraft 0.44.1, this includes
 unchanged L-shaped and notched bases with a single simple straight-sided perimeter, including
