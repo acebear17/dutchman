@@ -85,12 +85,13 @@ timeout. See [Public share links](guide.md#public-share-links) for limits and cl
 
 ## Mesh bodies
 
-When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
-or placed components, Dutchman says "it has mesh bodies (N), which Dutchman
+When cadmpeg reports mesh bodies for a Fusion design with no decoded B-rep bodies or
+placed components, Dutchman says "it has mesh bodies (N), which Dutchman
 doesn't convert yet, and no solid bodies could be read" and asks you to convert the meshes to
-solids in Fusion, then save a new copy. The count comes from typed mesh selections; an
-undecoded mesh container or an unresolved source alone cannot supply a count, so the
-existing read error remains.
+solids in Fusion, then save a new copy. The count comes from typed mesh selections and from
+decoded meshes, also those of a design without a mesh-import feature, such as a mesh-workspace
+design; a mesh counts once. An undecoded mesh container or an unresolved source alone cannot
+supply a count, so the existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
