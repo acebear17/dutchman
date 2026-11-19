@@ -54,7 +54,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.18.2–0.43.
+converted history. The supported SolidCraft window is currently 0.40.0–0.44.1.
 
 ## Your first conversion
 
@@ -398,6 +398,23 @@ sketch, and keeps the feature only when SolidCraft's body check confirms it; the
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Closed circular edges also work for constant-radius fillets
+and equal-distance chamfers when their centre, radius, plane and circumference match
+uniquely, regardless of seam position. SolidCraft's exact edge measurement establishes
+its circular carrier. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths still require a proven start and traversal direction and remain refused. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths or closed circular blends stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 
 Offset datum planes need no building feature when their support resolves or all their

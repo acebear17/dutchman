@@ -3,27 +3,33 @@
 //! SolidCraft rebuilds from the history before the blend, never on the final body.
 //!
 //! Mapping keeps each selected input edge ([`Pending`]); once SolidCraft has replayed the
-//! mapped history ([`crate::verify::replay_edges`]), [`prove`] finds it among the edges of the
+//! mapped history ([`crate::verify::replay_edges`]), [`prove_replay`] finds it among the edges of the
 //! bodies the blend starts from. SolidCraft reports each rebuilt edge's ends, the point
-//! halfway along it and its length, but no carrier or tangent, so the rule is:
+//! halfway along it and its approximate length. A separate query measures circular carriers
+//! exactly when requested. The proof is:
 //!
 //! - The input edge must be a straight line (its midpoint on the segment between its ends and
 //!   its tangent along that segment) or a circular arc (its tangent square to the radius of
-//!   the circle through its ends and midpoint, in that circle's plane). Other curves and
-//!   closed edges are refused.
-//! - Its midpoint must lie on exactly one rebuilt edge across every body: within the segment
+//!   the circle through its ends and midpoint, in that circle's plane). Other curves are
+//!   refused. A closed circle uses its seam, opposite point and tangent to establish its
+//!   centre, radius and plane.
+//! - An open edge's midpoint must lie on exactly one rebuilt edge across every body: within
+//!   the segment
 //!   of a straight one (a length equal to its chord proves it straight), or at the midpoint of
 //!   a curved one. Anything else, including two rebuilt edges through it, is refused.
 //! - That edge must have the input edge's ends, in either order, and its length: the chord of
 //!   a line, `radius × angle` of an arc. A straight rebuilt edge then lies along the input
 //!   tangent; a curved one is not checked for a tangent SolidCraft does not report.
+//! - A closed circle matches by centre, radius, plane and circumference, independently of
+//!   either seam. SolidCraft's exact curve measurement proves its carrier; without
+//!   one it is refused. Its rebuilt midpoint must select exactly one edge across all bodies.
 
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Map, Value};
 
 use super::sketch::{cross, dot, number, unit, v3, Mapped, V3};
 use super::{describe, name, Context};
-use crate::verify::{ReplayedBodies, ReplayedEdge};
+use crate::verify::{Replay, ReplayedBodies, ReplayedEdge};
 
 const LIMIT: usize = 256;
 /// How far apart, in millimetres, two positions may be and still be the same.
@@ -45,7 +51,16 @@ const INPUT_SOURCE: &str = "its input edge midpoint cannot be proven to select e
 
 type Segment = (V3, V3);
 
-/// A blend whose input edges wait for SolidCraft's replay of the history before it.
+const CLOSED: &str = "its closed input edge cannot be proven to match exactly one rebuilt circle by centre, radius, plane and circumference yet";
+
+#[derive(Clone, Debug)]
+struct Circle {
+    center: V3,
+    radius: f64,
+    normal: V3,
+}
+
+/// A blend, sweep path or face profile waiting for replay of its own input state.
 #[derive(Clone, Debug)]
 pub(crate) struct Pending {
     /// The blend's index in the mapped features.
@@ -64,6 +79,8 @@ pub(crate) struct Pending {
     pub(super) extra: Option<usize>,
     /// An earlier group of the same source blend may have shortened its straight edges.
     pub(super) trimmed: bool,
+    /// These edges form a sweep path on one body, rather than a blend selection.
+    pub(super) path: bool,
 }
 
 /// One selected input edge, from its feature input topology.
@@ -76,6 +93,67 @@ pub(super) struct Input {
     /// Its length: the chord of a line, or the arc's.
     length: f64,
     straight: bool,
+    circle: Option<Circle>,
+}
+
+impl Input {
+    pub(super) fn is_closed(&self) -> bool {
+        self.circle.is_some()
+    }
+
+    /// An entire line or arc of the already mapped owning sketch, in model coordinates.
+    /// Matching only ends would confuse the two arcs between the same vertices.
+    pub(super) fn matches_sketch_curve(
+        &self,
+        mapped: &Mapped,
+        curve: &super::sketch::Curve,
+    ) -> bool {
+        if !curve.pieces.is_empty() || self.is_closed() {
+            return false;
+        }
+        let at = |index: Option<usize>| {
+            index
+                .and_then(|index| mapped.points.get(index))
+                .map(|(_, point)| mapped.world(*point))
+        };
+        let (Some(start), Some(end)) = (at(curve.start), at(curve.end)) else {
+            return false;
+        };
+        if !same(self.ends, (start, end)) {
+            return false;
+        }
+        if curve.kind == "line" && self.straight {
+            return same_length(self.length, distance(start, end))
+                && on_segment(self.point, (start, end))
+                && parallel(sub(end, start), self.tangent);
+        }
+        if curve.kind != "arc" || self.straight {
+            return false;
+        }
+        let (Some(center), Some(normal)) = (at(curve.center), unit(mapped.normal)) else {
+            return false;
+        };
+        let (a, b) = (sub(start, center), sub(end, center));
+        let radius = distance(start, center);
+        let Some(along) = unit(a) else { return false };
+        let turn = dot(cross(a, b), normal)
+            .atan2(dot(a, b))
+            .rem_euclid(std::f64::consts::TAU);
+        let mid = add(
+            center,
+            scale(
+                add(
+                    scale(along, (turn / 2.0).cos()),
+                    scale(cross(normal, along), (turn / 2.0).sin()),
+                ),
+                radius,
+            ),
+        );
+        (distance(end, center) - radius).abs() <= TOLERANCE
+            && near(self.point, mid)
+            && same_length(self.length, radius * turn)
+            && parallel(cross(normal, sub(mid, center)), self.tangent)
+    }
 }
 
 pub(super) fn map(
@@ -188,6 +266,13 @@ fn group(
         }
         _ => return Err("blends require edges from their own feature input topology; edges of the final body are not supported yet".to_owned()),
     };
+    if inputs.iter().any(|input| input.circle.is_some()) {
+        if !crate::VersionGate::TopologicalEdges.supported(ctx.target_version) {
+            return Err("blends on closed input edges need SolidCraft 0.44 or newer; choose a newer target to keep this feature editable".to_owned());
+        }
+        ctx.topological_replay_required = true;
+        out.insert("tangent_chain".to_owned(), json!(false));
+    }
     out.insert("edges".to_owned(), json!(points));
     let id = ctx.id();
     out.insert("id".to_owned(), json!(id));
@@ -206,6 +291,7 @@ fn group(
         face: None,
         extra: None,
         trimmed,
+        path: false,
     };
     if weighted {
         report.push(
@@ -218,7 +304,7 @@ fn group(
 }
 
 /// Input edges selected in the blend's own feature input topology, with their midpoints.
-fn historical(
+pub(super) fn historical(
     feature: &Value,
     selection: &Value,
     ctx: &Context,
@@ -281,13 +367,30 @@ fn historical(
         let tangent = v3(sample.get("tangent"))
             .and_then(unit)
             .ok_or("its input edge tangent is missing")?;
-        if near(ends.0, ends.1) {
-            return Err("blends on closed input edges are not supported yet".to_owned());
-        }
         if near(point, ends.0) || near(point, ends.1) {
             return Err(INPUT_SOURCE.to_owned());
         }
-        let input = if on_segment(point, ends) {
+        let input = if near(ends.0, ends.1) {
+            let diameter = sub(point, ends.0);
+            let radial = unit(diameter).ok_or(INPUT_SOURCE)?;
+            if dot(radial, tangent).abs() > ANGLE {
+                return Err(INPUT_SOURCE.to_owned());
+            }
+            let radius = distance(point, ends.0) / 2.0;
+            let normal = unit(cross(radial, tangent)).ok_or(INPUT_SOURCE)?;
+            Input {
+                point,
+                ends,
+                tangent,
+                length: std::f64::consts::TAU * radius,
+                straight: false,
+                circle: Some(Circle {
+                    center: scale(add(point, ends.0), 0.5),
+                    radius,
+                    normal,
+                }),
+            }
+        } else if on_segment(point, ends) {
             if !parallel(sub(ends.1, ends.0), tangent) {
                 return Err(INPUT_SOURCE.to_owned());
             }
@@ -297,6 +400,7 @@ fn historical(
                 tangent,
                 length: distance(ends.0, ends.1),
                 straight: true,
+                circle: None,
             }
         } else {
             let length = arc_length(point, ends, tangent).ok_or(
@@ -308,6 +412,7 @@ fn historical(
                 tangent,
                 length,
                 straight: false,
+                circle: None,
             }
         };
         if angle_chamfer && !input.straight {
@@ -317,6 +422,30 @@ fn historical(
         points.push(point);
     }
     Ok((inputs, points))
+}
+
+/// A path must visit its selected edges in source order, end to end. Edge carriers may
+/// run against traversal, so try both directions of the first edge. Repeated edges are
+/// refused by the replay proof; branches and disconnected or reordered paths fail here.
+pub(super) fn connected(inputs: &[Input]) -> bool {
+    let Some(first) = inputs.first() else {
+        return false;
+    };
+    if inputs.len() == 1 {
+        return true;
+    }
+    [first.ends.0, first.ends.1].into_iter().any(|mut at| {
+        for input in inputs.iter().skip(1) {
+            at = if near(at, input.ends.0) && !near(at, input.ends.1) {
+                input.ends.1
+            } else if near(at, input.ends.1) && !near(at, input.ends.0) {
+                input.ends.0
+            } else {
+                return false;
+            };
+        }
+        true
+    })
 }
 
 /// Edges an extrusion or a sheet-metal base flange generated from its sketch, as cadmpeg names
@@ -388,6 +517,7 @@ fn generated(selection: &Value, ctx: &Context) -> Result<(Vec<Input>, Vec<V3>), 
             tangent,
             length: distance(ends.0, ends.1),
             straight: true,
+            circle: None,
         });
         points.push(point);
     }
@@ -478,15 +608,35 @@ pub(crate) struct Selection {
 }
 
 /// Match every input edge against the entire rebuilt history before grouping by body.
-/// Only constant circular fillets and equal-setback chamfers reach this proof: applying
-/// their identical parameters independently to disjoint bodies is equivalent.
-pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Selection>, String> {
+/// Blends may split over disjoint bodies with identical parameters. A sweep path must
+/// stay on one actual body, even if two rebuilt bodies happen to have the same name.
+pub(crate) fn prove_replay(pending: &Pending, replay: &Replay) -> Result<Vec<Selection>, String> {
+    prove_edges(pending, &replay.bodies)
+}
+
+pub(super) fn needs_faces(pending: &Pending) -> bool {
+    pending.face.is_some()
+}
+
+pub(super) fn needs_curves(pending: &Pending) -> bool {
+    pending.edges.iter().any(Input::is_closed)
+        || (pending.path && pending.edges.iter().any(|input| !input.straight))
+}
+
+#[cfg(test)]
+fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Selection>, String> {
+    prove_edges(pending, bodies)
+}
+
+fn prove_edges(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Selection>, String> {
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     for input in &pending.edges {
         let mut on = Vec::new();
         for (b, (_, edges)) in bodies.iter().enumerate() {
             for (e, edge) in edges.iter().enumerate() {
-                let hit = if straight(edge) {
+                let hit = if let Some(circle) = &input.circle {
+                    circle_matches(circle, edge)
+                } else if straight(edge) {
                     on_segment(input.point, (edge.start, edge.end))
                 } else {
                     near(input.point, edge.mid)
@@ -497,6 +647,9 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
             }
         }
         let [(b, e)] = on.as_slice() else {
+            if input.circle.is_some() {
+                return Err(CLOSED.to_owned());
+            }
             return Err(match nearest(input.point, bodies) {
                 _ if !on.is_empty() => INPUT_MANY.to_owned(),
                 Some(far) if far > NEAR => format!(
@@ -521,14 +674,21 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
             && straight(edge)
             && on_segment(edge.start, input.ends)
             && on_segment(edge.end, input.ends);
-        if !shortened {
+        if !shortened && input.circle.is_none() {
             if straight(edge) != input.straight {
                 return Err(INPUT_KIND.to_owned());
             }
             if !same(input.ends, (edge.start, edge.end)) {
                 return Err(INPUT_ENDS.to_owned());
             }
-            if !same_length(edge.length, input.length) {
+            let rebuilt_length = if pending.path && !input.straight {
+                measured_arc_length(edge).ok_or(
+                    "its curved input path edge has no proven rebuilt circular arc measurement yet",
+                )?
+            } else {
+                edge.length
+            };
+            if !same_length(rebuilt_length, input.length) {
                 return Err(INPUT_LENGTH.to_owned());
             }
         }
@@ -547,19 +707,121 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Se
     if chosen.is_empty() {
         return Err(INPUT.to_owned());
     }
+    if pending.path
+        && chosen
+            .first()
+            .is_some_and(|(body, _)| chosen.iter().any(|(other, _)| body != other))
+    {
+        return Err(
+            "its input edge path crosses several rebuilt bodies, which is not supported yet"
+                .to_owned(),
+        );
+    }
     let mut selections: Vec<Selection> = Vec::new();
-    for ((body, _), input) in chosen.iter().zip(&pending.edges) {
+    for ((body, edge), input) in chosen.iter().zip(&pending.edges) {
         let name = bodies.get(*body).map(|(name, _)| name).ok_or(INPUT)?;
         if let Some(selection) = selections.iter_mut().find(|s| s.body == *name) {
-            selection.points.push(input.point);
+            selection
+                .points
+                .push(selected_point(input, bodies, *body, *edge)?);
         } else {
             selections.push(Selection {
                 body: name.clone(),
-                points: vec![input.point],
+                points: vec![selected_point(input, bodies, *body, *edge)?],
             });
         }
     }
     Ok(selections)
+}
+
+/// Select the rebuilt circle away from its seam, after matching its geometry. The
+/// original seam and midpoint may be anywhere on that same circle.
+fn selected_point(
+    input: &Input,
+    bodies: &ReplayedBodies,
+    body: usize,
+    edge: usize,
+) -> Result<V3, String> {
+    if input.circle.is_none() {
+        return Ok(input.point);
+    }
+    let picked = bodies
+        .get(body)
+        .and_then(|(_, edges)| edges.get(edge))
+        .ok_or(CLOSED)?
+        .mid;
+    let mut hits = 0usize;
+    for (_, edges) in bodies {
+        for candidate in edges {
+            let hit = if straight(candidate) {
+                on_segment(picked, (candidate.start, candidate.end))
+            } else if let Some(circle) = rebuilt_circle(candidate) {
+                on_circle(picked, &circle)
+            } else {
+                near(picked, candidate.mid)
+                    || near(picked, candidate.start)
+                    || near(picked, candidate.end)
+            };
+            hits = hits.saturating_add(usize::from(hit));
+        }
+    }
+    if hits != 1 {
+        return Err(INPUT_MANY.to_owned());
+    }
+    Ok(picked)
+}
+
+fn on_circle(point: V3, circle: &Circle) -> bool {
+    let radial = sub(point, circle.center);
+    dot(radial, circle.normal).abs() <= TOLERANCE
+        && (distance(point, circle.center) - circle.radius).abs() <= TOLERANCE
+}
+
+/// Exact carrier measurements establish the plane and circumference independently of
+/// the arbitrary seam and the approximate length returned by model.edges.
+fn rebuilt_circle(edge: &ReplayedEdge) -> Option<Circle> {
+    if !near(edge.start, edge.end) {
+        return None;
+    }
+    let measured = edge.curve.as_ref().filter(|curve| curve.closed)?;
+    let circle = Circle {
+        center: measured.center,
+        radius: measured.radius,
+        normal: unit(measured.axis)?,
+    };
+    if !same_length(measured.length, std::f64::consts::TAU * circle.radius)
+        || ![edge.start, edge.mid, edge.end]
+            .into_iter()
+            .all(|point| on_circle(point, &circle))
+    {
+        return None;
+    }
+    Some(circle)
+}
+
+fn measured_arc_length(edge: &ReplayedEdge) -> Option<f64> {
+    let measured = edge.curve.as_ref().filter(|curve| !curve.closed)?;
+    let circle = Circle {
+        center: measured.center,
+        radius: measured.radius,
+        normal: unit(measured.axis)?,
+    };
+    [edge.start, edge.mid, edge.end]
+        .into_iter()
+        .all(|point| on_circle(point, &circle))
+        .then_some(measured.length)
+}
+
+fn circle_matches(input: &Circle, edge: &ReplayedEdge) -> bool {
+    let Some(rebuilt) = rebuilt_circle(edge) else {
+        return false;
+    };
+    near(input.center, rebuilt.center)
+        && (input.radius - rebuilt.radius).abs() <= TOLERANCE
+        && parallel(input.normal, rebuilt.normal)
+        && edge.curve.as_ref().is_some_and(|measured| {
+            same_length(measured.length, std::f64::consts::TAU * input.radius)
+        })
 }
 
 /// How far `point` is from the nearest rebuilt edge: the segment of a straight one; for a curved
@@ -728,6 +990,7 @@ mod tests {
             face: None,
             extra: None,
             trimmed: false,
+            path: false,
         }
     }
 
@@ -738,6 +1001,7 @@ mod tests {
             tangent: [0.0, 0.0, 1.0],
             length: 10.0,
             straight: true,
+            circle: None,
         }
     }
 
@@ -748,7 +1012,132 @@ mod tests {
             mid: input.point,
             length: input.length,
             name: String::new(),
+            index: None,
+            curve: None,
         }
+    }
+
+    #[test]
+    fn closed_circles_match_geometry_across_different_seams() {
+        let input = super::Input {
+            point: [-3.0, 0.0, 10.0],
+            ends: ([3.0, 0.0, 10.0], [3.0, 0.0, 10.0]),
+            tangent: [0.0, -1.0, 0.0],
+            length: std::f64::consts::TAU * 3.0,
+            straight: false,
+            circle: Some(super::Circle {
+                center: [0.0, 0.0, 10.0],
+                radius: 3.0,
+                normal: [0.0, 0.0, 1.0],
+            }),
+        };
+        let pending = proof(vec![input.clone()]);
+        let edge = crate::verify::ReplayedEdge {
+            start: [0.0, 3.0, 10.0],
+            end: [0.0, 3.0, 10.0],
+            mid: [0.0, -3.0, 10.0],
+            length: input.length,
+            name: "Wall|Cap".to_owned(),
+            index: Some(0),
+            curve: Some(crate::verify::ReplayedCurve {
+                center: [0.0, 0.0, 10.0],
+                axis: [0.0, 0.0, 1.0],
+                radius: 3.0,
+                length: input.length,
+                closed: true,
+            }),
+        };
+        let replay = super::Replay {
+            bodies: vec![("Cylinder".to_owned(), vec![edge])],
+            faces: Vec::new(),
+        };
+        assert_eq!(
+            super::prove_replay(&pending, &replay).unwrap(),
+            vec![super::Selection {
+                body: "Cylinder".to_owned(),
+                points: vec![[0.0, -3.0, 10.0]],
+            }]
+        );
+        for wrong in 0..7 {
+            let mut changed = replay.clone();
+            match wrong {
+                0 => changed.bodies[0].1[0].curve.as_mut().unwrap().length += 0.01,
+                1 => changed.bodies[0].1[0].mid[0] += 0.01,
+                2 => changed.bodies[0].1[0].curve.as_mut().unwrap().axis = [1.0, 0.0, 0.0],
+                3 => changed.bodies[0].1[0].curve = None,
+                4 => changed.bodies[0].1[0].end[0] += 0.01,
+                5 => changed.bodies[0].1[0].curve.as_mut().unwrap().radius *= 0.99,
+                _ => {
+                    changed.bodies.push(replay.bodies[0].clone());
+                }
+            }
+            assert!(
+                super::prove_replay(&pending, &changed)
+                    .unwrap_err()
+                    .contains("closed input edge"),
+                "case {wrong}"
+            );
+        }
+        let mut polygonal = replay.clone();
+        polygonal.bodies[0].1[0].length *= 1.0 - 0.0016154473321098317;
+        assert!(super::prove_replay(&pending, &polygonal).is_ok());
+        let repeated = proof(vec![input.clone(), input]);
+        assert!(super::prove_replay(&repeated, &replay)
+            .unwrap_err()
+            .contains("repeats"));
+    }
+
+    #[test]
+    fn curved_paths_use_exact_arc_measurements_instead_of_polygonal_lengths() {
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        let input = super::Input {
+            point: [half, half, 0.0],
+            ends: ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            tangent: [-half, half, 0.0],
+            length: std::f64::consts::FRAC_PI_2,
+            straight: false,
+            circle: None,
+        };
+        let mut pending = proof(vec![input.clone()]);
+        pending.path = true;
+        let mut edge = rebuilt(&input);
+        edge.length *= 0.999;
+        edge.curve = Some(crate::verify::ReplayedCurve {
+            center: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: 1.0,
+            length: input.length,
+            closed: false,
+        });
+        let replay = super::Replay {
+            bodies: vec![("Arc".to_owned(), vec![edge])],
+            faces: Vec::new(),
+        };
+        assert!(super::prove_replay(&pending, &replay).is_ok());
+        for wrong in 0..4 {
+            let mut changed = replay.clone();
+            match wrong {
+                0 => changed.bodies[0].1[0].curve = None,
+                1 => changed.bodies[0].1[0].curve.as_mut().unwrap().length += 0.01,
+                2 => changed.bodies[0].1[0].curve.as_mut().unwrap().axis = [1.0, 0.0, 0.0],
+                _ => changed.bodies[0].1[0].curve.as_mut().unwrap().closed = true,
+            }
+            assert!(super::prove_replay(&pending, &changed).is_err());
+        }
+    }
+
+    #[test]
+    fn connected_paths_follow_source_order_with_either_carrier_direction() {
+        let a = straight_input(0.0);
+        let mut b = straight_input(0.0);
+        b.ends = ([0.0, 0.0, 10.0], [10.0, 0.0, 10.0]);
+        assert!(super::connected(&[a.clone(), b.clone()]));
+        b.ends = (b.ends.1, b.ends.0);
+        assert!(super::connected(&[a.clone(), b.clone()]));
+        b.ends.0[1] = 1.0;
+        b.ends.1[1] = 1.0;
+        assert!(!super::connected(&[a, b]));
+        assert!(!super::connected(&[]));
     }
 
     #[test]
@@ -776,6 +1165,16 @@ mod tests {
                 },
             ]
         );
+        let mut path = pending.clone();
+        path.path = true;
+        assert!(super::prove(&path, &bodies)
+            .unwrap_err()
+            .contains("crosses several rebuilt bodies"));
+        let mut same_names = bodies;
+        same_names[1].0 = same_names[0].0.clone();
+        assert!(super::prove(&path, &same_names)
+            .unwrap_err()
+            .contains("crosses several rebuilt bodies"));
     }
 
     #[test]

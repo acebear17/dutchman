@@ -167,8 +167,8 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.43), unless an explicit target is supplied.
-`WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
+`NEWEST_SOLIDCRAFT` (currently 0.44), unless an explicit target is supplied.
+`WINDOW_OLDEST` (currently 0.40.0) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
 Sketch-profile helical sweeps require a target of 0.25 patch 1 or newer; older targets block them
@@ -224,6 +224,13 @@ an occurrence, so those stay apart.
 Unused construction helpers need no target feature. Later active consumers carry resolved
 datum frames in sketches, pattern axes, and later datum constructions; unresolved helper
 uses remain blockers.
+
+Histories using the new topological sweep paths or closed circular blends retain the
+original as the visible model unless their full comparison succeeds. Their mapped
+features remain in a hidden editable component, including in assemblies. The original
+may have no sound volume to compare; an unverified replay must not expose an earlier
+local frame in place of its final positioned body. This applies with verification off
+too; ordinary histories retain their existing verification behavior.
 
 At the first blocking feature, the editable timeline stops. Earlier features and
 independently resolved sketches are kept in a hidden component, followed by the original
@@ -319,7 +326,7 @@ Constant-radius fillets and equal-setback chamfers keep editable history when th
 feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
-in a batch (two runs within the check's time limit), up to the last feature a blend
+in a batch within the check's time limit, up to the last feature a blend
 starts after, and reads the edges each blend starts from. When one blend selects edges
 on several bodies, it emits one blend per body with identical parameters, in the order
 of the bodies' first selected edges. The names share the source name with numbered
@@ -330,10 +337,27 @@ of time, blends are refused, saying why. SolidCraft reports each edge's ends, mi
 length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
-splits into pieces, closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
+splits into pieces and other curves are refused. For targets 0.44 and newer, a closed
+circle matches by centre, radius, plane and circumference, independently of the seam.
+SolidCraft's exact edge measurements establish its circular carrier, including its plane;
+without them, it is refused.
+The rebuilt circle's midpoint must identify exactly one edge across all bodies. Curved
+sweep-path edges use exact arc measurements too. The position, plane and length
+checks keep the existing blend tolerances; polygonal edge lengths do not establish an arc's
+length. Equal two-distance chamfers also map; distance-and-angle chamfers map at
 45 degrees on perpendicular faces. Unequal distances and other angles lack a source
 reference-face ordering and are refused specifically. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
+
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
 
 Selected straight profile loops that cross or retrace their own curves are split at
 intersections into bounded regions for selection. The sketch keeps its original curves and

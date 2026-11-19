@@ -166,6 +166,7 @@ pub(super) fn map(
         face: Some(proof),
         extra: None,
         trimmed: false,
+        path: false,
     });
     Ok((key, json!({"type": "all"})))
 }
@@ -1275,6 +1276,8 @@ mod tests {
             mid: at(mid),
             length,
             name: "f".to_owned(),
+            index: None,
+            curve: None,
         }
     }
 

@@ -160,7 +160,7 @@ Constant-radius fillets and equal-setback chamfers keep editable history when th
 feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
-in a batch (two runs within the check's time limit), up to the last feature a blend
+in a batch within the check's time limit, up to the last feature a blend
 starts after, and reads the edges each blend starts from. If the picks span several
 bodies, each body gets its own blend with the same parameters, in the order its edges
 first appear. Names share the source name with numbered suffixes, as for radius groups;
@@ -171,7 +171,14 @@ of time, blends are refused, saying why. SolidCraft reports each edge's ends, mi
 length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
-splits into pieces, closed edges and other curves are refused. A refusal says which part of the
+splits into pieces and other curves are refused. For targets 0.44 and newer, a closed
+circle matches by centre, radius, plane and circumference, independently of the seam.
+SolidCraft's exact edge measurements establish its circular carrier, including its plane;
+without them, it is refused.
+The rebuilt circle's midpoint must identify exactly one edge across all bodies. Curved
+sweep-path edges use exact arc measurements too. The position, plane and length
+checks keep the existing blend tolerances; polygonal edge lengths do not establish an arc's
+length. A refusal says which part of the
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at
@@ -180,6 +187,22 @@ reference-face ordering and are refused specifically. Variable fillets lack a pr
 chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,
 in the source's order; a later group's straight edge may be shorter than the source edge where
 an earlier group rounded its end. Final-body edge selections never stand in for input geometry.
+
+For targets 0.44 and newer, a sweep path can name connected topological edges from its
+own input state. Resolved edges are preserved only from one hidden earlier dependency
+result before that geometry is removed. A wire owned by an earlier mapped sketch resolves
+to that sketch only when every edge matches one entire emitted curve by its endpoints,
+midpoint, tangent and length. Other paths use the blend edge proof, check connectivity in
+source order, and bind the whole path to one rebuilt body.
+Later edge consumers replay after this binding. Topological guide rails remain unsupported;
+SolidCraft's rail representation requires sketch curves. Paths without proven earlier
+input geometry and older targets keep specific refusals.
+
+A history using these edge paths or closed circular blends stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be
@@ -375,8 +398,8 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.43 with the same writer capabilities as 0.40 and keeps
-design format 23. Saving a design in SolidCraft 0.43 upgrades it to format 57, which
+Dutchman targets SolidCraft 0.44 and keeps design format 23. Proven body-edge sweep paths
+and closed circular blends require a 0.44 target. Saving a design in SolidCraft 0.43 upgrades it to format 57, which
 SolidCraft 0.30.1 and earlier cannot open. SolidCraft 0.40.1 through 0.42
 open designs saved in 0.43 with a warning about the newer format.
 

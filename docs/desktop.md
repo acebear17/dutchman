@@ -190,7 +190,7 @@ remembers it; **Find automatically** goes back to searching. Choosing the SolidC
 `solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
 download leaves it out, and the portable ZIP and the MSI installer include it.
 
-Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.43), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
+Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.44), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 
 History checking stays on by default. Before a SolidCraft rebuild, Dutchman compares the
 memory needed for a second build with free memory, using what the design holds after

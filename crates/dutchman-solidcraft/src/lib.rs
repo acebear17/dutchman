@@ -214,7 +214,7 @@ impl SolidCraftWriter {
     }
 
     /// How a written history is checked, and which SolidCraft CLI finds the input edges of
-    /// its blends (see [`SolidCraftWriter::replay`]).
+    /// its blends and body-edge sweep paths (see [`SolidCraftWriter::replay`]).
     pub fn verification(mut self, verification: Verification) -> Self {
         self.replay = verification.clone();
         self.verification = verification;
@@ -222,9 +222,9 @@ impl SolidCraftWriter {
         self
     }
 
-    /// Which SolidCraft CLI replays the history before each fillet or chamfer to find the
-    /// edges it blends, after [`SolidCraftWriter::verification`] has set it too. Without one
-    /// ([`Verification::Off`], or none found) blends are refused, saying why.
+    /// Which SolidCraft CLI replays the history to prove blend and body-edge sweep-path input edges,
+    /// after [`SolidCraftWriter::verification`] has set it too. Without one
+    /// ([`Verification::Off`], or none found) those selections are refused, saying why.
     pub fn replay(mut self, replay: Verification) -> Self {
         self.replay = replay;
         self
@@ -275,6 +275,10 @@ impl SolidCraftWriter {
 
     fn keep_unverified_hidden(&self) -> bool {
         self.hide_unverified || self.memory_skip.get().is_some()
+    }
+
+    fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
+        self.keep_unverified_hidden() || history.topological_replay_required
     }
 
     /// How long each SolidCraft evaluation may run before the check gives up.
@@ -500,13 +504,13 @@ impl SolidCraftWriter {
     fn plan_blends(&self, mapping: &mut history::Mapping) {
         if self.evaluator.is_none() || matches!(self.replay, Verification::Off) {
             if let Err(why) = verify::find_cli(&self.replay) {
-                history::prove_blends(mapping, |_, _, _| Err(why.clone()));
+                history::prove_blends(mapping, |_, _, _, _| Err(why.clone()));
             }
         }
     }
 
     /// Finds the input edges of the history's blends on SolidCraft's replay of the history
-    /// written so far (two runs of the CLI for the whole design, within the timeout), or
+    /// written so far (batched edge and optional exact curve queries within the timeout), or
     /// refuses them, saying why.
     fn prove_blends(
         &self,
@@ -517,7 +521,7 @@ impl SolidCraftWriter {
     ) -> Result<(), Error> {
         let mut remaining = self.timeout;
         let mut failure = None;
-        history::prove_blends(mapping, |history, after, faces| {
+        history::prove_blends(mapping, |history, after, faces, circles| {
             if let Some(why) = self.memory_refusal() {
                 return Err(why);
             }
@@ -546,7 +550,8 @@ impl SolidCraftWriter {
                 )
             });
             let started = std::time::Instant::now();
-            let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
+            let replayed =
+                verify::replay_edges(cli.as_ref(), remaining, &design, after, faces, circles);
             remaining = remaining.saturating_sub(started.elapsed());
             replayed
         });
@@ -830,7 +835,7 @@ impl SolidCraftWriter {
             &model.name,
             dutchman_core::progress_words::history_limit(
                 history.pattern_replay_required,
-                self.keep_unverified_hidden(),
+                self.keep_unverified_history_hidden(history),
             ),
         );
         Ok(match result {
@@ -1389,7 +1394,9 @@ impl Writer for SolidCraftWriter {
                             );
                             (written, written_as(Check::Verified))
                         }
-                        verify::Outcome::Unverified(why) if self.keep_unverified_hidden() => {
+                        verify::Outcome::Unverified(why)
+                            if self.keep_unverified_history_hidden(history) =>
+                        {
                             report.append(history_report);
                             let message = format!(
                                 "{summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
@@ -1471,7 +1478,7 @@ pub struct MappedHistory {
 pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
     let mut mapping = history::map(model, report, SolidCraftVersion::default());
     // Blends are proven only on SolidCraft's replay of the history before them.
-    history::prove_blends(&mut mapping, |_, _, _| {
+    history::prove_blends(&mut mapping, |_, _, _, _| {
         Err("only a SolidCraft design is replayed to find them".to_owned())
     });
     MappedHistory {

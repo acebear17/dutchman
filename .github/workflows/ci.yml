@@ -449,7 +449,7 @@ jobs:
       - name: Replay histories in SolidCraft
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
-          cargo test --locked -p dutchman-solidcraft --test history --test assembly
+          cargo test --locked -p dutchman-solidcraft --test history --test assembly --test topological_edges
 
   # Reuse the existing jobs so ci-result waits for them, without a second merge_group run.
   placements:

@@ -19,7 +19,7 @@ pub trait SolidCraftEvaluator: std::fmt::Debug + Send + Sync {
 
     /// Open the archive and execute ordered engine commands, returning one raw result
     /// per command, including failures. The writer requests timeline.roll_to,
-    /// document.inspect, model.edges and model.faces. State persists within this call
+    /// document.inspect, model.edges, model.faces and inspect.measure. State persists within this call
     /// only; each call starts from the supplied archive.
     fn run(
         &self,
@@ -141,7 +141,8 @@ mod tests {
     fn host_command_results_use_the_shared_edge_and_face_parsers() {
         let host: &dyn SolidCraftEvaluator = &Host;
         let steps =
-            crate::verify::replay_edges(host, DEFAULT_TIMEOUT, b"design", &[2, 4], true).unwrap();
+            crate::verify::replay_edges(host, DEFAULT_TIMEOUT, b"design", &[2, 4], true, false)
+                .unwrap();
         assert_eq!(steps.len(), 2);
         for step in steps {
             let step = step.unwrap();

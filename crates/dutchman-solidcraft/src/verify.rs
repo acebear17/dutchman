@@ -397,11 +397,11 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 43];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 44];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
-pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
+pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
@@ -414,11 +414,14 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Sweep paths and closed blend circles selected from proven input edges.
+    TopologicalEdges,
 }
 
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
@@ -433,6 +436,11 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if VersionGate::TopologicalEdges.supported(SolidCraftVersion::default())
+        && !VersionGate::TopologicalEdges.supported(target)
+    {
+        return true;
+    }
     [
         VersionGate::EntryRecessTip,
         VersionGate::SketchProfileCoil,
@@ -488,6 +496,9 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
+
+    /// The release used for newly mapped body-edge sweep paths.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
@@ -1472,6 +1483,19 @@ pub(crate) struct ReplayedEdge {
     pub length: f64,
     /// SolidCraft's name for it: the names of the faces it joins, separated by `|`.
     pub name: String,
+    /// The index reported by this replay, used only to request exact curve measurements.
+    pub index: Option<usize>,
+    pub curve: Option<ReplayedCurve>,
+}
+
+/// Exact circular or arc carrier measurements from `inspect.measure`, independent of the seam.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReplayedCurve {
+    pub center: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
+    pub length: f64,
+    pub closed: bool,
 }
 
 /// One face of a body SolidCraft replayed, as `model.faces` gives it. `normal` is the
@@ -1501,8 +1525,8 @@ const REPLAY_EDGES: usize = 200_000;
 
 /// Replays `design` in SolidCraft and reports the bodies and their edges with the timeline
 /// rolled to just after each feature id in `after` (in that order): the bodies each later
-/// feature starts from. Two runs of the CLI in all, however many steps, within `timeout`
-/// together: one finds the bodies at every step, the next their edges. Each step is `Err`
+/// feature starts from. Batched CLI runs find bodies, then edges, then any requested
+/// exact curved-edge measurements, within `timeout` together. Each step is `Err`
 /// when a feature before it fails there; the whole is `Err` when SolidCraft gives no answer.
 pub(crate) fn replay_edges(
     cli: &(impl SolidCraftEvaluator + ?Sized),
@@ -1510,6 +1534,7 @@ pub(crate) fn replay_edges(
     design: &[u8],
     after: &[u64],
     faces: bool,
+    curves: bool,
 ) -> Result<Vec<Result<Replay, String>>, String> {
     let deadline = Instant::now() + timeout;
     let roll = |id: u64| crate::replay::roll_commands(id)[0].clone();
@@ -1600,7 +1625,116 @@ pub(crate) fn replay_edges(
             }
         }
     }
+    if curves {
+        measure_curves(cli, deadline, design, after, &mut steps)?;
+    }
     Ok(steps)
+}
+
+/// Request exact carriers only for curved edges. A per-step cap bounds command and
+/// response expansion; a model beyond it keeps its original shape with a named refusal.
+fn measure_curves(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    deadline: Instant,
+    design: &[u8],
+    after: &[u64],
+    steps: &mut [Result<Replay, String>],
+) -> Result<(), String> {
+    let mut commands = Vec::new();
+    let mut queries = Vec::new();
+    for (step, (id, replay)) in after.iter().zip(steps.iter()).enumerate() {
+        commands.push(crate::replay::roll_commands(*id)[0].clone());
+        let Ok(replay) = replay else { continue };
+        let mut count = 0usize;
+        for (body, (name, edges)) in replay.bodies.iter().enumerate() {
+            for (edge, candidate) in edges.iter().enumerate() {
+                let chord = candidate
+                    .start
+                    .iter()
+                    .zip(candidate.end)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum::<f64>()
+                    .sqrt();
+                if candidate.length <= 0.0
+                    || (chord > 1e-6
+                        && (candidate.length - chord).abs()
+                            <= 1e-6 * candidate.length.max(chord).max(1.0))
+                {
+                    continue;
+                }
+                count = count.saturating_add(1);
+                if count > 256 || commands.len() > REPLAY_EDGES {
+                    return Err("exact curved-edge measurements exceed the replay limit".to_owned());
+                }
+                let index = candidate
+                    .index
+                    .ok_or("SolidCraft did not report an index for a curved edge")?;
+                queries.push((commands.len(), step, body, edge));
+                commands.push(serde_json::json!({"command":"inspect.measure","params":{
+                    "items":[{"type":"edge","body":name,"index":index}]}}));
+            }
+        }
+    }
+    if queries.is_empty() {
+        return Ok(());
+    }
+    let results = cli.run(
+        design,
+        &commands,
+        deadline.saturating_duration_since(Instant::now()),
+        "curves",
+    )?;
+    for (result, step, body, edge) in queries {
+        let row = results
+            .get(result)
+            .ok_or("SolidCraft's exact edge measurement is missing")?;
+        let candidate = steps
+            .get_mut(step)
+            .and_then(|step| step.as_mut().ok())
+            .and_then(|step| step.bodies.get_mut(body))
+            .and_then(|(_, edges)| edges.get_mut(edge))
+            .ok_or("SolidCraft's measured edge is missing")?;
+        candidate.curve = measured_curve(row);
+    }
+    Ok(())
+}
+
+fn measured_curve(result: &Value) -> Option<ReplayedCurve> {
+    let [row] = result.get("items")?.as_array()?.as_slice() else {
+        return None;
+    };
+    if row.get("type")?.as_str()? != "edge" {
+        return None;
+    }
+    let closed = match row.get("round")?.as_str()? {
+        "circle" => true,
+        "arc" => false,
+        _ => return None,
+    };
+    let point = |key: &str| -> Option<[f64; 3]> {
+        let values = row.get(key)?.as_array()?;
+        if values.len() != 3 {
+            return None;
+        }
+        let mut point = [0.0; 3];
+        for (out, value) in point.iter_mut().zip(values) {
+            *out = value.as_f64().filter(|v| v.is_finite())?;
+        }
+        Some(point)
+    };
+    Some(ReplayedCurve {
+        center: point("center")?,
+        axis: point("axis")?,
+        radius: row
+            .get("radius")?
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)?,
+        closed,
+        length: row
+            .get("length_mm")?
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)?,
+    })
 }
 
 /// The bodies a `document.inspect` result holds, or the first feature still active that
@@ -1681,6 +1815,11 @@ fn edge_fields(row: &Value) -> Option<ReplayedEdge> {
         Some(out)
     };
     Some(ReplayedEdge {
+        index: row
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|v| usize::try_from(v).ok()),
+        curve: None,
         start: point("start")?,
         end: point("end")?,
         mid: point("mid")?,
@@ -3191,7 +3330,7 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        assert!(!target_loses_history(target));
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3207,7 +3346,7 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3223,7 +3362,7 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3239,7 +3378,7 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3252,7 +3391,9 @@ mod version_tests {
             ("0.42.0", "current"),
             ("0.43.0", "current"),
             ("0.43.9", "current"),
-            ("0.44.0", "newer"),
+            ("0.44.0", "current"),
+            ("0.44.1", "current"),
+            ("0.45.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(
@@ -3264,7 +3405,7 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(!target_loses_history(after));
+        assert!(target_loses_history(after));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());

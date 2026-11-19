@@ -223,6 +223,21 @@ Call `inspect` with `input`. It writes nothing. Read:
 - `history.features`: each feature's `status`; a `blocked` one has a `reason`.
 - `losses`: everything that will not carry across intact.
 
+For SolidCraft 0.44 and newer, a sweep can follow a connected chain of proven historical
+input edges on one body. Closed circular fillet and chamfer edges match by centre, radius,
+plane and circumference, independently of their seams, using SolidCraft's exact circular
+carrier measurements. Body-edge proofs need SolidCraft replay and cannot be proven with
+verification off. A stored sketch wire can instead resolve to its own earlier sketch after
+matching every entire curve by its source geometry.
+Topological guide rails, unproven edges and older targets retain the original geometry
+with a named blocker. Explain that reason without guessing an edge of the final body.
+
+A history using these edge paths or closed circular blends stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
+
 Sweep histories support twist, end scale, supported orientations, and one guide rail, with
 single-curve whole sketches accepted as paths or rails. A blocked sweep's reason names
 unsupported corner transitions, section interpolation, tangent-path extension or
@@ -260,9 +275,9 @@ are not present in the pinned CADIR version.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
   0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
-  (currently 0.43), even with CLI `--no-verify` or MCP `verify: false`.
+  (currently 0.44), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
-  0.18.2–0.43); older targets get simplified features with a named reason.
+  0.40.0–0.44.1); older targets get simplified features with a named reason.
 - `preset: "fast"` when the user wants only the shape. `history: false` (also
   `import_only: true`) removes history while keeping the preset's reference sketches and
   joints. Leave `verify` at its default.

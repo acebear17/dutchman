@@ -94,10 +94,27 @@ Fillets and chamfers need resolved named edges of their base feature's stored sh
 before the blend.
 Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts
 straight edges and open circular arcs only when their midpoint identifies exactly one edge
-on SolidCraft's replay at that step, with matching ends and length. An ambiguous pick, a
-missing base shape, a closed edge, or another curve stops the editable prefix, with the
-reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
+on SolidCraft's replay at that step, with matching ends and length. For SolidCraft 0.44 and
+newer, closed circular rims also map when their centre, radius, circumference and plane
+match uniquely through SolidCraft's exact circular carrier measurements. The source
+and rebuilt seams may differ. An ambiguous pick, missing base shape, unproven
+circular carrier, or another curve stops the editable prefix, with the reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
 prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
+
+Sweep paths selected as connected open chains of topological edges map for SolidCraft 0.44 and newer
+when every edge belongs to one earlier stored dependency result. A wire owned by an
+earlier sketch resolves to that sketch only when every selected edge matches an entire
+mapped curve, including an arc's midpoint, tangent and length. Other paths must match
+the input geometry on replay, in source order on one rebuilt body. Topological
+guide rails, closed paths without a proven start and traversal direction, paths without
+an earlier stored result, and unsupported curves remain named
+blockers. Older targets keep the original geometry with a version reason.
+
+A history using these edge paths or closed circular blends stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
@@ -133,8 +150,8 @@ axis, pitch/height/turn law, handedness, reversed direction, and join/cut operat
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.43). The rolling 14-day window is currently
-0.18.2–0.43. Older targets block the helix with
+known at build time (currently 0.44). The rolling 14-day window is currently
+0.40.0–0.44.1. Older targets block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.
