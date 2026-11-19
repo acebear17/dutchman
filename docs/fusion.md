@@ -42,6 +42,30 @@ Historical body centres use bounded samples along curved edges as well as vertic
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
 only bodies certified as exact have exact bounding-box centres.
 
+For SolidCraft 0.44 and newer, an extrude join, cut or intersection can select the
+bodies it modifies. Dutchman tries the reader's modified-body outputs as targets
+when earlier features have named every one, and keeps that scope only at the final
+body-building feature when replay matches the final source geometry. Intermediate
+body centres do not establish all participants, even when exact; intermediate
+features keep the previous mapping. Unknown or conflicting evidence also retains
+the previous mapping. Native participant expressions are not interpreted. A join
+with several output bodies still uses the previous mapping because its surviving
+body identities are not established by those outputs.
+
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
+A mirror of one body names its single new output for later combines.
+A generated selection can resolve through its earlier producer when that
+producer has one declared result body and one named output. Ambiguous generated
+results, historical selections and native body references remain blockers.
+Targets before 0.44 keep the previous output.
+
 ## Public Fusion shares
 
 The desktop app accepts pasted `a360.co` and `*.autodesk360.com` links and dropped

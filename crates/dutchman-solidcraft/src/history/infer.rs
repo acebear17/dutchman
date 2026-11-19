@@ -108,6 +108,7 @@ pub(super) fn map(
             .pointer("/profile/kind")
             .and_then(Value::as_str)
             == Some("spatial_sketch_profiles");
+    let scope = body_scope(feature, ctx).filter(|_| final_state);
     let first = if spatial {
         vec![feature.clone()]
     } else {
@@ -118,14 +119,42 @@ pub(super) fn map(
     } else {
         UNCONFIRMED
     };
-    if first.is_empty() {
+    let inferred_profile = !spatial && !first.is_empty();
+    if first.is_empty() && scope.is_none() {
         return None;
     }
+    let candidates = if first.is_empty() {
+        vec![feature.clone()]
+    } else {
+        first
+    };
     let stored = stored_body_centers(feature);
     let mut mapping_failure = None;
     let mut tried = 0usize;
-    for candidate in &first {
-        let Some(trial) = Trial::map(candidate, ctx, history, params, &mut mapping_failure) else {
+    // Only final-source comparison can establish every participant in a scope.
+    let trials: Vec<_> = scope
+        .iter()
+        .flat_map(|targets| {
+            candidates
+                .iter()
+                .map(move |candidate| (candidate, Some(targets)))
+        })
+        .chain(
+            candidates
+                .iter()
+                .filter(|_| inferred_profile || spatial)
+                .map(|candidate| (candidate, None)),
+        )
+        .collect();
+    for (candidate, targets) in trials {
+        let Some(trial) = Trial::map(
+            candidate,
+            targets,
+            ctx,
+            history,
+            params,
+            &mut mapping_failure,
+        ) else {
             continue;
         };
         tried += 1;
@@ -134,6 +163,14 @@ pub(super) fn map(
             continue;
         };
         if spatial {
+            if targets.is_some() {
+                report.push_coded(
+                    Severity::Info,
+                    describe(feature),
+                    "history/body-scope-confirmed",
+                    "The source body check confirmed the extrude's selected target bodies",
+                );
+            }
             *ctx = trial.ctx;
             ctx.profile_unverified = false;
             history.features = trial.preceding;
@@ -141,14 +178,35 @@ pub(super) fn map(
             report.push(Severity::Info, describe(feature), "its planar 3D sketch profile is written as a separate planar sketch; the source body check confirmed it");
             return Some(Ok(Mapped::Feature(trial.mapped)));
         }
-        let mapped = trial.admit(ctx, history, report, measure, tried, 1);
-        report.push_coded(
+        let mapped = if inferred_profile {
+            trial.admit(ctx, history, report, measure, tried, 1)
+        } else {
+            *ctx = trial.ctx;
+            history.features = trial.preceding;
+            report.append(trial.notes);
+            Mapped::Feature(trial.mapped)
+        };
+        if targets.is_some() {
+            report.push_coded(
+                Severity::Info,
+                describe(feature),
+                "history/body-scope-confirmed",
+                "The source body check confirmed the extrude's selected target bodies",
+            );
+        }
+        if inferred_profile {
+            report.push_coded(
             Severity::Degraded,
             describe(feature),
             "history/profile-region-inferred",
             "Dutchman inferred the profile region from the sketch selection; the source body check confirmed it",
         );
+        }
         return Some(Ok(mapped));
+    }
+    // Scope trials cannot replace ordinary mapping without confirmation.
+    if !inferred_profile && !spatial {
+        return None;
     }
     if !spatial {
         if let Some(found) = measured(feature, ctx, report, history, params, final_state, check) {
@@ -174,6 +232,7 @@ struct Trial<'a> {
 impl<'a> Trial<'a> {
     fn map(
         candidate: &Value,
+        targets: Option<&Vec<String>>,
         ctx: &Context<'a>,
         history: &History,
         params: &[Value],
@@ -190,6 +249,9 @@ impl<'a> Trial<'a> {
             }
             Ok(_) => return None,
         };
+        if let (Some(targets), Some(fields)) = (targets, mapped.as_object_mut()) {
+            fields.insert("targets".to_owned(), json!(targets));
+        }
         let name = trial.unique_name(&mapped, preceding.iter());
         if let Some(fields) = mapped.as_object_mut() {
             fields.insert("name".to_owned(), json!(name));
@@ -288,7 +350,8 @@ fn measured(
                 MEASURE_BUDGET.as_secs()
             )));
         }
-        let Some(trial) = Trial::map(candidate, ctx, history, params, &mut mapping_failure) else {
+        let Some(trial) = Trial::map(candidate, None, ctx, history, params, &mut mapping_failure)
+        else {
             continue;
         };
         let remaining = MEASURE_BUDGET.saturating_sub(started.elapsed());
@@ -568,6 +631,36 @@ fn unresolved(feature: &Value, ctx: &Context) -> Option<Vec<(String, Value)>> {
         &mut refs,
     )?;
     (!refs.is_empty()).then_some(refs)
+}
+
+/// CADIR extrudes carry modified body identities in their outputs, but no participant
+/// operand. Try those identities as targets only when every one is already named. A join's
+/// outputs need not name every consumed input, so even resolved identities require replay
+/// against the source state before this candidate can be used. Never interpret native ids.
+fn body_scope(feature: &Value, ctx: &Context) -> Option<Vec<String>> {
+    if !crate::VersionGate::ScopedBodies.supported(ctx.target_version)
+        || super::operation_kind(feature) != Some("extrude")
+        || !matches!(
+            super::operation(feature).get("op").and_then(Value::as_str),
+            Some("join" | "cut" | "intersect")
+        )
+        || ctx.named_bodies.len() < 2
+    {
+        return None;
+    }
+    let outputs = feature.get("outputs")?.as_array()?;
+    if outputs.is_empty() {
+        return None;
+    }
+    // A multi-target join may consume names. CADIR outputs do not establish which name
+    // survives each union, so leave those to the ordinary checked mapping.
+    if outputs.len() > 1
+        && super::operation(feature).get("op").and_then(Value::as_str) == Some("join")
+    {
+        return None;
+    }
+    let selection = json!({"kind": "bodies", "value": outputs});
+    super::modify::body_names(&selection, ctx).ok()
 }
 
 /// Try the selected neutral curve identities first, then the whole carrier sketch. Native
