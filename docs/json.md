@@ -25,6 +25,10 @@ output folder. Watch mode uses the same names and schema. These are the same per
 reports as CLI `convert --json`, including local paths, names and detailed losses; keep
 them local. They are not anonymous reports.
 
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
 MCP `read_report` reads a saved report without opening or decoding its source or design.
 It preserves every saved field and adds optional `loss_groups` to `dutchman.convert/1`:
 
@@ -331,6 +335,24 @@ unavailable check blocks the feature with `its inferred profile region could not
 the source body check`. Trimmed regions select interior points from their directed boundary
 intervals; an unclosed or ambiguous boundary blocks with `its trimmed profile boundary does not
 close unambiguously or has no unambiguous interior point`. These add no report fields.
+
+`history/body-scope-confirmed` has level `Info`, names the extrude in `subject`,
+and says that the source body check confirmed its selected target bodies. It is
+emitted only for SolidCraft targets from 0.44, at the final body-building feature
+when replay matches the final source geometry. Intermediate body centres do not
+establish body scope and never produce this note. Report fields and schema
+versions are unchanged.
+
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
+Successful consumed-tool replay confirmation adds an Info note: "The source
+body check confirmed the consumed tool bodies". Report fields are unchanged.
 
 When neither candidate is confirmed, every region of the carrier sketch the selection can name is
 measured in SolidCraft ([fusion.md](fusion.md)). A unique match is kept with the `Degraded` loss
@@ -1415,7 +1437,7 @@ array of `{arena, rows, serialized_bytes, description}`, plus `bundle_sendable` 
 otherwise `summary`. `request_size` includes multipart framing and metadata (default
 public-test permission false), `request_limit` is 25 MiB, and `bundle_limit` reserves
 64 KiB below it. `bundle_sendable` requires both limits to fit. Oversize bundles stay
-local for the private-send card; summaries remain available.
+local for the private Discord steps; summaries remain available.
 
 Verification returns `reproduces`, `signature` (hash only), `manifest`,
 `compressed_bytes`, and `uncompressed_bytes`. Bundle contents and local paths are never
@@ -1447,6 +1469,9 @@ Appearance bindings scoped to one placed instance or an evaluation state use
 source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
+
+The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
+and **GitHub issue** (a public issue under the user’s GitHub name).
 
 Meeting 3D curve endpoints do not create relations without a decoded source relation.
 
