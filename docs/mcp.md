@@ -355,9 +355,11 @@ FreeCAD external Body and Part links are resolved beside the assembly first, the
 once. Grounding and supported Assembly-workbench joints map like other assembly joints.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
-explicitly targeting SolidCraft 0.44.1 or newer. Their source geometry must prove one complete
-circle in the rebuilt body, including when SolidCraft splits the rim into an edge path or
-moves its seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in

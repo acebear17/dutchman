@@ -211,13 +211,16 @@ length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
-explicit targets of SolidCraft 0.44.1 or newer: their seam, opposite midpoint, and tangent
-establish the circle, as for historical face boundaries. Each rebuilt piece must lie on its
+explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
+stored circle with exact centre, axis, radius and full-turn parameter range; historical
+samples cannot establish circularity. Stored topology must identify one earlier named owning
+body, and only that body supplies replay candidates. Missing carrier or ownership evidence,
+ellipses, and transformed source carriers are refused. Each rebuilt piece must lie on its
 plane and radius, with mesh length between the sample chords and the circular arc. An extra
 `inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
 length; it cannot certify a circle from its two seam samples alone. Sorted
 angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
-An overlapping candidate without carrier metadata also blocks the proof.
+An overlapping candidate without carrier metadata on the selected body also blocks the proof.
 Picks use the proven pieces' midpoints, independently of the source seam. Other closed
 curves retain a named refusal; older targets keep the original geometry. A refusal says which part of the
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
