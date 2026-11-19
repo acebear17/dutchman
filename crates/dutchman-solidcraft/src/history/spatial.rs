@@ -209,7 +209,11 @@ pub(crate) fn map(
     });
     if let Some(constraints) = constraints {
         if let Some(sketch) = out.get_mut("sketch").and_then(Value::as_object_mut) {
-            if let Some(counters) = sketch.get_mut("counters").and_then(Value::as_object_mut) {
+            if let Some(counters) = sketch
+                .get_mut("counters")
+                .and_then(Value::as_object_mut)
+                .filter(|_| !constraints.is_empty())
+            {
                 counters.insert("k".to_owned(), json!(constraints.len()));
             }
             sketch.insert("wire_constraints".to_owned(), json!(constraints));

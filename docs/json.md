@@ -1328,6 +1328,8 @@ source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
+Meeting 3D curve endpoints do not create relations without a decoded source relation.
+
 Decoded 3D sketches retain supported neutral joins, dimensions, axis directions
 and endpoint tangencies on SolidCraft 0.44 and newer; dimensions keep their
 parameters. Other relations are reported as not carried. A selected planar line

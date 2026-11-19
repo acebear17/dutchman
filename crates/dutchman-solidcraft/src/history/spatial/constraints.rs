@@ -1,6 +1,6 @@
 //! Neutral spatial relations supported by SolidCraft 0.44's wire solver.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
@@ -217,7 +217,7 @@ impl Mapper<'_, '_> {
     }
 }
 
-/// Carry neutral constraints and exact shared ends; report relations with no target form.
+/// Carry decoded neutral constraints; report relations with no target form.
 pub(super) fn map(
     sketch: &str,
     label: &str,
@@ -266,78 +266,6 @@ fn map_limited(
                 .unwrap_or("unknown")
                 .replace('_', " ");
             *dropped.entry(kind).or_default() += 1;
-        }
-    }
-    // Meeting endpoints are source joins. Keep a star per location instead of all pairs.
-    // Do not join spline controls or the middle fit point of an arc.
-    let pair = |a: &Value, b: &Value| {
-        let (a, b) = (a.to_string(), b.to_string());
-        if a < b {
-            (a, b)
-        } else {
-            (b, a)
-        }
-    };
-    let mut joins: BTreeSet<_> = out
-        .iter()
-        .filter(|c| c.get("type").and_then(Value::as_str) == Some("coincident"))
-        .filter_map(|c| Some(pair(c.get("a")?, c.get("b")?)))
-        .collect();
-    let mut ends: BTreeMap<[i64; 3], Vec<(V3, Value)>> = BTreeMap::new();
-    for wire in &builder.wires {
-        let Some(fit) = wire.get("fit").and_then(Value::as_array) else {
-            continue;
-        };
-        for index in [0, fit.len().saturating_sub(1)] {
-            if fit.len() == 1 && index != 0 {
-                continue;
-            }
-            let Some(at) = fit.get(index).and_then(position) else {
-                continue;
-            };
-            // Wires beyond SolidCraft's coordinate range cannot participate in its solver.
-            // Staying in that range also keeps the grid coordinates inside i64.
-            if at.iter().any(|v| v.abs() > 1e9) {
-                continue;
-            }
-            let key = at.map(|v| (v / JOIN).floor() as i64);
-            let [x, y, z] = key;
-            let p = json!({"wire":wire.get("id"),"index":index});
-            let mut found = None;
-            'neighbors: for dx in -1_i64..=1 {
-                for dy in -1_i64..=1 {
-                    for dz in -1_i64..=1 {
-                        let cell = [
-                            x.saturating_add(dx),
-                            y.saturating_add(dy),
-                            z.saturating_add(dz),
-                        ];
-                        if let Some(first) = ends
-                            .get(&cell)
-                            .and_then(|points| {
-                                points.iter().find(|(q, _)| separation(at, *q) <= JOIN)
-                            })
-                            .map(|(_, p)| p)
-                        {
-                            found = Some(first);
-                            break 'neighbors;
-                        }
-                    }
-                }
-            }
-            if let Some(first) = found {
-                let pair = pair(first, &p);
-                if first != &p && !joins.contains(&pair) {
-                    if out.len() < limit {
-                        joins.insert(pair);
-                        out.push(json!({"type":"coincident","a":first,"b":p}));
-                    } else {
-                        capped = true;
-                    }
-                }
-            } else {
-                ends.entry(key).or_default().push((at, p));
-            }
         }
     }
     if capped {
@@ -449,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_dimensions_and_shared_ends_respect_one_constraint_budget() {
+    fn repeated_dimensions_respect_the_constraint_budget() {
         let wire = json!({"spatial_sketch_constraints":[
             {"sketch":"s","definition":{"kind":"repeated_line_length","entities":["l","m","n"],"parameter":"parameter"}},
             {"sketch":"s","definition":{"kind":"point_distance","first":"p","second":"q","parameter":"parameter"}}
@@ -554,36 +482,31 @@ mod tests {
     }
 
     #[test]
-    fn joins_form_a_star_and_never_join_interior_spline_fit_points() {
-        let wire = json!({});
-        let ctx = Context::testing(&wire);
-        let mut b = builder();
-        b.wire(
-            "s",
-            &[[0.0, 0.0, 0.0], [3.0, 4.0, 0.0], [6.0, 7.0, 8.0]],
-            &[],
-            None,
+    fn spatial_decoded_point_coincidence_is_carried() {
+        let source = json!({"spatial_sketch_constraints":[
+            {"sketch":"s","definition":{"kind":"coincident","first":"p","second":"q"}}
+        ]});
+        let ctx = Context::testing(&source);
+        let mut b = Builder::default();
+        b.point("p", [0.0, 0.0, 0.0]);
+        b.point("q", [0.0, 0.0, 0.0]);
+        let out = map("s", "sketch", &b, &ctx, &mut Report::default());
+        assert_eq!(
+            out,
+            vec![json!({"id":"k1","type":"coincident",
+            "a":{"wire":"q1","index":0},"b":{"wire":"q2","index":0}})]
         );
-        let constraints = map("sketch", "sketch", &b, &ctx, &mut Report::default());
-        assert_eq!(constraints.len(), 3);
-        assert!(!constraints
-            .iter()
-            .any(|c| c["b"] == json!({"wire":"w2","index":1})));
-        assert!(constraints.iter().all(|c| c["a"] != c["b"]));
     }
 
     #[test]
-    fn roundoff_at_a_shared_end_stays_joined_across_grid_cells() {
-        let wire = json!({});
-        let ctx = Context::testing(&wire);
-        let mut b = Builder::default();
-        b.wire("a", &[[0.0, 0.0, 0.0], [-1e-12, 2.0, 3.0]], &[], None);
-        b.wire("b", &[[1e-12, 2.0, 3.0], [4.0, 5.0, 6.0]], &[], None);
-        b.wire("c", &[[1e-7, 2.0, 3.0], [7.0, 8.0, 9.0]], &[], None);
-        let constraints = map("s", "sketch", &b, &ctx, &mut Report::default());
-        assert_eq!(constraints.len(), 1);
-        assert_eq!(constraints[0]["a"], json!({"wire":"w1","index":1}));
-        assert_eq!(constraints[0]["b"], json!({"wire":"w2","index":0}));
+    fn spatial_meeting_endpoints_do_not_invent_relations() {
+        let source = json!({});
+        let ctx = Context::testing(&source);
+        let mut b = builder();
+        b.wire("next", &[[3.0, 4.0, 0.0], [6.0, 7.0, 8.0]], &[], None);
+        let mut report = Report::default();
+        assert!(map("s", "sketch", &b, &ctx, &mut report).is_empty());
+        assert!(report.losses().is_empty());
     }
 
     #[test]

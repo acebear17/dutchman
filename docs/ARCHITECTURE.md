@@ -558,6 +558,7 @@ do not read it. The running-step GUI screenshot case uses injected snapshots at 
 
 For target 0.44 and newer, the spatial sketch mapper writes `wire_constraints`
 for the neutral relations the pinned CADIR exposes and SolidCraft can solve.
+Endpoint proximity alone never creates a relation.
 Assembly relocation renames their dimension parameters alongside planar ones;
 replay recovery clears both constraint lists before retrying solved geometry.
 Extrudes of explicitly resolved spatial loops use a planar copy in the

@@ -921,6 +921,8 @@ existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
+Meeting 3D curve endpoints do not create relations without a decoded source relation.
+
 Decoded 3D sketches retain supported neutral joins, dimensions, axis directions
 and endpoint tangencies on SolidCraft 0.44 and newer; dimensions keep their
 parameters. Other relations are reported as not carried. A selected planar line

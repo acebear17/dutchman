@@ -356,6 +356,7 @@ fn a_spatial_sketch_becomes_a_3d_sketch_and_a_sweep_follows_its_curves() {
         &json!([50.0, 10.0, 60.0])
     );
     assert_eq!(rail["sketch"]["counters"], json!({"q": 0, "w": 3}));
+    assert_eq!(rail["sketch"]["wire_constraints"], json!([]));
     let sweep = features.iter().find(|f| f["type"] == "sweep").unwrap();
     assert_eq!(sweep["path_sketch"], rail["id"]);
     assert_eq!(sweep["path"], json!(["w1", "w2", "w3"]));
@@ -13891,9 +13892,8 @@ fn spatial_044_constraints_keep_parameters_axis_and_endpoint_tangency() {
     assert!(constraints
         .iter()
         .any(|c| c["type"] == "tangent" && c["line_end"] == 1 && c["arc_end"] == 0));
-    assert!(constraints
-        .iter()
-        .any(|c| c["type"] == "coincident" && c["a"]["wire"] == "w1" && c["b"]["wire"] == "q1"));
+    assert_eq!(constraints.len(), 4);
+    assert!(!constraints.iter().any(|c| c["type"] == "coincident"));
     assert!(
         !report
             .losses()
