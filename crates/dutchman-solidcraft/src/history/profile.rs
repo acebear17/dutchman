@@ -1046,6 +1046,19 @@ fn region_points_at(
             _ => return None,
         }
     }
+    // These sampled rings contain only lines, circles and arcs. A line moves by at
+    // most the largest defining-point displacement; a circle by its centre's.
+    // An arc's centre moves by d and its radius by at most 2d (both its centre
+    // and endpoint can move). Thus 3d bounds the emitted boundary displacement,
+    // including endpoint-reference merges farther apart than the position tolerance.
+    // Add this to sampling/closure error, rather than taking their maximum.
+    if refined {
+        let displacement = mapped.point_displacement * 3.0;
+        if !displacement.is_finite() || displacement < 0.0 {
+            return None;
+        }
+        error += displacement;
+    }
     let frame = sketch_to_mapped(ctx.row("sketches", sketch)?, mapped)?;
     let mut points = Vec::with_capacity(rings.len());
     for (ring, holes) in rings.iter().zip(&holes) {
@@ -1273,6 +1286,7 @@ mod tests {
             origin: [0.0; 3],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: Vec::new(),
             shapes,
         }

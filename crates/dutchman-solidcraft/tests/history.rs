@@ -4464,6 +4464,92 @@ fn trimmed_narrow_annulus_and_its_disc_select_exactly_their_own_interiors() {
     assert!(radius(&points[1]) < 0.9995, "{points:?}");
 }
 
+/// Synthetic construction point precedes both circles, so their written centres merge
+/// to it even though the source annulus stays centred at (20, 0).
+fn merged_centre_annulus_history(width: f64) -> Model {
+    let mut model = narrow_annulus_history(width);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
+    entities.retain(|e| {
+        e["id"] != "f3d:model:sketch-entity#5" && e["id"] != "f3d:model:sketch-entity#6"
+    });
+    let mut point = entity(
+        7,
+        json!({"kind": "point",
+        "position": {"u": 20.0000009, "v": 0.0}}),
+    );
+    point["construction"] = json!(true);
+    entities.extend([
+        point,
+        circle(5, [20.0, 0.0], 0.01),
+        circle(6, [20.0, 0.0], 0.01 - width),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn trimmed_annulus_narrower_than_merged_boundary_displacement_is_refused() {
+    let (document, report) = convert(
+        &merged_centre_annulus_history(0.0000005),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        format!("{report:?}").contains("no unambiguous interior point"),
+        "{report:?}"
+    );
+    assert!(!document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "extrude"));
+    assert_merged_circle_centres(&document);
+}
+
+fn assert_merged_circle_centres(document: &Value) {
+    let sketch = &document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "sketch")
+        .unwrap()["sketch"];
+    let circles: Vec<_> = sketch["curves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["type"] == "circle")
+        .collect();
+    assert_eq!(circles.len(), 2);
+    for circle in circles {
+        let index = usize::try_from(circle["c"].as_u64().unwrap()).unwrap();
+        assert_eq!(sketch["points"][index]["pos"], json!([20.0000009, 0.0]));
+    }
+}
+
+#[test]
+fn wider_trimmed_annulus_with_merged_centres_is_inside_source_and_written_regions() {
+    let (document, report) = convert(
+        &merged_centre_annulus_history(0.00001),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{report:?}"
+    );
+    assert_merged_circle_centres(&document);
+    let points = document["features"][1]["profiles"]["points"]
+        .as_array()
+        .unwrap();
+    for center in [20.0, 20.0000009] {
+        let radius = |p: &Value| (p[0].as_f64().unwrap() - center).hypot(p[1].as_f64().unwrap());
+        assert!(
+            radius(&points[0]) > 0.00999 && radius(&points[0]) < 0.01,
+            "{points:?}"
+        );
+        assert!(radius(&points[1]) < 0.00999, "{points:?}");
+    }
+}
+
 fn shared_circle_regions() -> Model {
     let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
     let pi = std::f64::consts::PI;

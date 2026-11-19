@@ -215,7 +215,9 @@ It samples curves more closely, scans between boundary crossings in both directi
 scales the preferred clearance to the room inside the region, capped at 0.001 mm. The point
 must still pass the even-odd boundary test inside that region and outside its holes and
 smaller selected regions, with clearance greater than the sampled curves' sagitta and
-measured endpoint gaps. Successful existing point selections keep their exact coordinates.
+measured endpoint gaps, plus displacement from merging defining sketch points. Regions
+narrower than that combined bound are refused. Successful existing point selections keep
+their exact coordinates.
 Legacy angular readings that agree only within the existing 0.001 mm tolerance retain
 that uncertainty in the clearance proof; narrow regions cannot settle an ambiguous chart.
 

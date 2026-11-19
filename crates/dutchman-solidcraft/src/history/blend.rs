@@ -927,6 +927,7 @@ mod tests {
                 origin: [0.0, 0.0, 2.0],
                 x_dir: [1.0, 0.0, 0.0],
                 y_dir: [0.0, 1.0, 0.0],
+                point_displacement: 0.0,
                 points: Vec::new(),
                 shapes: BTreeMap::new(),
             },
