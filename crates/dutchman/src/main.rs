@@ -396,73 +396,19 @@ fn main() -> ExitCode {
         return code;
     }
     quiet_when_stdout_closes();
-    let mut args: Vec<OsString> = std::env::args_os().collect();
-    json_after_command(&mut args);
-    if let Some((index, arg)) = args
-        .iter()
-        .enumerate()
-        .skip(1)
-        .find(|(_, arg)| *arg != "--verbose" && *arg != "--quiet" && *arg != "--yes")
-    {
-        let name = arg.to_str().unwrap_or("");
-        let builtin = Cli::command()
-            .get_subcommands()
-            .any(|cmd| cmd.get_name() == name)
-            || matches!(name, "pilot" | "help");
-        if name == "pilot" || !builtin && !name.starts_with('-') {
-            if let Some(path) =
-                dutchman_launcher::find_tool(if name == "printers" { "print" } else { name })
-            {
-                let mut rest: Vec<_> = args.iter().skip(index + 1).cloned().collect();
-                if matches!(name, "printers" | "print") {
-                    rest.insert(0, OsString::from(name));
-                }
-                return run_tool(&path, &rest);
-            }
-        }
-        if !builtin && (!name.starts_with('-') || name.is_empty()) && is_input(Path::new(arg)) {
-            args.insert(index, OsString::from("convert"));
-        }
-    }
-    // Name the command `dutchman` in every usage line, also where argv[0] is `dutchman.exe`.
-    let mut command = Cli::command().bin_name("dutchman");
-    if args.len() == 1
-        || args
-            .iter()
-            .any(|arg| arg == "--help" || arg == "-h" || arg == "help")
-    {
-        let listing = dutchman_launcher::tools_listing();
-        if !listing.is_empty() {
-            let examples = command
-                .get_after_help()
-                .map(ToString::to_string)
-                .unwrap_or_default();
-            command = command.after_help(format!("{examples}\n\n{listing}"));
-        }
-    }
-    #[cfg(feature = "pilot")]
-    let mut command = command.mut_subcommand("pilot", |c| {
-        dutchman_pilot::cli::with_bin_name(c, "dutchman pilot")
-    });
-    if args.len() == 1 {
-        let _ = command.print_help();
-        println!();
-        return ExitCode::SUCCESS;
-    }
-    let suggestion_command = command
-        .clone()
-        .external_subcommand_value_parser(None::<clap::builder::ValueParser>)
-        .allow_external_subcommands(false);
-    let matches = command.get_matches_from(&args);
-    let cli = match Cli::from_arg_matches(&matches) {
-        Ok(cli) => cli,
-        Err(err) => err.exit(),
+    let (cli, suggestion_command) = match parse_cli() {
+        Ok(parsed) => parsed,
+        Err(code) => return code,
     };
+    run_command(cli, suggestion_command)
+}
+
+#[inline(never)]
+fn run_command(cli: Cli, suggestion_command: clap::Command) -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     let yes = cli.yes;
-    // `contents` runs out of line from a reference: this function's frame is already near
-    // Windows' 1 MiB main-thread stack in debug builds, and must not grow.
+    // Keep the contents command's execution frame separate as well.
     if matches!(cli.command, Command::Contents { .. }) {
         return contents_command(&cli.command, quiet, verbose);
     }
@@ -1113,6 +1059,75 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
     }
+}
+
+// Drop the parser's commands, matches and temporary options before running a command.
+// Keep their stack use separate on Windows' 1 MiB debug-build main stack.
+#[inline(never)]
+fn parse_cli() -> Result<(Cli, clap::Command), ExitCode> {
+    let mut args: Vec<OsString> = std::env::args_os().collect();
+    json_after_command(&mut args);
+    if let Some((index, arg)) = args
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, arg)| *arg != "--verbose" && *arg != "--quiet" && *arg != "--yes")
+    {
+        let name = arg.to_str().unwrap_or("");
+        let builtin = Cli::command()
+            .get_subcommands()
+            .any(|cmd| cmd.get_name() == name)
+            || matches!(name, "pilot" | "help");
+        if name == "pilot" || !builtin && !name.starts_with('-') {
+            if let Some(path) =
+                dutchman_launcher::find_tool(if name == "printers" { "print" } else { name })
+            {
+                let mut rest: Vec<_> = args.iter().skip(index + 1).cloned().collect();
+                if matches!(name, "printers" | "print") {
+                    rest.insert(0, OsString::from(name));
+                }
+                return Err(run_tool(&path, &rest));
+            }
+        }
+        if !builtin && (!name.starts_with('-') || name.is_empty()) && is_input(Path::new(arg)) {
+            args.insert(index, OsString::from("convert"));
+        }
+    }
+    // Name the command `dutchman` in every usage line, also where argv[0] is `dutchman.exe`.
+    let mut command = Cli::command().bin_name("dutchman");
+    if args.len() == 1
+        || args
+            .iter()
+            .any(|arg| arg == "--help" || arg == "-h" || arg == "help")
+    {
+        let listing = dutchman_launcher::tools_listing();
+        if !listing.is_empty() {
+            let examples = command
+                .get_after_help()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            command = command.after_help(format!("{examples}\n\n{listing}"));
+        }
+    }
+    #[cfg(feature = "pilot")]
+    let mut command = command.mut_subcommand("pilot", |c| {
+        dutchman_pilot::cli::with_bin_name(c, "dutchman pilot")
+    });
+    if args.len() == 1 {
+        let _ = command.print_help();
+        println!();
+        return Err(ExitCode::SUCCESS);
+    }
+    let suggestion_command = command
+        .clone()
+        .external_subcommand_value_parser(None::<clap::builder::ValueParser>)
+        .allow_external_subcommands(false);
+    let matches = command.get_matches_from(&args);
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(err) => err.exit(),
+    };
+    Ok((cli, suggestion_command))
 }
 
 /// Recognise files, folders and known CAD suffixes for the conversion shorthand.
