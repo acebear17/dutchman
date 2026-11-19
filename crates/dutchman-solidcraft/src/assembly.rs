@@ -521,6 +521,7 @@ fn plan_parts(
             writer.sketches,
         );
         writer.plan_blends(&mut mapping);
+        crate::output_links::not_written(&mut mapping.features);
         features.extend(mapping.features.iter().cloned().map(|mut feature| {
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
             feature
@@ -1356,9 +1357,11 @@ impl Builder<'_> {
             Some(prepared) => prepared,
             None => prepare_history(self.writer, part, step, self.progress)?,
         };
+        let outcome_start = self.outcomes.len();
         self.outcomes
             .extend(mapping.features.iter().cloned().map(|mut feature| {
                 feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
+                feature.output = Default::default();
                 feature
             }));
         let mut history = match mapping.result {
@@ -1380,6 +1383,12 @@ impl Builder<'_> {
                 let left_out = part.ir.model.sketches.len().saturating_sub(kept);
                 if kept > 0 {
                     self.mark_written(part);
+                    if let Some(rows) = self.outcomes.get_mut(outcome_start..) {
+                        for (row, source) in rows.iter_mut().zip(&mapping.features) {
+                            row.output = source.output.clone();
+                        }
+                        crate::output_links::retain(rows, &references.features, self.next_id - 1);
+                    }
                     references.relocate(
                         self.next_id - 1,
                         component,
@@ -1516,6 +1525,12 @@ impl Builder<'_> {
         } else {
             component
         };
+        if let Some(rows) = self.outcomes.get_mut(outcome_start..) {
+            for (row, source) in rows.iter_mut().zip(&mapping.features) {
+                row.output = source.output.clone();
+            }
+            crate::output_links::history(rows, &history, self.next_id - 1);
+        }
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
         self.mark_written(part);

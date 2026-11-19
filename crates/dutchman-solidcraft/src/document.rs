@@ -25,7 +25,7 @@ const MAX_COMPONENT_NAME: usize = 128;
 /// occurrence, and the Import feature.
 const COMPONENT: u64 = 1;
 const OCCURRENCE: u64 = 2;
-const FEATURE: u64 = 3;
+pub(crate) const FEATURE: u64 = 3;
 
 /// The identity placement, column-major.
 const IDENTITY: [[f64; 4]; 4] = [

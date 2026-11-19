@@ -1499,3 +1499,24 @@ CLI and MCP `dutchman.convert/1` reports are unchanged.
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+### History output links (additive to version 1)
+
+`history.features[].output_ids` and `output_match` are additive fields within
+`dutchman.convert/1` and `dutchman.inspect/1`. Existing fields keep their names,
+types and meanings. Readers can ignore the additions; older saved reports may omit
+them. Batch envelopes and per-file report schemas are unchanged.
+
+`output_ids` is an array of integer feature ids in the saved design's feature timeline
+order. One source feature may produce several output features. Ids are recorded at
+emission and adjusted when parts join an assembly; names are never used for matching.
+`output_match` is `emitted` when the ids link to retained features, `no_output` when
+no independently produced feature survives (including dropped or merged rows), or
+`not_written` for inspection, which saves no design. Empty arrays do not change the
+existing status or counts: a feature can map during planning and be removed by fallback.
+Retained reference sketches link to their final ids even after fallback. No link points
+to the replacement geometry merely because it contains the source feature's shape.
+
+For example, a split row can contain `"output_ids": [12, 8], "output_match": "emitted"`;
+ids follow timeline order rather than numeric order. A dropped row contains
+`"output_ids": [], "output_match": "no_output"`.
