@@ -52,8 +52,14 @@ the previous mapping. Native participant expressions are not interpreted. A join
 with several output bodies still uses the previous mapping because its surviving
 body identities are not established by those outputs.
 
-A consumed Combine tool can now keep a generated body name even when it has no
-final topology, provided its earlier mapped producer names its output identity.
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
 A mirror of one body names its single new output for later combines.
 A generated selection can resolve through its earlier producer when that
 producer has one declared result body and one named output. Ambiguous generated

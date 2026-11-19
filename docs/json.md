@@ -322,6 +322,17 @@ when replay matches the final source geometry. Intermediate body centres do not
 establish body scope and never produce this note. Report fields and schema
 versions are unchanged.
 
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
+Successful consumed-tool replay confirmation adds an Info note: "The source
+body check confirmed the consumed tool bodies". Report fields are unchanged.
+
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
 blocker means the source selection or historical boundary is not supported yet; final-body

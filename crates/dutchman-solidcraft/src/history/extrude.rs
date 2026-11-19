@@ -485,13 +485,27 @@ pub(super) fn body_names(
         .iter()
         .map(|id| Some(ctx.row("bodies", id.as_str()?)))
         .collect::<Option<_>>()?;
-    // Consumed bodies need not have topology in the final model. Their producing feature
-    // still supplies an identity; name it so a later combine can select its replayed body.
-    // Older targets retain the original all-or-nothing naming.
-    if rows.iter().any(Option::is_none)
-        && !crate::VersionGate::ScopedBodies.supported(ctx.target_version)
-    {
-        return None;
+    // An output ID alone cannot prove a consumed body's identity. A single output
+    // and a single history body from this producer establish the correspondence;
+    // multiple historical bodies would leave it ambiguous. An isolated replay trial
+    // may defer proof to the complete source check. Older targets retain the original
+    // all-or-nothing naming.
+    if rows.iter().any(Option::is_none) {
+        if !crate::VersionGate::ScopedBodies.supported(ctx.target_version) || outputs.len() != 1 {
+            return None;
+        }
+        if !ctx.confirming_consumed_bodies {
+            let producer = feature.get("id")?.as_str()?;
+            let mut bodies = ctx.source?.ir.model.history_bodies.iter().filter(|body| {
+                body.produced_by
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == producer)
+            });
+            bodies.next()?;
+            if bodies.next().is_some() {
+                return None;
+            }
+        }
     }
     let mut taken: std::collections::BTreeSet<String> = ctx
         .named_bodies

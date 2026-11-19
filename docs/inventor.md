@@ -48,8 +48,13 @@ and non-blind ends against the sketch normal on two-sided extrudes remain unsupp
 On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
 at the final body-building feature from resolved modified-body outputs and a
 matching replay against the final source geometry. Intermediate body centres
-cannot confirm scope. It can also retain names for consumed Combine tools
-whose earlier producers supply output identities. The pinned Inventor reader
+cannot confirm scope. A consumed Combine tool without a final body row keeps
+its name only when the source retains exactly one history body whose
+`produced_by` matches its single-output producer, or a complete replay matches
+the final source geometry. Failed or unavailable checks keep the previous mapping.
+Output IDs alone do not prove identity; without proof, later selections keep the
+existing unnamed-body blocker.
+The pinned Inventor reader
 still leaves native body references unresolved; those remain blockers. Dutchman
 does not interpret the native references to infer participants.
 

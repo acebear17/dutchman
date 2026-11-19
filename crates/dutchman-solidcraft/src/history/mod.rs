@@ -620,6 +620,8 @@ struct Context<'a> {
     pattern_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Trial names that must be discarded unless the complete source body check passes.
+    confirming_consumed_bodies: bool,
     default_bodies: BTreeMap<String, String>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
@@ -682,6 +684,7 @@ impl<'a> Context<'a> {
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
             named_bodies: Vec::new(),
+            confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
             imported_regions: BTreeMap::new(),
             unwritten_bodies: BTreeSet::new(),
@@ -900,16 +903,57 @@ pub(crate) fn map_with_profile_check(
 ) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
-    let result = map_into(
+    let mut notes = Report::default();
+    let mut result = map_into(
         model,
-        report,
+        &mut notes,
         &mut features_out,
         &mut references,
         target_version,
         keep_sketches,
+        false,
         check,
         progress,
     );
+    // A missing consumed identity may be tried only in an isolated complete replay.
+    // Failed, unavailable or partial checks leave the original mapping and its blocker.
+    if crate::VersionGate::ScopedBodies.supported(target_version)
+        && result.as_ref().is_ok_and(|history| {
+            history.stop.as_deref().is_some_and(|why| {
+                why.contains("it selects a body that an earlier feature has not named")
+            })
+        })
+    {
+        let mut trial_notes = Report::default();
+        let mut trial_features = Vec::new();
+        let mut trial_references = History::default();
+        let trial = map_into(
+            model,
+            &mut trial_notes,
+            &mut trial_features,
+            &mut trial_references,
+            target_version,
+            keep_sketches,
+            true,
+            check,
+            progress,
+        );
+        if trial
+            .as_ref()
+            .is_ok_and(|history| history.stop.is_none() && check(history, None, true))
+        {
+            result = trial;
+            notes = trial_notes;
+            features_out = trial_features;
+            references = trial_references;
+            notes.push(
+                Severity::Info,
+                "history",
+                "The source body check confirmed the consumed tool bodies",
+            );
+        }
+    }
+    report.append(notes);
     let mut mapping = Mapping {
         result,
         features: features_out,
@@ -1045,6 +1089,7 @@ fn map_into(
     references: &mut History,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
+    confirming_consumed_bodies: bool,
     check: &mut infer::Check<'_>,
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<History, String> {
@@ -1063,6 +1108,7 @@ fn map_into(
         Context::new(wire).with_geometry(document.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
     ctx.target_version = target_version;
+    ctx.confirming_consumed_bodies = confirming_consumed_bodies;
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     let no_timeline = features.is_empty();

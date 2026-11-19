@@ -14107,39 +14107,168 @@ fn scoped_extrudes_are_confirmed_against_source_bodies() {
     }
 }
 
-#[test]
-fn consumed_boolean_tools_keep_names_only_on_044() {
+/// Remove the synthetic tool from final geometry, optionally keeping its historical
+/// topology under the producer's identity. No native files are used.
+fn consumed_boolean_tool(history_producer: Option<&str>) -> Model {
     let mut model = combined_spheres("cut", false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    for rows in wire["geometry"].as_object_mut().unwrap().values_mut() {
+    let mut topology = serde_json::Map::new();
+    for (arena, rows) in wire["geometry"].as_object_mut().unwrap() {
         if let Some(rows) = rows.as_array_mut() {
-            rows.retain(|row| {
-                !row["id"]
+            let is_tool = |row: &Value| {
+                row["id"]
                     .as_str()
                     .is_some_and(|id| id.starts_with("synthetic:tool:"))
-            });
+            };
+            let removed: Vec<_> = rows.iter().filter(|row| is_tool(row)).cloned().collect();
+            if arena == "bodies" {
+                topology.insert("body".to_owned(), removed[0].clone());
+            } else if matches!(
+                arena.as_str(),
+                "regions"
+                    | "shells"
+                    | "faces"
+                    | "loops"
+                    | "coedges"
+                    | "edges"
+                    | "vertices"
+                    | "surfaces"
+                    | "curves"
+                    | "pcurves"
+                    | "points"
+            ) {
+                topology.insert(arena.clone(), json!(removed));
+            }
+            rows.retain(|row| !is_tool(row));
         }
     }
+    if let Some(producer) = history_producer {
+        wire["model"]["history_bodies"] = json!([{
+            "id": "synthetic:history-body:tool#0",
+            "produced_by": producer,
+            "state": {"ordinal": 1, "identifier": 7},
+            "topology": topology,
+        }]);
+    }
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
-    for target in ["0.43.0", "0.44.0"] {
+    model
+}
+
+#[test]
+fn proved_consumed_boolean_tools_keep_names_only_on_044() {
+    let model = consumed_boolean_tool(Some("f3d:model:feature#3"));
+    for target in ["0.18.2", "0.43.0", "0.44.0"] {
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new()
                 .verification(Verification::Off)
                 .target_version(Some(target.parse().unwrap())),
         );
+        let features = document["features"].as_array().unwrap();
+        let combine = features.iter().find(|f| f["type"] == "combine");
         if target == "0.44.0" {
-            let features = document["features"].as_array().unwrap();
-            let combine = features.iter().find(|f| f["type"] == "combine").unwrap();
-            assert_eq!(combine["tools"], features[1]["body_names"], "{report:?}");
+            assert_eq!(
+                combine.unwrap()["tools"],
+                features[1]["body_names"],
+                "{report:?}"
+            );
+            assert!(features[1]["body_names"]
+                .as_array()
+                .is_some_and(|names| names.len() == 1));
         } else {
+            assert!(combine.is_none(), "{target}: {report:?}");
             assert!(
                 history_line(&report)
                     .contains("it selects a body that an earlier feature has not named"),
-                "{report:?}"
+                "{target}: {report:?}"
             );
         }
     }
+}
+
+#[test]
+fn unproved_consumed_boolean_tools_remain_blocked_on_every_target() {
+    // A body retained for a different producer cannot prove this output's identity.
+    for proof in [
+        "absent",
+        "wrong producer",
+        "ambiguous bodies",
+        "multiple outputs",
+    ] {
+        let producer = match proof {
+            "absent" => None,
+            "wrong producer" => Some("f3d:model:feature#1"),
+            _ => Some("f3d:model:feature#3"),
+        };
+        let mut model = consumed_boolean_tool(producer);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        if proof == "ambiguous bodies" {
+            let mut other = wire["model"]["history_bodies"][0].clone();
+            other["id"] = json!("synthetic:history-body:tool#1");
+            wire["model"]["history_bodies"]
+                .as_array_mut()
+                .unwrap()
+                .push(other);
+        } else if proof == "multiple outputs" {
+            wire["model"]["features"][1]["outputs"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("synthetic:other:body#0"));
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        for target in ["0.18.2", "0.43.0", "0.44.0"] {
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some(target.parse().unwrap())),
+            );
+            let features = document["features"].as_array().unwrap();
+            assert!(
+                features[1].get("body_names").is_none(),
+                "{target}: {report:?}"
+            );
+            assert!(
+                features.iter().all(|f| f["type"] != "combine"),
+                "{target}: {report:?}"
+            );
+            assert!(
+                history_line(&report)
+                    .contains("it selects a body that an earlier feature has not named"),
+                "{target}: {report:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn consumed_tool_names_are_discarded_when_source_confirmation_fails() {
+    let Some(cli) = solidcraft() else { return };
+    // The synthetic final cube differs from the replayed sphere cut. Availability
+    // of a verifier alone cannot admit the trial names or replace the blocker.
+    let (document, report) = convert(
+        &consumed_boolean_tool(None),
+        &SolidCraftWriter::new()
+            .verification(Verification::With(cli))
+            .target_version(Some("0.44.0".parse().unwrap())),
+    );
+    let features = document["features"].as_array().unwrap();
+    assert!(features[1].get("body_names").is_none(), "{report:?}");
+    assert!(
+        features.iter().all(|f| f["type"] != "combine"),
+        "{report:?}"
+    );
+    assert!(
+        history_line(&report).contains("it selects a body that an earlier feature has not named"),
+        "{report:?}"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail == "The source body check confirmed the consumed tool bodies"),
+        "{report:?}"
+    );
 }
 
 #[test]
@@ -14371,6 +14500,15 @@ fn body_mirror_outputs_name_consumed_generated_boolean_tools() {
         .unwrap();
     assert_eq!(mirror["body_names"], combine["tools"], "{report:?}");
     assert_eq!(mirror["body_names"], json!(["Body 1"]));
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.severity == Severity::Info
+                && loss.detail == "The source body check confirmed the consumed tool bodies"),
+        "{report:?}"
+    );
+
     assert_eq!(
         report.outcome().unwrap().check,
         Check::Verified,
