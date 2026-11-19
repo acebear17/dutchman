@@ -3557,7 +3557,9 @@ fn curved_hole_placements_outside_the_face_or_inside_its_existing_hole_are_refus
     for (rounded, at) in [(true, [0.1, 0.1, 10.0]), (false, [3.0, 5.0, 10.0])] {
         let (_, report) = convert(
             &curved_hole(rounded, directed(at, [0.0, 0.0, -1.0])),
-            &SolidCraftWriter::new().verification(Verification::Off),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some("0.40.0".parse().unwrap())),
         );
         assert_eq!(
             report.outcome().unwrap().features[3].reason.as_deref(),
@@ -3569,21 +3571,23 @@ fn curved_hole_placements_outside_the_face_or_inside_its_existing_hole_are_refus
 
 #[test]
 fn curved_hole_entries_keep_older_targets_open_with_a_named_blocker() {
-    let (_, report) = convert(
-        &curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])),
-        &SolidCraftWriter::new()
-            .verification(Verification::Off)
-            .target_version(Some("0.39.0".parse().unwrap())),
-    );
-    let reason = report.outcome().unwrap().features[3]
-        .reason
-        .as_deref()
-        .unwrap();
-    assert!(
-        reason.contains("need SolidCraft 0.40.0 or newer")
-            && reason.contains("target SolidCraft 0.39.0"),
-        "{reason}"
-    );
+    for target in ["0.18.2", "0.39.0"] {
+        let (_, report) = convert(
+            &curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(target.parse().unwrap())),
+        );
+        let reason = report.outcome().unwrap().features[3]
+            .reason
+            .as_deref()
+            .unwrap();
+        assert!(
+            reason.contains("need SolidCraft 0.40.0 or newer")
+                && reason.contains(&format!("target SolidCraft {target}")),
+            "{reason}"
+        );
+    }
 }
 
 #[test]
@@ -3592,7 +3596,8 @@ fn curved_hole_entries_require_replay_even_when_the_plane_is_known() {
         &curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0])),
         &SolidCraftWriter::new()
             .verification(Verification::Off)
-            .replay(Verification::Off),
+            .replay(Verification::Off)
+            .target_version(Some("0.40.0".parse().unwrap())),
     );
     let reason = report.outcome().unwrap().features[3]
         .reason
@@ -3604,9 +3609,26 @@ fn curved_hole_entries_require_replay_even_when_the_plane_is_known() {
     );
 }
 
+/// Circular entry boundaries need replay support from SolidCraft 0.40 or newer.
+fn curved_hole_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    let version = std::process::Command::new(&cli)
+        .arg("--version")
+        .output()
+        .unwrap();
+    let text = String::from_utf8(version.stdout).unwrap();
+    let version: dutchman_solidcraft::SolidCraftVersion =
+        text.split_whitespace().last().unwrap().parse().unwrap();
+    if version < "0.40.0".parse().unwrap() {
+        eprintln!("skipped: circular entry boundary replay needs SolidCraft 0.40.0 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
 #[test]
 fn solidcraft_replays_curved_hole_entries_after_a_vertical_fillet_or_through_hole() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = curved_hole_cli() else { return };
     for rounded in [true, false] {
         for placement in [
             directed([7.0, 5.0, 10.0], [0.0, 0.0, -1.0]),
@@ -3634,7 +3656,7 @@ fn solidcraft_replays_curved_hole_entries_after_a_vertical_fillet_or_through_hol
 
 #[test]
 fn solidcraft_replays_a_later_curved_hole_after_signing_a_bottom_entry_axis() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = curved_hole_cli() else { return };
     let model = curved_hole(false, axis_through([7.0, 5.0, -2.0], [0.0, 0.0, 1.0]));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     // Same source boundary orientation as the top, but on the bottom plane: replay
@@ -3695,7 +3717,7 @@ fn solidcraft_replays_a_later_curved_hole_after_signing_a_bottom_entry_axis() {
 
 #[test]
 fn solidcraft_refuses_curved_hole_entries_with_wrong_side_or_unproven_boundaries() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = curved_hole_cli() else { return };
     let model = curved_hole(false, directed([7.0, 5.0, 10.0], [0.0, 0.0, 1.0]));
     let (_, report) = written_with(&model, &replaying(&cli));
     assert!(
