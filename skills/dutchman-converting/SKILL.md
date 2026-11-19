@@ -49,7 +49,7 @@ An Info note counts bodies left out from other configurations and names the save
 bodies with unknown membership stay.
 
 Dutchman converts native CAD files into SolidCraft designs. Use the `dutchman-mcp` tools when
-they are connected (`inspect`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
+they are connected (`inspect`, `contents`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's
 `docs/json.md`.
 
@@ -274,6 +274,26 @@ Tell the user what to expect in one or two sentences before converting, for exam
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),
 so you'll get the solid shape without the feature history."
 
+When someone asks what a file holds (its bodies, its features, its parameters) or which
+features would carry across, call `contents` with `input`. It writes nothing, runs no
+SolidCraft, and returns `dutchman.contents/1`. Verdicts target the newest SolidCraft
+release known to the build, without looking for an installed CLI:
+
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
+- `bodies.items`: each body's `kind`, `name` and `hidden`.
+- `features.items`: the timeline in order, with `kind`, `name`, `suppressed`, and a `verdict`:
+  `mapped`; `needs_solidcraft_check` (it maps, but converting keeps it only when SolidCraft
+  confirms it; say that a SolidCraft CLI is needed for it); `not_needed`; `left_out`;
+  `not_supported_yet` (explain `reason` plainly); or `after_blocker` (an earlier feature stops
+  the history, so this one stays in the imported shape).
+- `features.verdicts`: the count of each verdict, for a one-line summary.
+- `parameters.items`: `name`, `value` with `unit` (`mm`, `deg`, or none), `expression` as the
+  source wrote it, and the owning `feature`.
+
+Like `inspect`, its reply holds the file's private names: keep it local.
+
 Sheet-metal histories map base flanges and full-edge flanges on unchanged rectangular base
 sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
 outer-face heights, inside/outside placement, angles, and bend radii map. An attached rectangular
@@ -474,6 +494,7 @@ change replay order: the neutral ordinal controls it.
 ```sh
 dutchman formats --json
 dutchman inspect --json /abs/part.f3d
+dutchman contents --json /abs/part.f3d
 dutchman convert --json /abs/part.f3d /abs/converted/part.sc
 dutchman convert-all --json --out-dir /abs/converted /abs/project
 ```
@@ -513,6 +534,19 @@ does not certify edit behavior. The current decoder omits named sketch constrain
 such as `.Constraints.width`; their dimensions stay at their evaluated values. Object-label
 references require decoded label identities. Check geometry after editing parameters; see
 [FreeCAD expressions](../../docs/freecad.md#spreadsheet-parameters-and-expressions).
+
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
 
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
