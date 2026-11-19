@@ -267,12 +267,15 @@ Like `inspect`, its reply holds the file's private names: keep it local.
 
 Sheet-metal histories map base flanges and full-edge flanges on unchanged rectangular base
 sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
-outer-face heights, inside/outside placement, angles, and bend radii map. Other dimensions
+outer-face heights, inside/outside placement, angles, and bend radii map. An attached rectangular
+plate with its paired bend can map on an unchanged L-shaped or notched base: its entire straight
+profile edge must be proven, with a square plate of matching thickness. Curved, open, crossing,
+disconnected, or collinear base edges and base holes or partial regions remain unsupported
+by this proof. Other dimensions
 or unproven selections keep geometry and explain the blocked feature. CADIR's hem developed
 length has no exact mapping to SolidCraft's outer-face length. Do not claim
-that K-factor or relief settings were preserved: CADIR does not supply them, so sheet rules
-use SolidCraft defaults. Contour flange, bend, unfold/refold and corner-relief operations
-are not present in the pinned CADIR version.
+that K-factor or relief settings were preserved: sheet rules use SolidCraft defaults. A bend without its mapped attached plate remains blocked.
+Contour flanges and unfold/refold operations are not mapped yet.
 
 ## 3. Convert
 
