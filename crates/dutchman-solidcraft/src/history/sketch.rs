@@ -12,10 +12,10 @@ use serde_json::{json, Value};
 use super::{constraints, name, Context};
 
 /// Positions closer than this (mm) are one point.
-const COINCIDENT: f64 = 1e-6;
+pub(super) const COINCIDENT: f64 = 1e-6;
 
 /// Directions closer than this are the same axis.
-const PARALLEL: f64 = 1e-9;
+pub(super) const PARALLEL: f64 = 1e-9;
 
 /// A 2D point in sketch coordinates.
 pub(crate) type P2 = [f64; 2];
