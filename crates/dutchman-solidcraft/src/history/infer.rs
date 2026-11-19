@@ -102,7 +102,22 @@ pub(super) fn map(
     final_state: bool,
     check: &mut Check<'_>,
 ) -> Option<Result<Mapped, String>> {
-    let first = candidates(feature, ctx);
+    let spatial = ctx.target_version >= crate::SolidCraftVersion::V0_44_0
+        && super::operation_kind(feature) == Some("extrude")
+        && super::operation(feature)
+            .pointer("/profile/kind")
+            .and_then(Value::as_str)
+            == Some("spatial_sketch_profiles");
+    let first = if spatial {
+        vec![feature.clone()]
+    } else {
+        candidates(feature, ctx)
+    };
+    let unconfirmed = if spatial {
+        "its planar 3D sketch profile has not been confirmed against the source body"
+    } else {
+        UNCONFIRMED
+    };
     if first.is_empty() {
         return None;
     }
@@ -118,6 +133,14 @@ pub(super) fn map(
         else {
             continue;
         };
+        if spatial {
+            *ctx = trial.ctx;
+            ctx.profile_unverified = false;
+            history.features = trial.preceding;
+            report.append(trial.notes);
+            report.push(Severity::Info, describe(feature), "its planar 3D sketch profile is written as a separate planar sketch; the source body check confirmed it");
+            return Some(Ok(Mapped::Feature(trial.mapped)));
+        }
         let mapped = trial.admit(ctx, history, report, measure, tried, 1);
         report.push_coded(
             Severity::Degraded,
@@ -127,13 +150,15 @@ pub(super) fn map(
         );
         return Some(Ok(mapped));
     }
-    if let Some(found) = measured(feature, ctx, report, history, params, final_state, check) {
-        return Some(found);
+    if !spatial {
+        if let Some(found) = measured(feature, ctx, report, history, params, final_state, check) {
+            return Some(found);
+        }
     }
     Some(Err(if tried > 0 {
-        UNCONFIRMED.to_owned()
+        unconfirmed.to_owned()
     } else {
-        mapping_failure.unwrap_or_else(|| UNCONFIRMED.to_owned())
+        mapping_failure.unwrap_or_else(|| unconfirmed.to_owned())
     }))
 }
 
