@@ -90,6 +90,7 @@ list is in [How a history is checked](docs/history.md#verification-tolerances).
 dutchman part.f3d                          # writes part.sc beside it
 dutchman convert part.f3d out.sc --preset fast
 dutchman inspect part.ipt                  # what would carry across, without writing
+dutchman contents part.ipt                 # bodies, features, parameters and what maps
 dutchman convert-all project/ --out-dir converted/
 ```
 
@@ -170,6 +171,7 @@ and uses the bundled command line for focused follow-up. No server setup is need
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
+| `contents` | `input` | `dutchman.contents/1` |
 | `convert` | `input`, `output`, and the convert options ([all arguments](docs/mcp.md#tools)) | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
@@ -202,7 +204,7 @@ For other clients:
 - [Getting started](docs/guide.md): install, a first conversion, the loss report, and opening the result.
 - [Install](docs/install.md): Homebrew, Scoop, release archives and checksums, Docker, nightly, and source.
 - [The desktop app](docs/desktop.md): presets, estimates, the SolidCraft version pill, and updates.
-- [The command line](docs/command-line.md): options, `inspect`, whole folders, and watching a folder.
+- [The command line](docs/command-line.md): options, `inspect`, `contents`, whole folders, and watching a folder.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Troubleshooting](docs/troubleshooting.md): common problems and diagnostic logs.
 - [Find what breaks in a large private file](docs/diagnose.md): `dutchman diagnose` ranks the failing, slow and large parts by number, and `--part` converts one.

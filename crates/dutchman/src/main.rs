@@ -298,6 +298,24 @@ enum Command {
         #[arg(long, conflicts_with = "json")]
         markdown: bool,
     },
+    /// List a native CAD file's bodies, features and parameters, and what Dutchman can map of
+    /// each feature, without converting or writing anything.
+    Contents {
+        /// The native design file to read.
+        input: PathBuf,
+        /// The project folder an assembly's part files are searched in when they are not at
+        /// their stored paths (default: the nearest folder above the assembly holding an
+        /// Inventor .ipj, else two folders up).
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Another folder to search, with its subfolders, for part files the project folder
+        /// does not hold; may be given more than once.
+        #[arg(long = "search", value_name = "DIR")]
+        search: Vec<PathBuf>,
+        /// Print one machine-readable report on stdout instead of the text listing.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show what converting a native CAD file would carry across, without writing anything.
     Inspect {
         /// The native design file to read.
@@ -437,6 +455,11 @@ fn main() -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     let yes = cli.yes;
+    // `contents` runs out of line from a reference: this function's frame is already near
+    // Windows' 1 MiB main-thread stack in debug builds, and must not grow.
+    if matches!(cli.command, Command::Contents { .. }) {
+        return contents_command(&cli.command, quiet, verbose);
+    }
     match cli.command {
         Command::Report {
             folder,
@@ -1057,6 +1080,8 @@ fn main() -> ExitCode {
             verbose,
             quiet,
         ),
+        // Handled before this match, by reference (see above).
+        Command::Contents { .. } => ExitCode::from(2),
         Command::Formats { json, markdown } => {
             if json {
                 print_json(&formats::json());
@@ -1629,6 +1654,61 @@ fn inspect(
     }
     let losses = json::losses(&inspection.report);
     print_losses(losses.as_array().map_or(&[][..], Vec::as_slice), verbose);
+    ExitCode::SUCCESS
+}
+
+/// Runs `dutchman contents`; any other command is a usage error.
+#[inline(never)]
+fn contents_command(command: &Command, quiet: bool, verbose: bool) -> ExitCode {
+    let Command::Contents {
+        input,
+        project,
+        search,
+        json,
+    } = command
+    else {
+        return ExitCode::from(2);
+    };
+    let search = dutchman::PartSearch {
+        threads: 0,
+        part_positions: dutchman_core::PartPositions::Smart,
+        project: project.clone(),
+        also: search.clone(),
+    };
+    contents(input, &search, *json, quiet, verbose)
+}
+
+fn contents(
+    input: &Path,
+    search: &dutchman::PartSearch,
+    as_json: bool,
+    quiet: bool,
+    verbose: bool,
+) -> ExitCode {
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
+    let result =
+        dutchman::contents_with_progress(input, search, &|event| progress.report(input, event));
+    progress.finish();
+    let report = match result {
+        Ok(report) => report,
+        Err(err) => {
+            if as_json {
+                print_json(&json::error(json::CONTENTS, json::input(input), &err));
+            } else {
+                eprintln!("dutchman: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    if as_json {
+        print_json(&report);
+        return ExitCode::SUCCESS;
+    }
+    for line in json::contents_lines(&report) {
+        println!("{line}");
+    }
+    let losses = report.get("losses").and_then(Value::as_array);
+    print_losses(losses.map_or(&[][..], Vec::as_slice), verbose);
     ExitCode::SUCCESS
 }
 

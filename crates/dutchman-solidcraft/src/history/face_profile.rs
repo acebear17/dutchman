@@ -1562,6 +1562,8 @@ mod tests {
             end: [10.0, 0.0, 0.0],
             length: TAU * 10.0,
             name: "cap".to_owned(),
+            index: None,
+            circle: None,
         };
         let cap = ReplayedFace {
             name: "cap".to_owned(),
@@ -1627,6 +1629,8 @@ mod tests {
             mid: at(mid),
             length,
             name: "f".to_owned(),
+            index: None,
+            circle: None,
         }
     }
 
