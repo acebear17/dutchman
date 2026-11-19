@@ -502,6 +502,7 @@ pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
     /// Release used for body-edge sweep paths.
+    /// Also the first release with dimensional constraints on drawn 3D sketch wires.
     pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// Release used to prove closed circular blend paths.
@@ -518,9 +519,6 @@ impl SolidCraftVersion {
 
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
-
-    /// First release with dimensional constraints on drawn 3D sketch wires.
-    pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
