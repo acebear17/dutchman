@@ -489,6 +489,22 @@ effect through input preparation and geometry-only fallbacks; JSON displays its 
 Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
 and keep the original geometry. The existing history status and reason fields report refusals.
 
+For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
+selected body scope at the final body-building feature when the reader names
+modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
+records this confirmation. Intermediate body centres cannot confirm body scope,
+so intermediate features keep the previous mapping. Without confirmation the
+previous mapping applies; older targets keep their existing output.
+
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
+
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
@@ -610,7 +626,7 @@ Face counts alone never flag a difference. Missing measurements are explicit. Ch
 No automatic report is sent. The observed false-positive rate for the two
 placement-golden assemblies is 0/329 evaluated body rows (0%);
 [calibration results and limits](doctor-calibration.md) give the coverage and denominators.
-The STEP itself stays local; use the private-send card if you choose to share it.
+The STEP itself stays local; use the private Discord steps if you choose to share it.
 
 The structural checks also flag `geometry_untrimmed_torus`: a toroidal face without
 trim loops sharing a shell with other faces. Review its boundary before reporting a
@@ -639,22 +655,27 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 <a id="report-consent"></a>
-Report consent is per report. On a converted desktop card, expand
-**Something wrong? Report this file**; on a failed card, the actions are already visible.
-**Review and send report**
-opens a review with bundle or summary. A bundle is selected when available; otherwise
+After a conversion, **Output folder** folds into a summary so the reporting steps stay
+in view. Click its folder path or **Change…** to reopen all output settings. **Clear**
+removes the designs and results and restores the expanded settings.
+
+Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
+pills sit directly below the three steps in **Is there a problem? Is something missing?**,
+and also appear under **More**. **Anonymous report** opens a review for the chosen file
+with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
 reuse a prior failure bundle. The review displays the exact metadata and sharing choices.
 Descriptions are not supported in the anonymous envelope; describe the problem privately
-or in the GitHub form without private names or paths. Whole files use the private-send card on Discord. A separate box,
+or in the GitHub form without private names or paths. Whole files go privately to Dutchy on Discord. A separate box,
 **You may use this report in a public test case**, starts unticked.
 Nothing is sent before clicking Send. A report is sent only when a matching receipt
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-GitHub accepts the anonymous summary only; never attach a geometry bundle there. For a
-converted result the form asks what differs from the original, without claiming conversion failed.
+**Anonymous report** sends to the cloud inbox after review. **GitHub issue** opens the
+prefilled public issue form under your GitHub username. Never attach a geometry bundle
+there. For a converted result the form asks what differs from the original, without claiming conversion failed.
 
 For the CLI, first make a local preview (always printed as JSON):
 
@@ -683,8 +704,12 @@ Report summaries identify the authoring app from the native format, such as Fusi
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
-The desktop keeps its page scrollbar visible to reach every private-send option in the results.
-Copied-report notices use the success colour and clear on the next action.
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
+The desktop scrollbars let you reach the report panel and every result.
+Each reporting step shows its own copied-message notice beside the action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
 
 `dutchman diagnose part.f3d --bundle --out diagnosis` cuts a private reproduction
@@ -692,7 +717,7 @@ bundle without narrowing. Ordinary diagnosis, narrowing, and doctor also try to 
 bundle when cadmpeg's decoded model fails a check. A cut must reproduce the same
 failure signature; Dutchman widens it if needed and keeps no bundle if proof fails.
 A refused cut, including a closure wider than the current fragment byte limit, is a
-normal no-bundle result; choose summary or the private-send card.
+normal no-bundle result; choose summary or the private Discord steps.
 Shrinking runs for up to ten seconds (or the shorter time limit). Creating
 `diagnose/cancel-bundle` in the output folder stops shrinking between candidates and
 keeps the last proven cut.
@@ -703,8 +728,8 @@ previews never show their contents. Bundles contain numeric geometry. Review the
 before choosing to send. A bundle is the default when available. The service caps the entire multipart request at 25 MiB, including metadata and
 upload overhead. Dutchman keeps gzip bundles at least 64 KiB below that cap and checks the complete
 size before enabling Send. If it will not fit, use the
-private-send card or send a summary. Decode refusals have no bundle yet; choose
-an anonymous summary or the private-send card. Nothing is sent by diagnosis.
+private Discord steps or send a summary. Decode refusals have no bundle yet; choose
+an anonymous summary or the private Discord steps. Nothing is sent by diagnosis.
 
 ## Assembly placements
 

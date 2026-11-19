@@ -427,6 +427,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Scoped extrude booleans and identities for consumed body results.
+    ScopedBodies,
     /// Blends selected by a proven closed circular path.
     ClosedCircleBlend,
 }
@@ -437,6 +439,7 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::ScopedBodies => SolidCraftVersion::V0_44_0,
             Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
         }
     }
@@ -449,8 +452,9 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
-    if VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::default())
-        && !VersionGate::ClosedCircleBlend.supported(target)
+    if [VersionGate::ScopedBodies, VersionGate::ClosedCircleBlend]
+        .into_iter()
+        .any(|gate| gate.supported(SolidCraftVersion::default()) && !gate.supported(target))
     {
         return true;
     }
@@ -513,7 +517,7 @@ impl SolidCraftVersion {
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
 
-    /// First release with dimensional constraints on drawn 3D sketch wires.
+    /// First release with dimensional 3D sketch wire constraints and scoped extrude booleans.
     pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
@@ -3601,7 +3605,8 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3617,7 +3622,8 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3633,7 +3639,8 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3649,7 +3656,8 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        assert!(target_loses_history(target));
     }
 
     #[test]
@@ -3666,6 +3674,10 @@ mod version_tests {
         }
         assert_eq!(target.extension(), previous.extension());
         assert!(!target_loses_history(target));
+        assert!(!VersionGate::ScopedBodies.supported(previous));
+        assert!(VersionGate::ScopedBodies.supported(target));
+        assert!(!VersionGate::ClosedCircleBlend.supported(target));
+        assert!(VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::V0_44_1));
     }
 
     #[test]
@@ -3691,7 +3703,10 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(!target_loses_history(after));
+        // Both lose the 0.44 scoped bodies; the patch release still adds its own gate.
+        assert!(target_loses_history(after));
+        assert!(!VersionGate::SketchProfileCoil.supported(before));
+        assert!(VersionGate::SketchProfileCoil.supported(after));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!(!VersionGate::ClosedCircleBlend.supported("0.44.0".parse().unwrap()));
