@@ -1,3 +1,4 @@
 ### Command line and install
 
-- Reduce command-line stack use on Windows when refusing IGES files.
+- On Windows, refusing an IGES file no longer crashes the command line: it exits with status 1
+  and the refusal message, as on other platforms.

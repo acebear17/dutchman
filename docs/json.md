@@ -424,6 +424,7 @@ in conversion, inspection, batch results and MCP reports. Its `error.message` is
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,
 with `error.stage: "decode"` and `error.upstream: null`. Batch results count it as a refused
 file (`ok: false`); the CLI and GUI do not offer a fixtures invitation for IGES.
+The command exits with status 1 for a refused IGES file, on every platform.
 The formats listing reports `status: "not_supported"`, `words: "open it in SolidCraft directly"`
 and `converts: "SolidCraft imports IGES itself (File > Import)"`.
 
