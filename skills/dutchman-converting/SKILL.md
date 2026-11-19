@@ -994,3 +994,9 @@ remaining spatial constraints and profile limits.
 A planar 3D sketch profile copy carries at most 400,000 constraints, including
 repeated line occurrences across all relations. If it exceeds that copy limit,
 reduce repeated relations and convert again; the original shape is retained.
+
+Each history row in `dutchman.convert/1` and `dutchman.inspect/1` now includes
+`output_ids` and `output_match`, linking it to features in the saved design. A split
+can have several ids; dropped or merged rows have none. Inspection returns empty ids
+with `not_written`. These fields are additive; schemas and existing fields are unchanged.
+See [the JSON report reference](../../docs/json.md) for the matching values.
