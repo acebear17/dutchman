@@ -144,8 +144,10 @@ Make a small public test file from a [fixtures recipe](https://dutchman-cad.gith
 or please send a file that converts wrong, with a STEP export of the exact same design, to Dutchy in
 [Discord](https://discord.gg/yTcseBEdeu). Send only designs you have the right to send; we keep them private and use them only to fix the converter.
 
-Converted cards have a closed **Something wrong? Report this file** section. Expand it
-for **Review and send report** and the private-send steps. The anonymous review shows
+The desktop app always shows **Is there a problem? Is something missing?** at the bottom left:
+join the Discord server, then DM Dutchy. The secondary pills
+**Anonymous report** and **GitHub issue** sit directly below the three steps, and also appear
+under **More**. The anonymous report review shows
 exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
 The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support
 converted-file summaries. See [Reporting a problem](docs/guide.md#report-consent).

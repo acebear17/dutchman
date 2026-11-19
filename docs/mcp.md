@@ -847,11 +847,15 @@ preview a proven bundle; a new report without a bundle offers summary. Nothing i
 `report_submit` takes `folder`, `choice` (`bundle` or `summary`), `public_test`
 (default false) and `explicit_yes`. Ask the user for explicit consent to this exact
 preview and choice before passing true. A failure does not authorize a later resend.
-No tool accepts whole files for anonymous upload. Use the private-send card instead.
+No tool accepts whole files for anonymous upload. Use the private Discord steps instead.
 
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
+
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
 
 The desktop report review selects the anonymous summary when no bundle is available.
 Its **Send** button becomes **Retry** after a delivery failure.
@@ -865,7 +869,7 @@ never paths, checker messages, entity identities, or geometry. Neither sends any
 `report_preview` can use that same folder to review the saved bundle. Bundles are the
 default when available. The entire multipart request must fit 25 MiB; a 64 KiB
 reserve keeps bundles below the cap. Preview checks metadata and framing overhead
-before marking a bundle sendable. Use the private-send card or summary when it will not fit.
+before marking a bundle sendable. Use the private Discord steps or summary when it will not fit.
 Decode refusals have no bundle yet.
 
 A cut refused by the fragment limits returns a normal unavailable-bundle result,
@@ -909,3 +913,6 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
+and **GitHub issue** (a public issue under the user’s GitHub name).

@@ -8,6 +8,10 @@ output folder. Watch mode uses the same names and schema. These are the same per
 reports as CLI `convert --json`, including local paths, names and detailed losses; keep
 them local. They are not anonymous reports.
 
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
 MCP `read_report` reads a saved report without opening or decoding its source or design.
 It preserves every saved field and adds optional `loss_groups` to `dutchman.convert/1`:
 
@@ -1285,7 +1289,7 @@ array of `{arena, rows, serialized_bytes, description}`, plus `bundle_sendable` 
 otherwise `summary`. `request_size` includes multipart framing and metadata (default
 public-test permission false), `request_limit` is 25 MiB, and `bundle_limit` reserves
 64 KiB below it. `bundle_sendable` requires both limits to fit. Oversize bundles stay
-local for the private-send card; summaries remain available.
+local for the private Discord steps; summaries remain available.
 
 Verification returns `reproduces`, `signature` (hash only), `manifest`,
 `compressed_bytes`, and `uncompressed_bytes`. Bundle contents and local paths are never
@@ -1317,3 +1321,6 @@ Appearance bindings scoped to one placed instance or an evaluation state use
 source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
+
+The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
+and **GitHub issue** (a public issue under the user’s GitHub name).

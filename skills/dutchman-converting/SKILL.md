@@ -289,6 +289,10 @@ stay private. The issue goes on Dutchman even when the report says
 post it yourself. Own design files never leave the user's machine in this flow; only a
 synthetic reproduction rebuilt from scratch can be proposed for public sharing.
 
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
 Before drafting any issue, run `dutchman --version` and `solidcraft-cli --version` if
 installed, using its full path or `SOLIDCRAFT_CLI` when needed. Record "none" only when no
 SolidCraft was installed. Copy the anonymous report's `versions` block verbatim, keeping
@@ -657,7 +661,7 @@ Use this when a conversion fails and the original file must stay private.
    source program/version, asking once if missing. Use only anonymous.json for the other
    technical facts: format, stage, category, finding codes/counts, kinds and anonymous
    narrowing path. Remove source names, paths, entity ids and geometry/parameter values.
-   If rebuilding has not reproduced, draft an anonymous-facts-only issue and state that limit.
+   If rebuilding has not reproduced, draft an issue containing only the report facts and state that limit.
 6. List anonymous.json and the synthetic rebuilt file with its STEP export and a public
    licence such as CC0 as proposed attachments. Include the design only if it reproduces
    and the user is free to share it. Never attach the original file or local-key.json.
@@ -750,23 +754,26 @@ explicit consent. CLI users can preview with `dutchman report --folder FOLDER --
 --source-format f3d --signature converted-with-problem` and send after review with
 `dutchman report --folder FOLDER --send-summary --yes`. No free-text description is
 supported in the anonymous envelope. Describe the problem privately or in the GitHub
-form without private names or paths. The desktop offers these actions under the closed
-**Something wrong? Report this file** section. Failure narrowing is for failed files.
+form without private names or paths. The desktop offers these actions in its always-open
+**Is there a problem? Is something missing?** panel. The **Anonymous report** and **GitHub issue**
+pills sit directly below the three steps and also appear under **More**. Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call
 `report_submit` with `explicit_yes: true` only after the user's explicit yes to that
 report, its bundle/summary choice and separate public-test permission. The public-test
-box defaults false. Whole-file sending uses the private-send card. On delivery failure
-keep the local report; retry later only when the user asks. GitHub gets the anonymous
-summary only, never a geometry bundle. The desktop app selects summary when no bundle is available;
+box defaults false. Whole-file sending uses the private Discord steps. On delivery failure
+keep the local report; retry later only when the user asks. **Anonymous report** opens
+the review for a direct cloud-inbox upload; opening it sends nothing. **GitHub issue**
+opens the public issue form under the user’s GitHub name. Share only the report contents
+there, never a geometry bundle. The desktop app selects summary when no bundle is available;
 Send becomes Retry only after delivery fails. Optional Discord claims are copied locally and pasted by the user.
 
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
-When no proven bundle exists choose summary or the private-send card.
+When no proven bundle exists choose summary or the private Discord steps.
 
 For a check failure, `dutchman diagnose INPUT --bundle --out OUT` or MCP `extract_repro`
 cuts and proves a private local fragment without narrowing. MCP `verify_repro` rechecks
@@ -774,10 +781,10 @@ the saved report folder. Review `report_preview`: it shows only the manifest, ro
 sizes. Bundles contain numeric geometry and default to the bundle choice when available.
 Obtain explicit consent for sending. The complete multipart request must fit 25 MiB, including metadata and overhead;
 bundles reserve 64 KiB below that cap. Check `bundle_sendable` in the preview and
-use the private-send card or summary when it is false. Decode refusals have no bundle yet; never substitute the original as a bundle.
+use the private Discord steps or summary when it is false. Decode refusals have no bundle yet; never substitute the original as a bundle.
 
 Treat refused cuts as a normal no-bundle outcome, including large assembly closures
-that exceed the fragment byte limit. Offer summary or the private-send card.
+that exceed the fragment byte limit. Offer summary or the private Discord steps.
 
 ### Finding a run's diagnostic log
 
