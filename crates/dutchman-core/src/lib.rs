@@ -40,7 +40,8 @@ pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
 pub use memory::available_memory;
 pub use progress::{
-    elapsed, MemberEvent, MemberObserver, Progress, ProgressEvent, RunningStep, StepGuard, StepKind,
+    elapsed, FeatureGuard, FeatureStep, MeasureGuard, MemberEvent, MemberObserver, Progress,
+    ProgressEvent, RunningStep, StepGuard, StepKind,
 };
 
 /// The neutral model every conversion passes through.

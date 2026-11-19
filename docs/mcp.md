@@ -12,6 +12,11 @@ native profile selection can't be resolved, Dutchman tries the selected curves a
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
+Local CLI and desktop progress can name the current timeline feature, such as
+“Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
+These updates use `dutchman.progress/1`; MCP final conversion reports stay unchanged.
+Feature names are private local text and are excluded from anonymous diagnostics.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent
@@ -180,6 +185,8 @@ rechecks before geometry replay. It does not multiply the memory already held by
 decoded design.
 Geometry-only conversion also checks the converted shape by default, using a separately
 calibrated check allowance; `verify: false` keeps either kind of checking off.
+A report whose history check ran also carries `verification_tolerances`: the numbers that
+check used, the same as the CLI's `--json` ([json.md](json.md)).
 If it cannot fit, the successful report includes `history_check_skipped` with
 `needed_bytes`, `available_bytes`, and `reason`:
 `History check skipped: needs about N GB, M GB free`. The original shape stays usable
@@ -362,8 +369,8 @@ map to sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Old
 the helix with `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the
 original geometry. The CLI equivalent is `--solidcraft-version x.y.z` on `convert`,
 `convert-all`, and `watch` (default: found CLI version, even with `--no-verify`, else
-the newest release known at build time, currently 0.43). The rolling 14-day window
-is currently 0.18.2–0.43; older targets down to 0.18.2 get simplified features.
+the newest release known at build time, currently 0.44). The rolling 14-day window
+is currently 0.18.2–0.44; older targets down to 0.18.2 get simplified features.
 Pitch/height/turn laws, handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
 bindings are retained when available, otherwise dimensions use resolved values. Conical
 and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
@@ -372,6 +379,13 @@ Hole history keeps chamfered entries and tapped holes (the bore and an ISO metri
 label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
+Planar historical hole-entry faces may have circular arcs or circles in their boundaries.
+The source boundary establishes the plane, and SolidCraft replay must confirm the complete
+face before drilling, including existing holes. Unproven faces, placements outside the
+filled face, and outward drilling use the existing blocked feature reason; the original
+geometry remains available.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 Entry recesses with drill points report "SolidCraft holes take a drill point only on a
 plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases.
@@ -420,7 +434,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.43), including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.44), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `overwrite` | boolean | Replace an existing `.sc` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
@@ -720,9 +734,9 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](json.md).
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.43"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.44"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.43.0"`). Status comparisons use minors, so all 0.43 patches are current; 0.44 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.44 patches are current; 0.45 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
