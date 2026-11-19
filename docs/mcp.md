@@ -927,3 +927,11 @@ losses for meshes it could not decode.
 
 The desktop secondary pills are **Anonymous report** (review before direct cloud upload)
 and **GitHub issue** (a public issue under the user’s GitHub name).
+
+The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
+It does not add or change MCP tools. Its evaluator uses the host's existing
+command surface through the `evaluate` import, subject to host permissions.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).
