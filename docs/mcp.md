@@ -343,6 +343,17 @@ FreeCAD external Body and Part links are resolved beside the assembly first, the
 `completeness.left_out`; available components still convert. Link arrays place each element
 once. Grounding and supported Assembly-workbench joints map like other assembly joints.
 
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source geometry must prove one complete
+circle in the rebuilt body, including when SolidCraft splits the rim into an edge path or
+moves its seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
+
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.

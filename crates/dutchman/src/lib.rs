@@ -475,15 +475,10 @@ impl ConvertOptions {
     }
 
     fn prepare_writer(&self, input: &Path, memory_note: Option<String>) -> PreparedWriter {
-        let mut options = self.clone();
+        // The report's target is a display-only minor. Keep the typed release, including
+        // its patch, for writer gates and the default file extension.
+        let options = self.clone();
         let solidcraft = json::solidcraft_info(self);
-        if let Some(target) = solidcraft
-            .as_ref()
-            .and_then(|value| value.get("target"))
-            .and_then(Value::as_str)
-        {
-            options.solidcraft_version = target.parse().ok();
-        }
         let memory_stop = !self.no_memory_check
             && self.preset != choices::Preset::Fast
             && self.part.is_none()
@@ -835,6 +830,36 @@ mod option_tests {
                 report.history_check_skipped(),
                 Some((9_000_000_000, 2_000_000_000))
             );
+        }
+    }
+
+    #[test]
+    fn prepared_writers_preserve_explicit_patch_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::write(&input, b"synthetic").unwrap();
+        for release in ["0.18.2", "0.25.1", "0.44.1"] {
+            let target: SolidCraftVersion = release.parse().unwrap();
+            let options = ConvertOptions {
+                no_verify: true,
+                solidcraft: Some(dir.path().join("missing-solidcraft-cli")),
+                solidcraft_version: Some(target),
+                ..Default::default()
+            };
+            let prepared = options.prepare_writer(&input, None);
+            let OutputWriter::SolidCraft(writer) = &prepared.writer else {
+                panic!("expected the SolidCraft writer");
+            };
+            assert_eq!(writer.resolved_version(), target);
+            assert_eq!(prepared.extension(), target.extension());
+            assert_eq!(
+                prepared.solidcraft.as_ref().unwrap()["target"],
+                target.minor()
+            );
+            let Some(OutputWriter::SolidCraft(fallback)) = &prepared.without_history else {
+                panic!("expected the geometry-only fallback");
+            };
+            assert_eq!(fallback.resolved_version(), target);
         }
     }
 

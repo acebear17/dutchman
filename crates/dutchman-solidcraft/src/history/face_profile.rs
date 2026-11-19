@@ -1275,6 +1275,8 @@ mod tests {
             mid: at(mid),
             length,
             name: "f".to_owned(),
+            index: None,
+            circle: None,
         }
     }
 

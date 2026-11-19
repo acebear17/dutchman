@@ -506,7 +506,8 @@ impl SolidCraftWriter {
     }
 
     /// Finds the input edges of the history's blends on SolidCraft's replay of the history
-    /// written so far (two runs of the CLI for the whole design, within the timeout), or
+    /// written so far (two base CLI runs, plus a carrier pass for closed circles, within
+    /// the timeout), or
     /// refuses them, saying why.
     fn prove_blends(
         &self,
@@ -517,7 +518,12 @@ impl SolidCraftWriter {
     ) -> Result<(), Error> {
         let mut remaining = self.timeout;
         let mut failure = None;
+        let mut circles = false;
         history::prove_blends(mapping, |history, after, faces| {
+            circles |= history
+                .blends
+                .iter()
+                .any(|pending| pending.needs_circle_carriers());
             if let Some(why) = self.memory_refusal() {
                 return Err(why);
             }
@@ -546,7 +552,8 @@ impl SolidCraftWriter {
                 )
             });
             let started = std::time::Instant::now();
-            let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
+            let replayed =
+                verify::replay_edges(cli.as_ref(), remaining, &design, after, faces, circles);
             remaining = remaining.saturating_sub(started.elapsed());
             replayed
         });
