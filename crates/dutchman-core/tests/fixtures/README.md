@@ -150,3 +150,9 @@ project root selection and recursive resolution; no third-party design supplied 
 `local_cubes.sldasm` uses that generator with an authored local sub-assembly holder
 and an embedded cube reference. It covers matching a local holder's neutral source name
 to a saved sub-assembly file when choosing project roots.
+
+The curved hole-entry tests in `dutchman-solidcraft/tests/history.rs` build neutral CADIR
+in code from `cadmpeg_ir::examples::unit_cube`: a 10 mm box with a 2 mm vertical-edge
+fillet and a top-face hole, and a 10 mm plate with two separate 2 mm through holes. Their
+feature input samples are authored from those lines, quarter-circle arcs, and circles.
+No native design file or external model is used or stored for these tests.

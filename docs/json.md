@@ -427,13 +427,23 @@ For holes, a blocked feature's `reason` names the unsupported entry form, placem
 (for example, `a hole ending at the last encountered face is not mapped yet`). A tapped hole
 maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on
 that feature. The wording is text for people, not a stable code.
+Planar historical hole entries with circular boundaries report `mapped` only after their
+source boundary and SolidCraft replay prove the face before the hole. Existing holes are
+excluded from valid placement locations. Missing replay, an unproven boundary, or outward
+drilling reports `blocked` with its specific `reason`. This adds no report fields.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 Counterbores, countersinks, and chamfered entries with drill points map for SolidCraft 0.22.1
 and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
-`mapped`. Other flanges report `blocked` with the specific selection or dimension reason
+`mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
+unchanged simple polygonal base, using the actual straight profile edge. A base that is not
+one closed, non-crossing perimeter with distinct straight edges reports a base-profile reason;
+base holes or partial regions remain unsupported by this proof. These reasons use the existing
+`blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
 to geometry. These use the existing report fields; no schema fields change.
