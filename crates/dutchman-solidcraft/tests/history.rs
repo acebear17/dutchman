@@ -7916,6 +7916,241 @@ fn a_base_feature_imports_its_own_body_when_the_source_keeps_it() {
         .is_some_and(|reason| reason.contains("stored only as the design ends")));
 }
 
+/// A missing recipe with only synthetic cube topology, optionally retained at its producer.
+fn fallback_cube(stored: bool, later: bool, op: &str) -> Model {
+    let mut model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] = json!({"kind": "planar", "value": {"kind": "unresolved", "value": "synthetic:external:profile#1"}});
+    wire["model"]["features"][1]["definition"]["value"]["value"]["op"] = json!(op);
+    if !later {
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| f["ordinal"].as_u64() < Some(2));
+    }
+    if stored {
+        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+        wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[cfg(unix)]
+#[test]
+fn a_missing_recipe_imports_its_stored_result_and_a_later_fillet_maps() {
+    let model = fallback_cube(true, true, "new_body");
+    let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
+    let (document, report) = convert(&model, &replaying(&cli.path));
+    let rows = &report.outcome().unwrap().features;
+    assert_eq!(
+        rows[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert_eq!(
+        rows[2].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert!(rows[1].reason.is_none());
+    let features = document["features"].as_array().unwrap();
+    let imported = features.iter().find(|f| f["name"] == "Block").unwrap();
+    assert_eq!(imported["type"], "import");
+    assert!(imported["step_blob"].as_str().is_some());
+    assert!(features
+        .iter()
+        .any(|f| f["type"] == "fillet" && f["body"] == "unit cube"));
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss.subject.contains("Block"));
+    assert!(loss.detail.contains("unresolved"));
+}
+
+#[test]
+fn missing_recipes_without_a_stored_result_and_cuts_still_stop() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    for model in [
+        fallback_cube(false, true, "new_body"),
+        fallback_cube(true, true, "cut"),
+    ] {
+        let (_, report) = convert(&model, &writer);
+        assert_eq!(
+            report.outcome().unwrap().features[1].status,
+            dutchman_core::FeatureStatus::Blocked,
+            "{report:?}"
+        );
+        assert!(report
+            .losses()
+            .iter()
+            .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
+    }
+}
+
+#[test]
+fn a_missing_recipe_uses_final_geometry_only_without_later_body_changes() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(&fallback_cube(false, false, "new_body"), &writer);
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{report:?}"
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "import" && f["name"] == "Block"));
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss.subject.contains("Block"));
+    assert!(loss.detail.contains("unresolved"));
+    // The final cube exists, but a later fillet would modify it: refuse that source.
+    let (_, report) = convert(&fallback_cube(false, true, "new_body"), &writer);
+    assert_eq!(
+        report.outcome().unwrap().features[1].status,
+        dutchman_core::FeatureStatus::Blocked,
+        "{report:?}"
+    );
+}
+
+#[test]
+fn a_stored_result_reports_an_external_profile_only_for_the_affected_feature() {
+    let mut model = fallback_cube(true, true, "new_body");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // An unresolved carrier alone says nothing about whether it is external.
+    wire["model"]["features"][1]["definition"]["value"]["value"]["profile"] =
+        json!({"kind": "planar", "value": {"kind": "unresolved", "value": "synthetic:profile#1"}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    for (subject, detail, external) in [
+        ("source", "feature \"Block\": profile sketch absent", true),
+        ("source", "feature \"Other\": profile sketch absent", false),
+        ("feature \"Block\"", "Profile sketch absent", true),
+        (
+            "source",
+            "Sketch-profile operand names a sketch absent from this design",
+            true,
+        ),
+    ] {
+        let mut report = Report::default();
+        report.push_coded(
+            Severity::Degraded,
+            subject,
+            "f3d/feature.extrude-profile-sketch-absent",
+            detail,
+        );
+        SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .write(&model, &mut Vec::new(), &mut report)
+            .unwrap();
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(|loss| loss.code.as_deref()
+                    == Some("f3d/feature.extrude-profile-sketch-absent"))
+                .count(),
+            1,
+            "{report:?}"
+        );
+        let loss = report
+            .losses()
+            .iter()
+            .find(|loss| loss.code.as_deref() == Some("history/body-fallback-imported"));
+        assert_eq!(loss.is_some(), external, "{report:?}");
+        assert_eq!(
+            report.outcome().unwrap().features[1].status,
+            if external {
+                dutchman_core::FeatureStatus::Mapped
+            } else {
+                dutchman_core::FeatureStatus::Blocked
+            },
+            "{report:?}"
+        );
+    }
+}
+
+#[test]
+fn an_ordinary_loft_refusal_keeps_its_reason_with_a_stored_result() {
+    let mut model = loft_history(10.0, |definition| {
+        definition["guidance"] = json!({"kind": "guides", "value": [
+            {"kind": "edges", "value": []}
+        ]});
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let producer = wire["model"]["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["definition"]["value"]["kind"] == "loft")
+        .unwrap()["id"]
+        .clone();
+    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+    wire["model"]["history_bodies"][0]["produced_by"] = producer;
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("a guide rail of topological edges is not mapped yet"),
+        "{report:?}"
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
+}
+
+#[test]
+fn measured_inference_precedes_an_eligible_stored_result() {
+    let mut model = unresolved_square_selection(&[]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+    wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+    wire["model"]["history_bodies"][0]["produced_by"] = wire["model"]["features"][1]["id"].clone();
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut report = Report::default();
+    report.push_coded(
+        Severity::Degraded,
+        "feature \"Block\"",
+        "f3d/feature.extrude-profile-sketch-absent",
+        "Profile sketch absent",
+    );
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .evaluator(std::sync::Arc::new(RecordedEvaluator::default()))
+        .write(&model, &mut bytes, &mut report)
+        .unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(document["features"][1]["type"], "extrude");
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.code.as_deref() == Some("history/profile-region-inferred")));
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.code.as_deref() != Some("history/body-fallback-imported")));
+}
+
 #[test]
 fn a_sketch_with_no_timeline_row_is_written_before_the_extrude_that_uses_it() {
     // The source keeps the cube's sketch only in its sketch arena: no sketch feature names it.
@@ -10430,6 +10665,503 @@ fn a_body_split_by_a_datum_plane_keeps_each_piece_named() {
     assert_eq!(mirror["bodies"], json!([piece]));
 }
 
+/// New history paths target the current release window even when the replay job
+/// checks an older opening floor. Older-target flattening is tested separately.
+fn split_writer() -> SolidCraftWriter {
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_40_0))
+}
+
+fn split_history_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    let version =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    if version < dutchman_solidcraft::SolidCraftVersion::V0_40_0 {
+        eprintln!("skipped: new Split history paths need SolidCraft 0.40 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
+/// A cube that exists only before its Split: the timeline holds the datum plane and a Split
+/// through the cube's middle, whose target is the historical cube, kept by the source as a
+/// history body consumed by the Split with a nest of its own. `kept`: whether the source
+/// keeps that history body.
+fn split_of_a_consumed_cube(kept: bool) -> Model {
+    let base = split_cube(0.0, false, None);
+    let middle = cube_right(&base) - 5.0;
+    let mut wire = serde_json::to_value(&split_cube(middle, false, None).ir).unwrap();
+    let mut topology = serde_json::Map::new();
+    for arena in [
+        "regions", "shells", "faces", "loops", "coedges", "edges", "vertices", "surfaces",
+        "curves", "pcurves", "points",
+    ] {
+        let text = serde_json::to_string(&wire["geometry"][arena]).unwrap();
+        let rows: Value =
+            serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:nest:")).unwrap();
+        topology.insert(arena.to_owned(), rows);
+    }
+    let text = serde_json::to_string(&wire["geometry"]["bodies"][0]).unwrap();
+    let nest_body: Value =
+        serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:nest:")).unwrap();
+    topology.insert("body".to_owned(), nest_body);
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    features.retain(|feature| feature["ordinal"].as_u64() >= Some(2));
+    let split = features.iter_mut().find(|f| f["name"] == "Split").unwrap();
+    split["definition"]["value"]["value"]["targets"] = json!({"kind": "historical", "value": {
+        "state": "synthetic:history-input:state#0", "bodies": ["synthetic:history-input:body#0"], "native": "n"}});
+    if kept {
+        wire["model"]["history_bodies"] = json!([{
+            "id": "synthetic:history-body:nest#h0",
+            "consumed_by": "f3d:model:feature#4",
+            "state": {"ordinal": 3, "identifier": 7},
+            "topology": topology,
+        }]);
+    }
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn a_split_of_a_body_that_exists_only_earlier_imports_it_first() {
+    let writer = split_writer();
+    let split_status = |report: &Report| {
+        report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .find(|f| f.name.as_deref() == Some("Split"))
+            .cloned()
+            .unwrap()
+    };
+    let (_, report) = convert(&split_of_a_consumed_cube(false), &writer);
+    assert_ne!(
+        split_status(&report).status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{}",
+        history_line(&report)
+    );
+    let (document, report) = convert(&split_of_a_consumed_cube(true), &writer);
+    assert_eq!(
+        split_status(&report).status,
+        dutchman_core::FeatureStatus::Mapped,
+        "{}",
+        history_line(&report)
+    );
+    let features = document["features"].as_array().unwrap();
+    let at = |kind: &str| features.iter().position(|f| f["type"] == kind).unwrap();
+    assert!(at("import") < at("split"), "{features:?}");
+    let import = &features[at("import")];
+    assert!(import["step_blob"]
+        .as_str()
+        .is_some_and(|blob| blob.starts_with("blobs/")));
+    assert_eq!(features[at("split")]["body"], import["body_names"][0]);
+}
+
+/// The consumed cube made by a Base Feature: one history body, produced by the Base Feature and
+/// consumed by the Split, which works on the body the Base Feature's import already named.
+fn split_of_a_based_cube() -> Model {
+    let model = split_of_a_consumed_cube(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#1");
+    wire["model"]["features"].as_array_mut().unwrap().insert(
+        0,
+        json!({"id": "f3d:model:feature#1", "ordinal": 0, "name": "Base Feature 1",
+            "suppressed": false,
+            "definition": {"kind": "operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "unresolved"}}}},
+            "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
+    );
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+/// The same, but the Split's target is native: the source does not resolve which body it
+/// splits, and the history body it consumed says so instead.
+#[test]
+fn a_split_with_a_native_target_splits_the_body_it_consumed() {
+    let model = split_of_a_based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let split = wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["name"] == "Split")
+        .unwrap();
+    split["definition"]["value"]["value"]["targets"] = json!({"kind": "native", "value": "n"});
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let writer = split_writer();
+    let (document, report) = convert(&model, &writer);
+    let features = document["features"].as_array().unwrap();
+    let imports: Vec<&Value> = features
+        .iter()
+        .filter(|f| f["type"] == "import" && f["suppressed"] == false)
+        .collect();
+    assert_eq!(imports.len(), 1, "{features:?}\n{}", history_line(&report));
+    let split = features.iter().find(|f| f["type"] == "split").unwrap();
+    assert_eq!(split["body"], imports[0]["body_names"][0]);
+}
+
+#[test]
+fn a_split_of_a_base_features_body_does_not_import_it_twice() {
+    let writer = split_writer();
+    let (document, report) = convert(&split_of_a_based_cube(), &writer);
+    let features = document["features"].as_array().unwrap();
+    let imports: Vec<&Value> = features
+        .iter()
+        .filter(|f| f["type"] == "import" && f["suppressed"] == false)
+        .collect();
+    assert_eq!(imports.len(), 1, "{features:?}\n{}", history_line(&report));
+    let split = features.iter().find(|f| f["type"] == "split").unwrap();
+    assert_eq!(split["body"], imports[0]["body_names"][0]);
+}
+
+#[test]
+fn a_split_reuses_a_base_import_selected_by_the_final_body_identity() {
+    let model = split_of_a_based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][0]["definition"]["value"]["value"]["bodies"] = json!({"kind": "resolved", "value": {"bodies": ["synthetic:cube:body#0"], "native": "synthetic selection"}});
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, report) = convert(&model, &split_writer());
+    let features = document["features"].as_array().unwrap();
+    let imports: Vec<_> = features
+        .iter()
+        .filter(|f| f["type"] == "import" && f["suppressed"] == false)
+        .collect();
+    assert_eq!(imports.len(), 1, "{}", history_line(&report));
+    let split = features.iter().find(|f| f["type"] == "split").unwrap();
+    assert_eq!(split["body"], imports[0]["body_names"][0]);
+}
+
+#[test]
+fn a_split_with_several_consumed_history_bodies_is_refused_by_name() {
+    let model = split_of_a_consumed_cube(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut other = wire["model"]["history_bodies"][0].clone();
+    other["id"] = json!("synthetic:history-body:other#h1");
+    wire["model"]["history_bodies"]
+        .as_array_mut()
+        .unwrap()
+        .push(other);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, report) = convert(&model, &split_writer());
+    assert!(
+        history_line(&report).contains("several consumed history bodies"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(!document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "split"));
+}
+
+#[test]
+fn solidcraft_splits_a_base_features_body_into_two_halves() {
+    let Some(cli) = split_history_cli() else {
+        return;
+    };
+    let (design, _) = written(&split_of_a_based_cube());
+    let mut volume = volumes(&cli, &design);
+    volume.sort_by(f64::total_cmp);
+    assert_eq!(volume.len(), 2, "{volume:?}");
+    assert!(
+        volume.iter().all(|v| (v - 500.0).abs() / 500.0 < 1e-6),
+        "{volume:?}"
+    );
+}
+
+/// The split cube whose tool is one face of the input topology: a square on the plane x = 5
+/// (`lift` raises one corner off it, so the face is not flat), or `selection` instead.
+fn split_by_face(lift: f64, selection: Option<Value>) -> Model {
+    let model = split_cube(5.0, false, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let state = "test:split:feature-input#4";
+    let face = "test:split:historical-face#tool";
+    let side = |k: usize| format!("test:split:historical-face#side{k}");
+    let corners = [
+        (0.0, 0.0, 0.0),
+        (10.0, 0.0, 0.0),
+        (10.0, 10.0, lift),
+        (0.0, 10.0, 0.0),
+    ];
+    let point = |c: (f64, f64, f64)| json!({"x": 5.0 + c.2, "y": c.0, "z": c.1});
+    let geometry: Vec<Value> = (0..4)
+        .map(|k| {
+            let (a, b) = (corners[k], corners[(k + 1) % 4]);
+            let chord = [b.2 - a.2, b.0 - a.0, b.1 - a.1];
+            let length = (chord[0].powi(2) + chord[1].powi(2) + chord[2].powi(2)).sqrt();
+            let tangent = chord.map(|c| c / length);
+            json!({
+                "edge": format!("test:split:historical-edge#{k}"),
+                "interior": point(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0, (a.2 + b.2) / 2.0)),
+                "start": point(a), "end": point(b),
+                "tangent": {"x": tangent[0], "y": tangent[1], "z": tangent[2]},
+                "faces": [face, side(k)],
+            })
+        })
+        .collect();
+    let edges: Vec<String> = (0..4)
+        .map(|k| format!("test:split:historical-edge#{k}"))
+        .collect();
+    let mut faces: Vec<String> = (0..4).map(side).collect();
+    faces.push(face.to_owned());
+    wire["model"]["feature_input_topologies"] = json!([{
+        "id": state, "input_of": "f3d:model:feature#4", "edges": edges, "faces": faces,
+        "edge_geometry": geometry, "bodies": [], "vertices": [],
+    }]);
+    let selection = selection.unwrap_or_else(|| {
+        json!({"kind": "historical", "value": {
+            "state": state, "faces": [face], "native": "synthetic selection"}})
+    });
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    let split = features.iter_mut().find(|f| f["name"] == "Split").unwrap();
+    split["definition"]["value"]["value"]["tool"] = json!({"kind": "faces", "value": selection});
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_body_split_by_a_flat_face_splits_along_its_plane() {
+    let writer = split_writer();
+    let (document, report) = convert(&split_by_face(0.0, None), &writer);
+    let features = document["features"].as_array().unwrap();
+    let split = features
+        .iter()
+        .find(|f| f["type"] == "split")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(split["plane"]["plane"]["origin"][0], json!(5.0));
+}
+
+/// The split cube whose tool is two separate faces of the input topology, sharing no edge: a
+/// rectangle on the plane x = 5 and another on the plane x = `second`.
+fn split_by_two_faces(second: f64) -> Model {
+    let model = split_cube(5.0, false, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let state = "test:split:feature-input#4";
+    let mut geometry: Vec<Value> = Vec::new();
+    let mut edges: Vec<String> = Vec::new();
+    let mut faces: Vec<String> = Vec::new();
+    let mut tools: Vec<String> = Vec::new();
+    for (n, (x, y0, y1)) in [(5.0, 0.0, 4.0), (second, 6.0, 10.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let face = format!("test:split:historical-face#tool{n}");
+        let corners: [(f64, f64); 4] = [(y0, 0.0), (y1, 0.0), (y1, 10.0), (y0, 10.0)];
+        let point = |c: (f64, f64)| json!({"x": x, "y": c.0, "z": c.1});
+        for k in 0..4 {
+            let (a, b) = (corners[k], corners[(k + 1) % 4]);
+            let length = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+            let edge = format!("test:split:historical-edge#{n}{k}");
+            let side = format!("test:split:historical-face#side{n}{k}");
+            geometry.push(json!({
+                "edge": edge,
+                "interior": point(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0)),
+                "start": point(a), "end": point(b),
+                "tangent": {"x": 0.0, "y": (b.0 - a.0) / length, "z": (b.1 - a.1) / length},
+                "faces": [face, side],
+            }));
+            edges.push(edge);
+            faces.push(side);
+        }
+        faces.push(face.clone());
+        tools.push(face);
+    }
+    wire["model"]["feature_input_topologies"] = json!([{
+        "id": state, "input_of": "f3d:model:feature#4", "edges": edges, "faces": faces,
+        "edge_geometry": geometry, "bodies": [], "vertices": [],
+    }]);
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    let split = features.iter_mut().find(|f| f["name"] == "Split").unwrap();
+    split["definition"]["value"]["value"]["tool"] = json!({"kind": "faces", "value": {
+        "kind": "historical", "value": {
+            "state": state, "faces": tools, "native": "synthetic selection"}}});
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_body_split_by_two_separate_coplanar_faces_splits_along_their_plane() {
+    let writer = split_writer();
+    let (document, report) = convert(&split_by_two_faces(5.0), &writer);
+    let features = document["features"].as_array().unwrap();
+    let split = features
+        .iter()
+        .find(|f| f["type"] == "split")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(split["plane"]["plane"]["origin"][0], json!(5.0));
+    assert!(
+        !history_line(&report).contains("do not lie on one plane"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+/// Two rectangles on x = 5 that meet at y = 4 and share their boundary edge.
+fn split_by_adjacent_faces() -> Model {
+    let model = split_by_two_faces(5.0);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let state = &mut wire["model"]["feature_input_topologies"][0];
+    let geometry = state["edge_geometry"].as_array_mut().unwrap();
+    for row in geometry.iter_mut().skip(4) {
+        for field in ["start", "interior", "end"] {
+            let point = &mut row[field];
+            let y = point["y"].as_f64().unwrap();
+            point["y"] = json!(4.0 + (y - 6.0) * 1.5);
+        }
+    }
+    geometry[1]["faces"] = json!([
+        "test:split:historical-face#tool0",
+        "test:split:historical-face#tool1"
+    ]);
+    geometry.retain(|row| row["edge"] != "test:split:historical-edge#13");
+    state["edges"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|id| id != "test:split:historical-edge#13");
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_body_split_by_adjacent_coplanar_faces_splits_along_their_plane() {
+    let (document, report) = convert(&split_by_adjacent_faces(), &split_writer());
+    let split = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "split")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(split["plane"]["plane"]["origin"][0], json!(5.0));
+}
+
+#[test]
+fn solidcraft_splits_a_body_by_coplanar_faces_into_two_halves() {
+    let Some(cli) = split_history_cli() else {
+        return;
+    };
+    for model in [split_by_two_faces(5.0), split_by_adjacent_faces()] {
+        let (design, _) = written(&model);
+        let volume = volumes(&cli, &design);
+        assert_eq!(volume.len(), 2, "{volume:?}");
+        assert!(
+            volume.iter().all(|v| (v - 500.0).abs() / 500.0 < 1e-6),
+            "{volume:?}"
+        );
+    }
+}
+
+#[test]
+fn new_split_paths_flatten_with_a_named_reason_below_the_release_window() {
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.18.2".parse().unwrap()));
+    for (model, reason) in [
+        (
+            split_of_a_consumed_cube(true),
+            "history bodies need SolidCraft 0.40 or newer",
+        ),
+        (
+            split_by_face(0.0, None),
+            "splitting by input faces needs SolidCraft 0.40 or newer",
+        ),
+    ] {
+        let (document, report) = convert(&model, &writer);
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+        assert!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "import" && feature["suppressed"] == false));
+    }
+}
+
+#[test]
+fn a_split_by_separate_faces_on_different_planes_is_refused_for_that_reason() {
+    let writer = split_writer();
+    let line = history_line(&convert(&split_by_two_faces(6.0), &writer).1);
+    assert!(line.contains("do not lie on one plane"), "{line}");
+}
+
+#[test]
+fn a_split_by_a_face_that_is_not_flat_or_not_one_is_refused_for_that_reason() {
+    let writer = split_writer();
+    let reason = |model: &Model| history_line(&convert(model, &writer).1);
+    assert!(
+        reason(&split_by_face(5.0, None)).contains("a face that is not flat is not supported yet"),
+        "{}",
+        reason(&split_by_face(5.0, None))
+    );
+    let two = json!({"kind": "historical", "value": {
+        "state": "test:split:feature-input#4",
+        "faces": ["test:split:historical-face#tool", "test:split:historical-face#side0"],
+        "native": "synthetic selection"}});
+    // The second face has only one boundary edge, so it cannot establish a plane.
+    assert!(
+        reason(&split_by_face(0.0, Some(two.clone()))).contains("does not span a plane"),
+        "{}",
+        reason(&split_by_face(0.0, Some(two)))
+    );
+    let native = json!({"kind": "native", "value": "synthetic selection"});
+    assert!(reason(&split_by_face(0.0, Some(native))).contains("native"));
+}
+
+#[test]
+fn solidcraft_splits_a_body_by_a_flat_face_into_two_halves() {
+    let Some(cli) = split_history_cli() else {
+        return;
+    };
+    let (design, _) = written(&split_by_face(0.0, None));
+    let mut volume = volumes(&cli, &design);
+    volume.sort_by(f64::total_cmp);
+    assert_eq!(volume.len(), 2, "{volume:?}");
+    assert!(
+        volume.iter().all(|v| (v - 500.0).abs() / 500.0 < 1e-6),
+        "{volume:?}"
+    );
+}
+
+#[test]
+fn solidcraft_splits_the_imported_body_into_two_halves() {
+    let Some(cli) = split_history_cli() else {
+        return;
+    };
+    let (design, _) = written(&split_of_a_consumed_cube(true));
+    let mut volume = volumes(&cli, &design);
+    volume.sort_by(f64::total_cmp);
+    assert_eq!(volume.len(), 2, "{volume:?}");
+    assert!(
+        volume.iter().all(|v| (v - 500.0).abs() / 500.0 < 1e-6),
+        "{volume:?}"
+    );
+}
+
 #[test]
 fn split_pieces_that_cannot_be_told_apart_are_not_selected_later() {
     // The plane cuts through the cube, so its vertices lie on both sides: neither piece keeps
@@ -10451,7 +11183,7 @@ fn split_pieces_that_cannot_be_told_apart_are_not_selected_later() {
 }
 
 #[test]
-fn splitting_by_faces_is_refused_by_name() {
+fn splitting_by_faces_of_the_final_model_is_refused_by_name() {
     let mut model = split_cube(0.0, false, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let split = wire["model"]["features"]
@@ -10468,7 +11200,8 @@ fn splitting_by_faces_is_refused_by_name() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).contains("splitting a body by faces is not supported yet"),
+        history_line(&report)
+            .contains("a splitting face selection in this form is not supported yet"),
         "{}",
         history_line(&report)
     );

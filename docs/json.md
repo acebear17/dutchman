@@ -317,6 +317,12 @@ A base feature written with its body as the design ends (`final_body`) isn't com
 source's stored state after it is the body before later features changed it.
 A base feature written with its own body as the source keeps it (a history body) is compared
 like any other feature.
+A mapped Split can emit an extra Import for its consumed history body; `history.features`
+still has one outcome per source feature. Unsupported splitting faces name the missing input
+geometry or nonplanar tool in `history.features[].reason`. No report fields or counts are
+added for the generated Import. Targets below SolidCraft 0.40 receive a named version reason
+for the new Split history body imports and input-face tools, and the existing
+`older_loses_history` notice. Existing Base Feature imports retain their version support.
 A state whose source marks any body centre as based on incomplete edge evidence
 (`body_centers_incomplete`) is not compared, even if every body has a centre entry, so the
 history stays unverified there.
@@ -1483,6 +1489,18 @@ CLI and MCP `dutchman.convert/1` reports are unchanged.
 The plugin aborts on host input failures before writing output. Its bounded loss report
 prioritizes dropped and degraded losses and includes an explicit truncation notice and
 `details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+`history/body-fallback-imported` is a `Degraded` loss naming the feature in `subject`.
+Its stored result becomes a timeline Import and the feature row has status
+`mapped`, as for Base Feature body imports. The loss explains why its recipe could
+not map: its required profile or path is absent from this design. A CADIR reference
+or a cadmpeg `feature.extrude-profile-sketch-absent` loss attributed to that feature
+must prove the absence. Ordinary mapping and measured inference run first;
+unsupported recipes and unconfirmed selections in existing sketches keep their
+usual refusal.
+These rows count as mapped and rebuilt, like Base Feature Imports. The source must
+supply a unique history body produced by the feature, or its final output body with
+no later active modification. Joins, cuts and intersections remain blockers.
 
 ### History output links (additive to version 1)
 

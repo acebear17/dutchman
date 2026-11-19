@@ -575,6 +575,16 @@ resolved placement or binder source geometry remains a blocker, with its reason 
 These Info notes remain when another feature or a replay mismatch flattens the history.
 A body inside a hidden container is hidden even when its own flag says it is shown.
 
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
+
 FreeCAD can supply that geometry from an earlier base feature's stored shape, including
 when its intermediate body is hidden. Unproven source membership or an ambiguous replay
 pick stops body-building history before the blend, with the reason reported. Earlier editable
@@ -984,6 +994,15 @@ remaining spatial constraints and profile limits.
 A planar 3D sketch profile copy carries at most 400,000 constraints, including
 repeated line occurrences across all relations. If it exceeds that copy limit,
 reduce repeated relations and convert again; the original shape is retained.
+
+A new-body extrude, revolve, sweep or loft can still be reported as `mapped`
+when its required profile or path is absent from the source and its stored result
+is written as a named Import so later features can continue. This fallback runs only
+after ordinary mapping and measured inference fail. An unresolved selection in an
+existing sketch, an unsupported option or an unconfirmed measurement keeps its
+usual refusal. The Degraded loss `history/body-fallback-imported` explains the
+absent input. Recover the original external design to recover the editable recipe.
+Cuts and joins cannot use this fallback.
 
 Each history row in `dutchman.convert/1` and `dutchman.inspect/1` now includes
 `output_ids` and `output_match`, linking it to features in the saved design. A split

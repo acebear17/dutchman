@@ -922,6 +922,27 @@ pub(crate) fn map_with_profile_check(
     check: &mut infer::Check<'_>,
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Mapping {
+    map_with_source_profile_check(
+        model,
+        report,
+        target_version,
+        keep_sketches,
+        check,
+        progress,
+        &[],
+    )
+}
+
+/// Decode losses are read-only evidence, separate from the history losses being written.
+pub(crate) fn map_with_source_profile_check(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
+) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
     let mut notes = Report::default();
@@ -935,6 +956,7 @@ pub(crate) fn map_with_profile_check(
         false,
         check,
         progress,
+        source_losses,
     );
     // A missing consumed identity may be tried only in an isolated complete replay.
     // Failed, unavailable or partial checks leave the original mapping and its blocker.
@@ -958,6 +980,7 @@ pub(crate) fn map_with_profile_check(
             true,
             check,
             progress,
+            source_losses,
         );
         if trial.as_ref().is_ok_and(|history| {
             history.stop.is_none()
@@ -1116,6 +1139,7 @@ fn map_into(
     confirming_consumed_bodies: bool,
     check: &mut infer::Check<'_>,
     progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
 ) -> Result<History, String> {
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
@@ -1246,6 +1270,7 @@ fn map_into(
         }
         map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
+        let named_bodies = ctx.named_bodies.len();
         let before = history.features.len();
         let blends = ctx.blends.len();
         let inferred = infer::map(
@@ -1267,6 +1292,34 @@ fn map_into(
                     .to_owned(),
             ),
             _ => Ok(mapped),
+        });
+        let mut imported_body = false;
+        let mapped = mapped.or_else(|reason| {
+            // Measured inference above has already had its chance. Only a source input
+            // proven absent can replace a refused recipe with its retained result.
+            if !base::missing_input(feature, &ctx, source_losses) {
+                return Err(reason);
+            }
+            ctx.builds = builds;
+            ctx.named_bodies.truncate(named_bodies);
+            ctx.extra.clear();
+            ctx.blends.truncate(blends);
+            history.features.truncate(before);
+            let imported = base::fallback(feature, &mut ctx).map_err(|_| reason.clone())?;
+            ctx.profile_unverified = false;
+            ctx.profile_mismatch = false;
+            ctx.inferred = None;
+            ctx.measured = false;
+            report.push_coded(
+                Severity::Degraded,
+                describe(feature),
+                "history/body-fallback-imported",
+                format!(
+                    "Stored result imported because its required profile or path is absent from this design ({reason}); later features continue on this body"
+                ),
+            );
+            imported_body = true;
+            Ok(Mapped::Feature(imported))
         });
         match mapped {
             Ok(Mapped::Nothing) => {
@@ -1382,7 +1435,7 @@ fn map_into(
                 {
                     history.stored_bodies.insert(id, centers);
                 }
-                if whole_of_several(feature, &ctx) {
+                if !imported_body && whole_of_several(feature, &ctx) {
                     history.unconfirmed.insert(id);
                 }
             }

@@ -347,11 +347,14 @@ impl SolidCraftWriter {
             };
         }
         let mut history_report = Report::default();
-        let mut mapping = history::map_with_sketches(
+        let mut mapping = history::map_with_source_profile_check(
             model,
             &mut history_report,
             self.resolved_version(),
             self.sketches,
+            &mut history::infer::Unmeasured,
+            None,
+            report.losses(),
         );
         self.plan_blends(&mut mapping);
         output_links::not_written(&mut mapping.features);
@@ -1482,7 +1485,7 @@ impl Writer for SolidCraftWriter {
             )
         } else {
             let mut history_report = Report::default();
-            let mut mapping = history::map_with_profile_check(
+            let mut mapping = history::map_with_source_profile_check(
                 model,
                 &mut history_report,
                 self.resolved_version(),
@@ -1494,6 +1497,7 @@ impl Writer for SolidCraftWriter {
                     progress,
                 },
                 progress,
+                report.losses(),
             );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {
