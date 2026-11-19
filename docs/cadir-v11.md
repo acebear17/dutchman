@@ -1,7 +1,7 @@
 # CADIR v11 in Dutchman
 
 Dutchman reads the wire and Rust types at cadmpeg commit
-`f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a`. The field map in cadmpeg's
+`1a8c520c18a5a7b812d6a365c4b95f19ebb6a41f`. The field map in cadmpeg's
 `docs/cadir-v11.md`, section 9.2, describes the complete design vocabulary.
 The pinned implementation also retains the `features` vocabulary in `model`;
 its native readers still emit those records. `Design` is a separate namespace
@@ -117,3 +117,19 @@ and scoped entity references remain unresolved and reported; no geometry is
 inferred from a source name. Drawing traversal and projection offsets otherwise
 stay unchanged. Assembly joint operands still use their separate model
 `object`/`subelements` representation; those fields are not drawing references.
+
+## Drawing dimensions at the current pin
+
+At `959d28b8`, `semantic_annotations::DimensionKind` became
+`AnnotationDimensionKind`, with unit variants for the existing distance, radius,
+diameter, and angle categories. DXF uses the renamed type and keeps the same
+labels, tolerances, extension lines, and arrows for those categories. The new
+`Area` and `Extent` categories have no generated DXF label or dimension lines;
+explicit replacement text still takes precedence. Their presentation follows
+the existing fallback and loss reporting for unmapped dimensions.
+
+Drawing rotation now uses `rotation: Angle` in radians; DXF uses that angle for
+curve placement and converts it to degrees for text entities. Angular annotation
+measurements and tolerances also use radians, so DXF converts both back to degrees
+for the existing labels. Drawing radii use `PositiveLength`, and a drawing's native
+reference is optional. These type changes preserve the previous DXF presentation.
