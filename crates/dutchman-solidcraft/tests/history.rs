@@ -10529,6 +10529,260 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
     }
 }
 
+/// Entirely synthetic closed input circle. The saved example body is deliberately
+/// unrelated: selection must use the historical input, never final-body edge numbers.
+fn closed_circle_blend(hole: bool, seam: f64) -> Model {
+    closed_circle_blend_from(hole, seam, false)
+}
+
+fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model {
+    let base = if hole {
+        holed_cube(4.0, |_| {})
+    } else {
+        primitive_history(json!({"kind": "primitive", "value": {
+            "solid": {"kind": "cylinder", "radius": 5.0, "height": 10.0,
+                "angle": std::f64::consts::TAU},
+            "placement": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "op": "new_body"
+        }}))
+    };
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let m = &mut wire["model"];
+    if sketch_based {
+        if hole {
+            m["features"][3]["definition"]["value"] = json!({"kind": "extrude", "value": {
+                "profile": {"kind": "planar", "value": {"kind": "sketch", "value": HOLES}},
+                "direction": {"kind": "explicit", "vector": {"x": 0.0, "y": 0.0, "z": -1.0}},
+                "start": {"kind": "profile_plane"},
+                "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 10.0}}},
+                "op": "cut"
+            }});
+        } else {
+            let cylinder = cube_with_history(10.0, whole_sketch(), None);
+            *m = serde_json::to_value(&cylinder.ir).unwrap()["model"].clone();
+            m["sketch_entities"] = json!([entity(
+                1,
+                json!({"kind": "circle", "center": {"u": 0.0, "v": 0.0}, "radius": 5.0})
+            )]);
+            m["sketch_constraints"] = json!([]);
+            m["sketches"][0]["profiles"] =
+                json!([[{"entity": "f3d:model:sketch-entity#1", "reversed": false}]]);
+        }
+    }
+    let features = m["features"].as_array_mut().unwrap();
+    let previous = features.last().unwrap()["id"].clone();
+    let ordinal = features.len();
+    let kind = if hole { "chamfer" } else { "fillet" };
+    let dimension = if hole {
+        json!({"spec": {"kind": "distance", "distance": 0.5}})
+    } else {
+        json!({"radius": {"kind": "constant", "radius": 1.0}})
+    };
+    let mut group = dimension;
+    group["edges"] = json!({"kind": "historical", "value": {
+        "state": "synthetic:closed:feature-input-topology#0", "edges": ["rim"], "native": "synthetic rim"}});
+    let mut definition = json!({"groups": [group]});
+    if hole {
+        definition["flip_direction"] = json!(false);
+    }
+    features.push(
+        json!({"id": "synthetic:closed:feature#0", "ordinal": ordinal,
+        "name": "Rim treatment", "suppressed": false, "dependencies": [previous],
+        "outputs": ["synthetic:cube:body#0"], "source_properties": {}, "source_content": [],
+        "definition": {"kind": "operation", "value": {"kind": kind, "value": definition}}}),
+    );
+    let (c, r) = if hole { (5.0, 2.0) } else { (0.0, 5.0) };
+    let point = |a: f64| json!({"x": c + r * a.cos(), "y": c + r * a.sin(), "z": 10.0});
+    m["feature_input_topologies"] = json!([{
+        "id": "synthetic:closed:feature-input-topology#0", "input_of": "synthetic:closed:feature#0",
+        "edges": ["rim"], "faces": [], "bodies": [], "vertices": [],
+        "edge_geometry": [{"edge": "rim", "start": point(seam), "end": point(seam),
+            "interior": point(seam + std::f64::consts::PI),
+            "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": []}]
+    }]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn closed_circle_blends_keep_older_targets_and_non_circular_curves_refused() {
+    let base = closed_circle_blend(false, 0.0);
+    let older = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.43.0".parse().unwrap()));
+    let (_, report) = convert(&base, &older);
+    assert!(
+        history_line(&report).contains("closed input circles need SolidCraft 0.44 patch 1"),
+        "{report:?}"
+    );
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["feature_input_topologies"][0]["edge_geometry"][0]["tangent"] =
+        json!({"x": 1.0, "y": 0.0, "z": 0.0});
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.44.1".parse().unwrap()));
+    let (_, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("closed input curves other than proven circles"),
+        "{report:?}"
+    );
+}
+
+/// The new replay cases target the tested release; the older opens-in CI remains intact.
+fn closed_blend_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    let version = std::process::Command::new(&cli)
+        .arg("--version")
+        .output()
+        .unwrap();
+    let text = String::from_utf8(version.stdout).unwrap();
+    let version: dutchman_solidcraft::SolidCraftVersion =
+        text.split_whitespace().last().unwrap().parse().unwrap();
+    if version < dutchman_solidcraft::SolidCraftVersion::V0_44_1 {
+        eprintln!("skipped: closed circle replay needs SolidCraft 0.44.1 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
+#[test]
+fn solidcraft_replays_closed_circle_fillets_and_hole_chamfers_across_seams() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let writer = replaying(&cli).target_version(Some("0.44.1".parse().unwrap()));
+    for (hole, sketch_based) in [(false, false), (true, false), (false, true), (true, true)] {
+        for seam in [0.0, 0.71, 2.5] {
+            let (bytes, report) =
+                written_with(&closed_circle_blend_from(hole, seam, sketch_based), &writer);
+            let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let mut text = String::new();
+            archive
+                .by_name("document.json")
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            let document: Value = serde_json::from_str(&text).unwrap();
+            let kind = if hole { "chamfer" } else { "fillet" };
+            let blend = document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["type"] == kind)
+                .unwrap_or_else(|| panic!("{report:?}"));
+            assert!(!blend["edges"].as_array().unwrap().is_empty(), "{blend}");
+            assert!(
+                !history_line(&report).starts_with("flattened"),
+                "{report:?}"
+            );
+            let actual_path = dir.path().join("actual.sc");
+            std::fs::write(&actual_path, bytes).unwrap();
+            let actual = blend_measurement(&cli, &actual_path, &dir.path().join("actual.json"));
+            // Replay the reference at a point on the circle, independently of the source seam.
+            let script = if hole {
+                json!([
+                    {"command": "solid.box", "params": {"length": "10 mm", "width": "10 mm", "height": "10 mm", "body_name": "Reference"}},
+                    {"command": "solid.hole", "params": {"position": [5,5,10], "direction": [0,0,-1], "diameter": "4 mm", "targets": ["Reference"]}},
+                    {"command": "solid.chamfer", "params": {"edges": [[7,5,10]], "distance": "0.5 mm", "body": "Reference"}}
+                ])
+            } else {
+                json!([
+                    {"command": "solid.cylinder", "params": {"radius": "5 mm", "height": "10 mm", "body_name": "Reference"}},
+                    {"command": "solid.fillet", "params": {"edges": [[5,0,10]], "radius": "1 mm", "body": "Reference"}}
+                ])
+            };
+            let expected_path = dir.path().join("expected.json");
+            std::fs::write(&expected_path, script.to_string()).unwrap();
+            let expected = blend_measurement(
+                &cli,
+                &expected_path,
+                &dir.path().join("expected-measured.json"),
+            );
+            for key in ["volume_mm3", "area_mm2"] {
+                let a = actual[key].as_f64().unwrap();
+                let b = expected[key].as_f64().unwrap();
+                assert!(
+                    (a - b).abs() <= 1e-5 * b.abs().max(1.0),
+                    "{key}: {actual} vs {expected}"
+                );
+            }
+            for axis in 0..3 {
+                assert!(
+                    (actual["center_of_mass"][axis].as_f64().unwrap()
+                        - expected["center_of_mass"][axis].as_f64().unwrap())
+                    .abs()
+                        < 1e-5
+                );
+                for end in ["min", "max"] {
+                    assert!(
+                        (actual["bbox"][end][axis].as_f64().unwrap()
+                            - expected["bbox"][end][axis].as_f64().unwrap())
+                        .abs()
+                            < 1e-5
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() {
+    let Some(cli) = closed_blend_cli() else {
+        return;
+    };
+    let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    model["feature_input_topologies"][0]["edge_geometry"] = json!([
+        {"edge": "near", "start": {"x": 0, "y": 0, "z": 10},
+            "end": {"x": 10, "y": 0, "z": 10}, "interior": {"x": 5, "y": 0, "z": 10},
+            "tangent": {"x": 1, "y": 0, "z": 0}, "faces": ["front", "left"]},
+        {"edge": "opposite", "start": {"x": 10, "y": 0, "z": 10},
+            "end": {"x": 10, "y": 10, "z": 10}, "interior": {"x": 10, "y": 5, "z": 10},
+            "tangent": {"x": 0, "y": 1, "z": 0}, "faces": ["back", "right"]}
+    ]);
+    model["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
+        json!(["near", "opposite"]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let (document, report) = convert(&model, &replaying(&cli));
+    assert_eq!(
+        document["features"][2]["edges"],
+        json!([[5.0, 0.0, 10.0], [10.0, 5.0, 10.0]]),
+        "{report:?}"
+    );
+    let (bytes, _) = written_with(&model, &replaying(&cli));
+    let dir = tempfile::tempdir().unwrap();
+    let actual_path = dir.path().join("actual.sc");
+    std::fs::write(&actual_path, bytes).unwrap();
+    let actual = blend_measurement(&cli, &actual_path, &dir.path().join("actual.json"));
+    let script = json!([
+        {"command": "solid.box", "params": {"length": "10 mm", "width": "10 mm", "height": "10 mm", "body_name": "Reference"}},
+        {"command": "solid.fillet", "params": {"edges": [[5,0,10],[10,5,10]], "radius": "1 mm", "body": "Reference"}}
+    ]);
+    let expected_path = dir.path().join("expected.json");
+    std::fs::write(&expected_path, script.to_string()).unwrap();
+    let expected = blend_measurement(
+        &cli,
+        &expected_path,
+        &dir.path().join("expected-measured.json"),
+    );
+    assert!(
+        (actual["volume_mm3"].as_f64().unwrap() - expected["volume_mm3"].as_f64().unwrap()).abs()
+            < 1e-5
+    );
+    assert_eq!(actual["faces"], expected["faces"]);
+}
+
 /// Synthetic prisms on opposite sides of one sketch, kept as separate bodies. Their
 /// stored example B-rep is deliberately unchanged, as in `input_blend`: the input
 /// topology and SolidCraft's replay, never that final B-rep, select the blend edges.

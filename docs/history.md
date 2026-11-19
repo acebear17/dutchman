@@ -199,7 +199,7 @@ Constant-radius fillets and equal-setback chamfers keep editable history when th
 feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
-in a batch (two runs within the check's time limit), up to the last feature a blend
+in a batch (two base runs and an optional circular-carrier pass within the check's time limit), up to the last feature a blend
 starts after, and reads the edges each blend starts from. If the picks span several
 bodies, each body gets its own blend with the same parameters, in the order its edges
 first appear. Names share the source name with numbered suffixes, as for radius groups;
@@ -207,10 +207,19 @@ the report still records one mapped source feature. Later feature patterns and m
 select every emitted part of the blend. Later blends replay the expanded
 history before their edges are proven. Without `solidcraft-cli`, or when the replay fails or runs out
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
-length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
+length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
-splits into pieces, closed edges and other curves are refused. A refusal says which part of the
+splits into pieces and other non-circular curves are refused. Closed input circles map for
+explicit targets of SolidCraft 0.44.1 or newer: their seam, opposite midpoint, and tangent
+establish the circle, as for historical face boundaries. Each rebuilt piece must lie on its
+plane and radius, with mesh length between the sample chords and the circular arc. An extra
+`inspect.measure` pass confirms the circular carrier's centre, axis, radius, and analytic
+length; it cannot certify a circle from its two seam samples alone. Sorted
+angular intervals must cover exactly one turn without gaps or overlaps on exactly one body.
+An overlapping candidate without carrier metadata also blocks the proof.
+Picks use the proven pieces' midpoints, independently of the source seam. Other closed
+curves retain a named refusal; older targets keep the original geometry. A refusal says which part of the
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at

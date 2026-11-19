@@ -426,6 +426,8 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// Blends selected by a proven closed circular path.
+    ClosedCircleBlend,
 }
 
 impl VersionGate {
@@ -434,6 +436,7 @@ impl VersionGate {
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
         }
     }
 
@@ -445,6 +448,11 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::default())
+        && !VersionGate::ClosedCircleBlend.supported(target)
+    {
+        return true;
+    }
     [
         VersionGate::EntryRecessTip,
         VersionGate::SketchProfileCoil,
@@ -489,6 +497,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// Release used to prove closed circular blend paths.
+    pub const V0_44_1: Self = Self([0, 44, 1]);
+
     /// First release that applies a drill-point angle on counterbores and countersinks.
     pub const V0_22_1: Self = Self([0, 22, 1]);
 
@@ -1484,7 +1495,8 @@ pub(crate) fn evaluate_json(
 }
 
 /// One edge of a body SolidCraft replayed, as `model.edges` gives it: its end vertices, the
-/// point halfway along it and its length, in millimetres. It gives no carrier or tangent.
+/// point halfway along it and its length, in millimetres. Circular carriers are measured
+/// separately when a closed blend requests them; ordinary edge/face proofs need no carrier.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ReplayedEdge {
     pub start: [f64; 3],
@@ -1493,6 +1505,20 @@ pub(crate) struct ReplayedEdge {
     pub length: f64,
     /// SolidCraft's name for it: the names of the faces it joins, separated by `|`.
     pub name: String,
+    /// The index reported in this replay, used only for its carrier measurement.
+    pub index: Option<usize>,
+    /// Circular carrier confirmed by an additional edge measurement, when requested.
+    pub circle: Option<ReplayedCircle>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReplayedCircle {
+    pub center: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
+    pub length: f64,
+    /// Measure can combine several pieces into their complete circular rim.
+    pub whole: bool,
 }
 
 /// One face of a body SolidCraft replayed, as `model.faces` gives it. `normal` is the
@@ -1523,7 +1549,8 @@ const REPLAY_EDGES: usize = 200_000;
 /// Replays `design` in SolidCraft and reports the bodies and their edges with the timeline
 /// rolled to just after each feature id in `after` (in that order): the bodies each later
 /// feature starts from. Two runs of the CLI in all, however many steps, within `timeout`
-/// together: one finds the bodies at every step, the next their edges. Each step is `Err`
+/// together: one finds the bodies at every step, the next their edges. Closed circles
+/// optionally request a third pass for circular carriers within the same deadline. Each step is `Err`
 /// when a feature before it fails there; the whole is `Err` when SolidCraft gives no answer.
 pub(crate) fn replay_edges(
     cli: &(impl SolidCraftEvaluator + ?Sized),
@@ -1531,6 +1558,7 @@ pub(crate) fn replay_edges(
     design: &[u8],
     after: &[u64],
     faces: bool,
+    circles: bool,
 ) -> Result<Vec<Result<Replay, String>>, String> {
     let deadline = Instant::now() + timeout;
     let roll = |id: u64| crate::replay::roll_commands(id)[0].clone();
@@ -1621,7 +1649,108 @@ pub(crate) fn replay_edges(
             }
         }
     }
+    if circles {
+        measure_circles(cli, deadline, design, after, &mut steps);
+    }
     Ok(steps)
+}
+
+/// This optional pass must not discard the existing edge/face proof when an evaluator
+/// cannot measure circular carriers. Only the new closed-circle proof then refuses.
+fn measure_circles(
+    cli: &(impl SolidCraftEvaluator + ?Sized),
+    deadline: Instant,
+    design: &[u8],
+    after: &[u64],
+    steps: &mut [Result<Replay, String>],
+) {
+    let mut script = Vec::new();
+    let mut locations = Vec::new();
+    for (s, (id, step)) in after.iter().zip(steps.iter()).enumerate() {
+        let Ok(replay) = step else { continue };
+        let [roll, _] = crate::replay::roll_commands(*id);
+        script.push(roll);
+        for (b, (name, edges)) in replay.bodies.iter().enumerate() {
+            for (e, edge) in edges.iter().enumerate() {
+                let Some(index) = edge.index else { continue };
+                if locations.len() >= REPLAY_EDGES {
+                    return;
+                }
+                locations.push((s, b, e, script.len()));
+                script.push(serde_json::json!({"command": "inspect.measure", "params": {
+                    "items": [{"type": "edge", "body": name, "index": index, "point": edge.mid}]
+                }}));
+            }
+        }
+    }
+    if locations.is_empty() {
+        return;
+    }
+    let Ok(results) = cli.run(
+        design,
+        &script,
+        deadline.saturating_duration_since(Instant::now()),
+        "circle carriers",
+    ) else {
+        return;
+    };
+    for (s, b, e, at) in locations {
+        let circle = results.get(at).and_then(replayed_circle);
+        if let Some(edge) = steps
+            .get_mut(s)
+            .and_then(|step| step.as_mut().ok())
+            .and_then(|step| step.bodies.get_mut(b))
+            .and_then(|(_, edges)| edges.get_mut(e))
+        {
+            edge.circle = circle;
+        }
+    }
+}
+
+fn replayed_circle(row: &Value) -> Option<ReplayedCircle> {
+    let [item] = row.get("items")?.as_array()?.as_slice() else {
+        return None;
+    };
+    if item.get("type")?.as_str()? != "edge" {
+        return None;
+    }
+    let whole = match item.get("round")?.as_str()? {
+        "circle" => true,
+        "arc" => false,
+        _ => return None,
+    };
+    let number = |key| item.get(key)?.as_f64().filter(|value| value.is_finite());
+    let radius = number("radius").filter(|radius| *radius > 0.0)?;
+    let length = number("length_mm").filter(|length| *length > 0.0)?;
+    let analytic_length = number(if whole { "circumference" } else { "arc_length" })?;
+    if length.to_bits() != analytic_length.to_bits() {
+        // A fitted mesh circle reports its polygon length, whereas an exact circle's
+        // length and circumference are the same radius-times-turn calculation in 0.44.1.
+        return None;
+    }
+    let point = |key| -> Option<[f64; 3]> {
+        let values = item.get(key)?.as_array()?;
+        if values.len() != 3 {
+            return None;
+        }
+        let mut out = [0.0; 3];
+        for (slot, value) in out.iter_mut().zip(values) {
+            *slot = value.as_f64().filter(|value| value.is_finite())?;
+        }
+        Some(out)
+    };
+    let axis = point("axis")?;
+    let norm = axis.iter().map(|value| value * value).sum::<f64>().sqrt();
+    if !norm.is_finite() || norm <= 0.0 {
+        return None;
+    }
+    Some(ReplayedCircle {
+        center: point("center")?,
+        axis: axis.map(|value| value / norm),
+        radius,
+        length,
+        whole,
+    })
 }
 
 /// The bodies a `document.inspect` result holds, or the first feature still active that
@@ -1714,6 +1843,11 @@ fn edge_fields(row: &Value) -> Option<ReplayedEdge> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        index: row
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok()),
+        circle: None,
     })
 }
 
@@ -1962,6 +2096,29 @@ fn parse(value: &Value) -> Result<Eval, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn circular_edge_measurements_require_the_plane_and_an_analytic_length() {
+        let full = 10.0 * std::f64::consts::PI;
+        let mut row = serde_json::json!({"items": [{"type": "edge", "round": "circle",
+            "center": [0,0,10], "axis": [0,0,1], "radius": 5.0,
+            "length_mm": full, "circumference": full}]});
+        let circle = super::replayed_circle(&row).unwrap();
+        assert_eq!(circle.center, [0.0, 0.0, 10.0]);
+        assert_eq!(circle.axis, [0.0, 0.0, 1.0]);
+        assert!(circle.whole);
+        // Measured in the 0.44.1 cylinder probe: a fitted mesh must not certify a circle.
+        row["items"][0]["length_mm"] = serde_json::json!(31.365175761189757);
+        assert!(super::replayed_circle(&row).is_none());
+        row["items"][0]["length_mm"] = serde_json::json!(full);
+        row["items"][0]["axis"] = serde_json::Value::Null;
+        assert!(super::replayed_circle(&row).is_none());
+        row["items"][0]["axis"] = serde_json::json!([0, 0, 0]);
+        assert!(super::replayed_circle(&row).is_none());
+        row["items"][0]["axis"] = serde_json::json!([0, 0, 1]);
+        row["items"][0]["round"] = serde_json::json!("cylinder");
+        assert!(super::replayed_circle(&row).is_none());
+    }
+
     use super::*;
 
     #[test]
@@ -3315,6 +3472,8 @@ mod version_tests {
         assert!(!target_loses_history(after));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
+        assert!(!VersionGate::ClosedCircleBlend.supported("0.44.0".parse().unwrap()));
+        assert!(VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::V0_44_1));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());
         assert!("0.18.2".parse::<SolidCraftVersion>().is_ok());
         assert_ne!(
