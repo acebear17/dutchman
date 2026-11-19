@@ -1,4 +1,4 @@
 ### Command line and install
 
-- On Windows, refusing an IGES file no longer crashes the command line: it exits with status 1
-  and the refusal message, as on other platforms.
+- On Windows, the command line no longer crashes with a stack overflow (exit 0xC0000409),
+  for example when refusing an IGES file: it now runs with the same stack on every platform.

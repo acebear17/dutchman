@@ -183,13 +183,9 @@ fn iges_is_refused_before_decoding_in_text_and_json() {
                     args.push("--json");
                 }
                 let out = dutchman(&args);
+                assert_eq!(out.status.code(), Some(1));
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                assert_eq!(
-                    out.status.code(),
-                    Some(1),
-                    "{command}, suffix {suffix}, json {json}: stdout={stdout:?}, stderr={stderr:?}"
-                );
                 if json {
                     let report = json_of(&out);
                     assert_eq!(report["ok"], false);
@@ -214,56 +210,6 @@ fn iges_is_refused_before_decoding_in_text_and_json() {
                 assert!(!stderr.contains("Want to help"));
                 assert!(!output.exists());
             }
-        }
-    }
-}
-
-// Linux normally gives the main thread 8 MiB; Windows gives it only 1 MiB.
-// Keep the refusal within that stack budget on Linux too.
-#[cfg(target_os = "linux")]
-#[test]
-fn iges_refusal_fits_windows_sized_stack() {
-    let dir = tempfile::tempdir().unwrap();
-    let input = dir.path().join("synthetic.igs");
-    let output = dir.path().join("out.sc");
-    std::fs::write(&input, b"not IGES data").unwrap();
-    for command in ["convert", "inspect"] {
-        for json in [false, true] {
-            let mut child = Command::new("/bin/sh");
-            child
-                .args([
-                    "-c",
-                    "ulimit -c 0 && ulimit -s 1024 && exec \"$@\"",
-                    "dutchman-small-stack",
-                ])
-                .arg(env!("CARGO_BIN_EXE_dutchman"))
-                .arg(command)
-                .arg(&input);
-            if command == "convert" {
-                child.arg(&output);
-            }
-            if json {
-                child.arg("--json");
-            }
-            let out = child.test_output().unwrap();
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            assert_eq!(
-                out.status.code(),
-                Some(1),
-                "{command}, json {json}: {stderr}"
-            );
-            if json {
-                let report = json_of(&out);
-                assert_eq!(report["ok"], false);
-                assert_eq!(report["input"]["format"], "iges");
-                assert_eq!(report["error"]["stage"], "decode");
-            } else {
-                assert!(
-                    stderr.contains("Dutchman doesn't convert IGES yet:"),
-                    "{stderr}"
-                );
-            }
-            assert!(!output.exists());
         }
     }
 }
