@@ -969,6 +969,7 @@ mod tests {
             origin: [0.0, 0.0, 0.0],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: vec![
                 ("origin".to_owned(), [0.0, 0.0]),
                 ("l1.start".to_owned(), [0.0, 0.0]),
