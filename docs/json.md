@@ -589,6 +589,64 @@ from a face without a resolved interior point. A decoded body proven to have no 
 STEP shape says “its body has no geometry the STEP writer can write”. Uniform face
 appearances carried as a body colour are preserved and do not produce a loss.
 
+### Counts-only anonymous report: `dutchman.report-counts/1`
+
+`convert` and `convert-all` accept `--report-counts --report-anon FILE`.
+MCP `convert_all` accepts `report_counts: true` with `report_anon` as its destination.
+Both write locally on explicit request. Review the file before sharing; choosing this
+profile does not authorize sending it. Existing confirmation requirements still apply.
+The profile cannot be combined with a report salt or private key. The ordinary report
+remains the default. The local MCP result reports `report_anon: {path, profile: "counts"}`
+without a salt; that local destination path is outside the shareable payload. The browser plugin has no anonymous-report entry point.
+
+This is an allow-list schema, built directly from conversion reports. Its serializable
+Rust types have private fields containing only enums, booleans, integer counters, numeric
+version components, and collections of those types. There are no source strings, arbitrary
+JSON values or user-defined map keys. Unknown input words become `unknown`; no scrubbing
+or substring replacement is involved. Names, paths, messages, IDs, dimensions, geometry,
+source version strings and exact durations have no representation. Counts and version
+components are unsigned 64-bit integers.
+
+| Field | Meaning |
+|---|---|
+| `schema` | The single fixed word `dutchman.report-counts/1`. |
+| `converter_version` | Three built-in numeric release components: major, minor, patch. No environment or source text. |
+| `files` | Aggregate rows with `source_format`, `source_version_band`, `document`, `verification`, `timing`, `converted` (boolean), and `count`. Identical rows are combined; there is no per-file identifier. |
+| `features_by_kind` | Total recorded timeline features by fixed kind. Sum of each kind's outcome counts. Empty when the converter records no feature outcomes, including geometry-only conversion. |
+| `features` | Aggregate rows with fixed `kind`, `outcome`, `reason`, and integer `count`. No feature names, ordinals, variants, selections or output IDs. |
+
+`source_format` uses the fixed input format identifiers defined above, plus `unknown`.
+`source_version_band` is `unknown`: conversion reports currently do not record the source
+version. It never guesses a version from a name or error message. `document` is `part`,
+`assembly`, or `unknown` when the format is not recognized, based on the recorded assembly or the fixed source-format category.
+`verification` is `verified`, `partial`, `differs`, `unverified`, `flattened`,
+`not_applicable`, or `unknown`.
+
+`timing` is `unknown` when absent, `under_second` for less than one second, `seconds` for
+less than one minute, `minutes` for less than one hour, or `over_hour` for an hour or more.
+These are display bands, not resource estimates.
+
+Feature `kind` accepts only the neutral operation words enumerated in
+[`counts.rs`](../crates/dutchman/src/counts.rs) and `unknown`. An exhaustive compile-time test requires a category for every operation enum
+variant. Outcome and reason pairs are:
+
+| Source outcome | `outcome` | `reason` |
+|---|---|---|
+| Mapped | `mapped` | `none` |
+| Mapped with an inferred selection | `changed` | `inferred` |
+| Mapped by reapplying to a final body | `changed` | `reapplied` |
+| No target feature needed | `mapped` | `not_needed` |
+| Left out | `dropped` | `left_out` |
+| Blocked with a replay category | `stopped` | `replay` |
+| Other blocked feature | `stopped` | `mapping_limit` |
+| Unrecognized or absent status | `unknown` | `unknown` |
+
+Reasons are broad categories of recorded outcomes. Free-form explanations and replay
+category text are never copied. Counts describe recorded outcomes, not an independent
+inventory of a file that could not be decoded. Enum coverage tests intentionally fail
+compilation when an operation, outcome, verification status or reason enum grows without
+an explicit category decision. Fixture goldens and hostile-field tests guard the payload.
+
 ### Stages
 
 Every loss, and every failure's `error`, says where in the conversion it arose, so a report of
