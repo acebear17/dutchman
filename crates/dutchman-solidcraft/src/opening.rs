@@ -120,6 +120,7 @@ impl SolidCraftWriter {
                 continue;
             }
             let mut removed = BTreeSet::new();
+            let mut unlocated = Vec::new();
             for (row, why) in failures {
                 let name = row.get("name").and_then(Value::as_str).unwrap_or("?");
                 let matches = |feature: &Value| {
@@ -129,9 +130,12 @@ impl SolidCraftWriter {
                         feature.get("name").and_then(Value::as_str) == Some(name)
                     }
                 };
-                let at = features.iter().position(matches).ok_or_else(|| {
-                    failure(format!("cannot locate failed feature \"{name}\": {why}"))
-                })?;
+                // A failure that names no feature in the written design can't be repaired
+                // here; it is reported, and the design keeps its existing check result.
+                let Some(at) = features.iter().position(matches) else {
+                    unlocated.push(format!("\"{name}\": {why}"));
+                    continue;
+                };
                 let failed = features.get(at).ok_or_else(|| failure("missing feature"))?;
                 let component = failed.get("component").cloned();
                 let part_name = component
@@ -273,6 +277,10 @@ impl SolidCraftWriter {
                     }
                 }
             }
+            if removed.is_empty() {
+                not_located(report, &unlocated);
+                return Ok(bytes);
+            }
             features.retain(|feature| {
                 !feature
                     .get("id")
@@ -382,6 +390,20 @@ fn replace_document(
         .write_all(&serde_json::to_vec(doc).map_err(failure)?)
         .map_err(failure)?;
     Ok(output.finish().map_err(failure)?.into_inner())
+}
+
+/// SolidCraft named failed features that the written design doesn't contain under that name.
+fn not_located(report: &mut Report, failures: &[String]) {
+    let why = format!(
+        "SolidCraft reported failed features that could not be matched to the written design: {}",
+        failures.join("; ")
+    );
+    report.push_at(Stage::SolidCraft, Severity::Degraded, crate::HISTORY, &why);
+    if let Some(outcome) = report.outcome_mut() {
+        if matches!(outcome.check, Check::Verified) {
+            outcome.check = Check::Differs(why);
+        }
+    }
 }
 
 fn unavailable(report: &mut Report, why: &str) {
