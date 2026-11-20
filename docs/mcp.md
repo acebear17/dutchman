@@ -1290,6 +1290,20 @@ Review the exact file before sharing. This option writes locally and does not au
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
 
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+Select SolidCraft 0.44.1 explicitly as the target.
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.
+
 The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
 history planning without writing a design. The default target gets a forecast;
 other targets and exhausted budgets return unknown. This is not an MCP tool.
