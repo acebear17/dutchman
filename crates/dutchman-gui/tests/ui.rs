@@ -880,7 +880,16 @@ fn shot(
 fn wait_for_estimate(harness: &mut Harness<'static, App>) {
     harness.run_steps(8);
     let started = Instant::now();
-    while harness.query_all_by_label_contains("GB, ").count() == 0 {
+    while harness
+        .query_all_by_label_contains("GB of memory and ")
+        .count()
+        == 0
+        && harness.query_all_by_label_contains("GB, ").count() == 0
+        && harness
+            .query_all_by_label_contains("GB of memory at peak and ")
+            .count()
+            == 0
+    {
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "estimate did not arrive"
@@ -4656,6 +4665,85 @@ fn report_flow_case_screenshots() {
         std::fs::write(dir.join("MEASUREMENTS.md"), measurements).unwrap();
         std::fs::write(dir.join("INDEX.md"), index).unwrap();
     }
+}
+
+/// Reuses the normal screenshot encoder for a synthetic folder at two window widths.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn designs_header_screenshots() {
+    if std::env::var_os("DUTCHMAN_DESIGNS_HEADER_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "designs_header_screenshots",
+                "--nocapture",
+            ])
+            .env("DUTCHMAN_DESIGNS_HEADER_CHILD", "1")
+            .env("HOME", home.path())
+            .env("LOCALAPPDATA", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let folder = work.path().join(
+        "synthetic-designs/long-folder-for-mechanical-projects/working-copies/current-designs",
+    );
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::copy(
+        fixture("generated_unit_cube.f3d"),
+        folder.join("generated_unit_cube.f3d"),
+    )
+    .unwrap();
+    let multiple = work.path().join("synthetic-designs/three-designs");
+    std::fs::create_dir_all(&multiple).unwrap();
+    for name in ["cube-one.f3d", "cube-two.f3d", "cube-three.f3d"] {
+        std::fs::copy(fixture("generated_unit_cube.f3d"), multiple.join(name)).unwrap();
+    }
+    let mut index = String::from("# Designs header\n\nSynthetic designs selected by folder.\n\n");
+    for (case, input, connected) in [
+        ("single", &folder, false),
+        ("three", &multiple, false),
+        ("connected", &folder, true),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "light"),
+            (ThemePreference::Dark, "dark"),
+        ] {
+            for width in [1180.0, 900.0] {
+                let mut h = Harness::builder()
+                    .with_size(egui::vec2(width, 800.0))
+                    .build_eframe(|cc| test_app(cc));
+                h.ctx.set_theme(theme);
+                h.state_mut().set_checker_for_test(true);
+                h.state_mut().preview_solidcraft(Some("0.44.9"));
+                h.state_mut()
+                    .preview_onshape(connected.then_some("Test designer"));
+                h.state_mut().add_inputs([input.clone()]);
+                h.state_mut().set_out_dir(work.path().join("converted"));
+                wait_for_estimate(&mut h);
+                shot(
+                    &mut h,
+                    &dir,
+                    &mut index,
+                    &format!("{case}-{width:.0}x800"),
+                    name,
+                    "Folder and conversion estimate.",
+                );
+            }
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
 fn many_results_onshape_harness(
