@@ -1643,6 +1643,11 @@ source attributes are dropped with subject `attributes` and a message naming
 that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
+The desktop report panel stays visible below output controls in wide windows. Discord
+comes first, with a small **GitHub issue** backup link (a public issue under the user's
+GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+Partial history, geometry-only and degraded results use a warning colour. Report fields
+and CLI/MCP behavior are unchanged.
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
 
 CLI `onshape fetch --json` and MCP `onshape_fetch` share this report builder.

@@ -1145,6 +1145,11 @@ existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
 
+The desktop report panel stays visible below output controls in wide windows. Discord
+comes first, with a small **GitHub issue** backup link (a public issue under the user's
+GitHub name). **Anonymous report**, under **More**, opens review before direct cloud upload.
+Partial history, geometry-only and degraded results use a warning colour. Report fields
+and CLI/MCP behavior are unchanged.
 Onshape up-to-next extents use exact intersections with stored input faces to prove
 coverage and first termination over closed profile boundaries. Face/cap attachments
 need stored complete frames. Thin extrudes need stored thickness, side and direction
