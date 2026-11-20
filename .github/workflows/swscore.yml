@@ -1,0 +1,173 @@
+# Compare the checked-in cadmpeg pin with a fixed newer commit on released CC0 files only.
+name: SolidWorks pin gap
+
+on:
+  push:
+    branches: ["swscore-run/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Freeze the public CC0 SolidWorks manifest and split into 16 shards
+        id: prepare
+        run: python3 scripts/swscore-run.py prepare --out fixtures
+      - uses: actions/upload-artifact@v7
+        with:
+          name: swscore-fixtures
+          path: fixtures/manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    container: debian:bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [pin, main]
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci-tools-bookworm
+          save-if: false
+      - name: Move every cadmpeg pin and update only cadmpeg packages
+        id: update
+        if: matrix.variant == 'main'
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build
+          # This helper rewrites every cadmpeg git rev and selects every cadmpeg
+          # package named by Cargo.lock with cargo update -p (never a broad update).
+          scripts/use-cadmpeg-main.sh d3acf478605ea753556423a39745c0539a451d9b 2>&1 | tee build/update.log
+      - name: Build Dutchman
+        id: compile
+        if: matrix.variant == 'pin' || steps.update.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p build
+          locked=()
+          if [[ "$VARIANT" == pin ]]; then locked=(--locked); fi
+          # Bookworm matches the runtime used by gate.yml. The moved pin builds unlocked.
+          cargo build --release "${locked[@]}" -p dutchman --bin dutchman \
+            --config profile.release.lto=false --config profile.release.codegen-units=16 2>&1 | tee build/build.log
+          cp target/release/dutchman build/dutchman
+      - name: Record build outcome, including API drift
+        if: always()
+        env:
+          VARIANT: ${{ matrix.variant }}
+          UPDATE_OUTCOME: ${{ steps.update.outcome }}
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          DUTCHMAN_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          out = pathlib.Path('build')
+          out.mkdir(exist_ok=True)
+          manifest = pathlib.Path('Cargo.toml')
+          revs = re.findall(r'git = "https://github.com/cadmpeg/cadmpeg", rev = "([a-f0-9]+)"', manifest.read_text()) if manifest.exists() else []
+          status = dict(variant=os.environ['VARIANT'], commit=os.environ['DUTCHMAN_COMMIT'],
+                        cadmpeg=sorted(set(revs)), update=os.environ['UPDATE_OUTCOME'],
+                        compile=os.environ['COMPILE_OUTCOME'],
+                        ok=os.environ['COMPILE_OUTCOME'] == 'success')
+          (out / 'build.json').write_text(json.dumps(status, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: swscore-build-${{ matrix.variant }}
+          path: build/
+          if-no-files-found: error
+          retention-days: 14
+
+  score:
+    name: swscore (${{ matrix.variant }}, shard ${{ matrix.shard }})
+    needs: [setup, build]
+    if: ${{ always() && needs.setup.result == 'success' && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: swscore-build-${{ matrix.variant }}
+          path: bin
+      - uses: actions/download-artifact@v8
+        with:
+          name: swscore-fixtures
+          path: fixtures
+      - name: Fetch SolidCraft
+        if: hashFiles('bin/dutchman') != ''
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOLIDCRAFT_CACHE: solidcraft-cache
+        run: |
+          mkdir -p out
+          minor=$(sed -n 's/^pub const NEWEST_SOLIDCRAFT: \[u64; 2\] = \[0, \([0-9]*\)\];$/0.\1/p' crates/dutchman-solidcraft/src/verify.rs)
+          version=$(scripts/solidcraft-window.sh --fetch "$minor" "" 2> out/solidcraft-fetch.log)
+          echo "SOLIDCRAFT_CLI=$PWD/solidcraft-${version}-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
+          echo "SOLIDCRAFT_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Download, verify, convert, and reopen each file
+        env:
+          VARIANT: ${{ matrix.variant }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python3 scripts/swscore-run.py score --manifest fixtures/manifest.json \
+            --variant "$VARIANT" --shard "$SHARD" --binary bin/dutchman --out out
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: swscore-${{ matrix.variant }}-${{ matrix.shard }}
+          path: |
+            out/*.json
+            out/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  summary:
+    needs: [setup, build, score]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: swscore-*
+          path: artifacts
+      - name: Summarize both variants and the remaining gap
+        run: python3 scripts/swscore-summary.py artifacts --out .
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: swscore-summary
+          path: |
+            swscore-summary.md
+            swscore-summary.json
+          if-no-files-found: error
+          retention-days: 14

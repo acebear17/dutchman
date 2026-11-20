@@ -59,3 +59,64 @@ python3 scripts/fixture-score.py shard --manifest /tmp/two-public-files.json \
 ```
 
 This checks local bytes and result paths. It sends no files and runs no CAD tools.
+
+## SolidWorks pin gap
+
+The separate **SolidWorks pin gap** workflow (`.github/workflows/swscore.yml`) runs on
+pushes to `swscore-run/**` and by `workflow_dispatch`. Push a branch with that prefix, or
+select the workflow in Actions and choose **Run workflow**. From an authenticated checkout:
+
+```sh
+gh workflow run swscore.yml --ref swscore-run/pin-gap
+```
+
+It snapshots the same public manifest once, selects only `app: SolidWorks` (ignoring case),
+`consent: cc0`, and `.sldprt`/`.sldasm` files, and distributes them across 16 shards for each
+of two builds. `pin` uses the checked-in manifest and lockfile; `main` moves every cadmpeg
+pin to `d3acf478605ea753556423a39745c0539a451d9b`, updates only the cadmpeg packages,
+and builds without `--locked`. Both builds use Debian Bookworm. An update or compile failure
+keeps its log and build outcome so the summary can report API drift without claiming gains.
+
+Each shard downloads SolidCraft once using the newest minor in the writer's version window,
+checks each public file's byte count and SHA-256, and gives each conversion 900 seconds.
+It then reopens any written design with `timeline.roll_to` at `end`, as the Gate workflow
+does, with a separate 900-second limit. Download, conversion, and reopen failures are
+per-file results and do not stop the shard. Files convert independently; assemblies whose
+external parts are not present can report missing references. Native files and designs stay
+in scratch directories and are never uploaded.
+
+Artifacts, retained for 14 days, are:
+
+- `swscore-fixtures`: the filtered manifest used by both variants.
+- `swscore-build-pin` and `swscore-build-main`: the successful binary, available update/build
+  logs, and `build.json` (commit, cadmpeg revisions, update/compile outcomes, and `ok`).
+- `swscore-<variant>-<shard>`: conversion reports, reopen results, logs, shard metadata, and
+  per-file `*-result.json` records with file key, SHA-256, download verification, conversion
+  and reopen exit codes, conversion report, completion flag, and any error. Exit 124 means
+  the corresponding command exceeded its deadline. Available records survive shard failure.
+- `swscore-summary`: `swscore-summary.md` and `swscore-summary.json`. The Markdown also goes
+  to the Actions job summary. The JSON contains per-variant builds, counts, per-file first
+  blockers, grouped gaps with file lists, and files without comparable evidence.
+
+User timeline counts exclude `not_needed` and `left_out`; mapped counts only user rows with
+status `mapped`, and rebuilt sums `history.rebuilt`. Full mapping requires at least one user
+feature and successful conversion. Reopen success means the SolidCraft command exited zero.
+The first blocker skips downstream reasons matching `after the first blocking` or
+`earlier feature .* blocked`. Native kinds are grouped by the feature name's prefix before
+its first digit.
+
+The gap table compares first-blocker `(kind, reason)` signatures per file only where both
+builds and conversions succeeded and history is available. A signature gone on `main` is
+**closed by the pin move**; a new signature is listed under **new on main (regressions)**.
+Changed first blockers can expose later gaps, so these labels do not prove full recovery or
+a regression by themselves. Unchanged blockers are **Dutchman mapping still lacks** for
+explicit mapping/SolidCraft limitations, otherwise **cadmpeg**. This ownership heuristic
+first excludes native, unresolved, missing-data, and explicit cadmpeg reasons. Build failures,
+missing evidence, and user history disappearing on `main` never count as closed gaps.
+
+To summarize downloaded artifacts locally, preserving their artifact-name directories:
+
+```sh
+python3 scripts/swscore-summary.py /path/to/artifacts --out /tmp/swscore-summary
+python3 -m unittest discover -s scripts/tests -p test_swscore.py -v
+```
