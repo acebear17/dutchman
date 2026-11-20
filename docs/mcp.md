@@ -1179,7 +1179,9 @@ windows pin **Report a problem…** (or **Report this design…** with a result 
 **Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
 a small **GitHub issue** backup link (a public issue under the user's GitHub name).
 **Anonymous report**, under **More**, opens review before direct cloud upload.
-Partial history, geometry-only and degraded results use a warning colour. Report fields
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review. Report fields
 and CLI/MCP behavior are unchanged.
 Onshape up-to-next extents use exact intersections with stored input faces to prove
 coverage and first termination over closed profile boundaries. Face/cap attachments

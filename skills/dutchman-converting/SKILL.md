@@ -1003,7 +1003,10 @@ windows. In narrow windows, **Report a problem…** (or **Report this design…*
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
 Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
 is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
-in the same panel. Partial history, geometry-only and degraded results use a warning colour.
+in the same panel.
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review.
 Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
