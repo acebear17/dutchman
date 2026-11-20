@@ -25,6 +25,7 @@ pub mod issue;
 pub mod json;
 pub mod mcp;
 pub mod onshape;
+pub mod preflight;
 pub mod present;
 pub mod progress;
 pub mod report_policy;
@@ -70,6 +71,8 @@ impl OutputFormat {
 }
 
 /// The selected output adapter.
+// One adapter per conversion; retain the public variant construction API.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum OutputWriter {
     /// Retains options so the batch runner can prepare each input's memory budget.
