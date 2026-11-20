@@ -83,11 +83,11 @@ const GEOMETRY: &str = "geometry";
 /// What the report says turned history off, unless a front end names its own choice.
 const IMPORT_ONLY_REASON: &str = "--import-only";
 
-/// Writes `.sc` designs.
-#[derive(Clone, Debug)]
 /// The least time the final opening check gets: a large assembly takes minutes to open.
 pub const OPENING_CHECK_FLOOR: Duration = Duration::from_secs(15 * 60);
 
+/// Writes `.sc` designs.
+#[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
     evaluator: Option<std::sync::Arc<dyn SolidCraftEvaluator>>,
     threads: usize,
