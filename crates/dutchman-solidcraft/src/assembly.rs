@@ -509,16 +509,25 @@ fn plan_parts(
     features: &mut Vec<FeatureOutcome>,
 ) {
     for part in parts {
-        if writer.import_only {
+        if writer
+            .plan_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            return;
+        }
+        // Leaves whose geometry cannot be written contribute no written history.
+        if writer.import_only || step::restatable(part).is_err() {
             continue;
         }
         let file = part.source_file.as_deref().unwrap_or(&part.name);
         let mut part_report = Report::default();
-        let mut mapping = history::map_with_sketches(
+        let mut mapping = history::map_until(
             part,
             &mut part_report,
             writer.resolved_version(),
             writer.sketches,
+            &[],
+            writer.plan_deadline,
         );
         writer.plan_blends(&mut mapping);
         crate::output_links::not_written(&mut mapping.features);
@@ -699,7 +708,7 @@ fn prepare_history(
         if history.stop.is_some() {
             None
         } else {
-            let written = writer.history_design(part, history, step, Live::History)?;
+            let written = writer.history_design(part, history, step, Live::History, false)?;
             Some(writer.check(part, history, step, &written, progress)?)
         }
     } else {
@@ -723,7 +732,7 @@ fn prepare_history(
     crate::report_sketches(&mapping.features, &mut part_report);
     if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
-            let original = writer.history_design(part, history, step, Live::Original)?;
+            let original = writer.history_design(part, history, step, Live::Original, false)?;
             writer.check_import(part, &original, &mut part_report, progress);
         }
     }
@@ -971,7 +980,7 @@ impl Builder<'_> {
                     .get(index)
                     .unwrap_or(&placement.transform)
             };
-            let transform = match rigid(transform) {
+            let mut transform = match rigid(transform) {
                 Ok((rotation, false)) => rotation,
                 result => {
                     let kind = result.err().unwrap_or("unresolved reflected placement");
@@ -983,6 +992,9 @@ impl Builder<'_> {
                     continue;
                 }
             };
+            if parent == 0 && self.writer.should_stand_up() {
+                transform = compose(&dutchman_core::placement::STAND_UP_Y_TO_Z, &transform);
+            }
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
                 occurrences.push(None);
                 continue;
@@ -1443,7 +1455,9 @@ impl Builder<'_> {
                     );
                     Check::Verified
                 }
-                verify::Outcome::Unverified(why) if self.writer.keep_unverified_hidden() => {
+                verify::Outcome::Unverified(why)
+                    if self.writer.keep_unverified_history_hidden(&history) =>
+                {
                     self.report.push_at(
                         Stage::SolidCraft,
                         Severity::Degraded,

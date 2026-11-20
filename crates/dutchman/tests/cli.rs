@@ -3734,11 +3734,13 @@ fn verbose_asks_for_plain_progress_lines_off_a_terminal() {
 #[test]
 fn convert_all_warns_about_a_missing_argument_that_looks_like_an_output_folder() {
     let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let wanted = dir.path().join("Converted");
     let out = dutchman(&[
         "convert-all",
         "--no-verify",
-        &fixture("generated_unit_cube.f3d"),
+        input.to_str().unwrap(),
         wanted.to_str().unwrap(),
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -3751,6 +3753,7 @@ fn convert_all_warns_about_a_missing_argument_that_looks_like_an_output_folder()
     // The missing input is still reported as before.
     assert_eq!(out.status.code(), Some(1));
     assert!(!wanted.exists());
+    assert!(dir.path().join("cube (SolidCraft)/dutchman.log").is_file());
 }
 
 #[test]
@@ -3853,4 +3856,70 @@ fn investigate_writes_a_summary_with_nothing_from_the_design_and_sends_nothing_u
     let mut both = no.clone();
     both.push("--yes");
     assert_eq!(dutchman(&both).status.code(), Some(2));
+}
+
+#[test]
+fn stand_up_cli_flags_control_occurrence_transform() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture("generated_unit_cube.f3d");
+    let output_default = dir.path().join("default.sc");
+    let output_stand_up = dir.path().join("stand_up.sc");
+    let output_no_stand_up = dir.path().join("no_stand_up.sc");
+
+    let res = dutchman(&["convert", &input, output_default.to_str().unwrap()]);
+    assert!(res.status.success());
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&output_default).unwrap()).unwrap();
+    let doc_file = archive.by_name("document.json").unwrap();
+    let doc: serde_json::Value = serde_json::from_reader(doc_file).unwrap();
+    assert_eq!(
+        doc["occurrences"][0]["transform"],
+        serde_json::json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    );
+
+    let res_stand_up = dutchman(&[
+        "convert",
+        "--stand-up",
+        &input,
+        output_stand_up.to_str().unwrap(),
+    ]);
+    assert!(res_stand_up.status.success());
+    let mut archive_su =
+        zip::ZipArchive::new(std::fs::File::open(&output_stand_up).unwrap()).unwrap();
+    let doc_file_su = archive_su.by_name("document.json").unwrap();
+    let doc_su: serde_json::Value = serde_json::from_reader(doc_file_su).unwrap();
+    assert_eq!(
+        doc_su["occurrences"][0]["transform"],
+        serde_json::json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    );
+
+    let res2 = dutchman(&[
+        "convert",
+        "--no-stand-up",
+        &input,
+        output_no_stand_up.to_str().unwrap(),
+    ]);
+    assert!(res2.status.success());
+    let mut archive2 =
+        zip::ZipArchive::new(std::fs::File::open(&output_no_stand_up).unwrap()).unwrap();
+    let doc_file2 = archive2.by_name("document.json").unwrap();
+    let doc2: serde_json::Value = serde_json::from_reader(doc_file2).unwrap();
+    assert_eq!(
+        doc2["occurrences"][0]["transform"],
+        serde_json::json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    );
 }

@@ -39,7 +39,30 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum OnshapeCommand {
+    /// Connect your Onshape account: asks for your API keys, tests them and saves them.
+    Login,
+    /// Forget the saved Onshape API keys.
+    Logout,
+    /// Show whether Onshape is connected, and as whom. Never shows keys.
+    Status,
+    /// Save raw API responses in an offline .onshape-bundle.
+    Fetch(dutchman::onshape::FetchOptions),
+}
+
+#[derive(Subcommand)]
 enum Command {
+    /// Scan and plan within budgets without writing a design.
+    Preflight {
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Fetch a private snapshot of your own Onshape document.
+    Onshape {
+        #[command(subcommand)]
+        command: OnshapeCommand,
+    },
     /// Review a local problem report, including a file that converted with a wrong result.
     Report {
         /// Folder holding prepared.json, or a fresh folder for a summary-only report.
@@ -391,7 +414,24 @@ fn quiet_when_stdout_closes() {
     }));
 }
 
+/// Stack for the thread that runs the command line. Windows gives a program's main thread
+/// 1 MiB, which parsing the command line, building the help and a conversion's deepest
+/// recursion can exceed (`0xC0000409`); other platforms give 8 MiB. Every platform gets the same.
+const CLI_STACK: usize = 64 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    match std::thread::Builder::new()
+        .name("dutchman".into())
+        .stack_size(CLI_STACK)
+        .spawn(run_cli)
+    {
+        // A panic was already reported by the panic hook; exit as Rust does for one.
+        Ok(thread) => thread.join().unwrap_or(ExitCode::from(101)),
+        Err(_) => run_cli(),
+    }
+}
+
+fn run_cli() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
@@ -467,6 +507,101 @@ fn main() -> ExitCode {
         return contents_command(&cli.command, quiet, verbose);
     }
     match cli.command {
+        Command::Preflight {
+            input,
+            json: as_json,
+        } => {
+            let forecast =
+                dutchman::preflight::preflight(&input, dutchman_core::preflight::Budget::default());
+            let scan = &forecast.scan;
+            if as_json {
+                println!("{}", json::preflight(&forecast));
+            } else {
+                let status = match scan.readable {
+                    dutchman_core::preflight::Readability::Readable => "readable",
+                    dutchman_core::preflight::Readability::NotReadable => "not readable",
+                    dutchman_core::preflight::Readability::Unknown => "unknown",
+                };
+                println!("Preflight: {status}. {}", scan.reason.message());
+                if let Some(detail) = &forecast.detail {
+                    println!("Reason: {detail}");
+                }
+                for prediction in &forecast.targets {
+                    use dutchman_core::preflight::Prediction;
+                    let outcome = match prediction.outcome {
+                        Prediction::FullHistory => "full history",
+                        Prediction::Partial => "partial history",
+                        Prediction::SolidOnly => "solid only",
+                        Prediction::Refused => "refused",
+                        Prediction::Unknown => "unknown",
+                    };
+                    println!(
+                        "{}: {outcome} ({} of {} features)",
+                        prediction.target,
+                        prediction
+                            .mapped_features
+                            .map_or_else(|| "unknown".to_owned(), |n| n.to_string()),
+                        prediction
+                            .total_features
+                            .map_or_else(|| "unknown".to_owned(), |n| n.to_string())
+                    );
+                    if let Some(blocker) = &prediction.first_blocking_feature {
+                        println!("  {}: {}", blocker.kind, blocker.reason);
+                    } else if let Some(detail) = &prediction.detail {
+                        println!("  {detail}");
+                    }
+                }
+            }
+            if scan.readable == dutchman_core::preflight::Readability::NotReadable {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+
+        Command::Onshape {
+            command: OnshapeCommand::Login,
+        } => onshape_login(),
+        Command::Onshape {
+            command: OnshapeCommand::Logout,
+        } => onshape_logout(),
+        Command::Onshape {
+            command: OnshapeCommand::Status,
+        } => onshape_status(),
+        Command::Onshape {
+            command: OnshapeCommand::Fetch(options),
+        } => {
+            let report = dutchman::onshape::run(&options);
+            if options.json {
+                println!("{report}");
+            } else {
+                let calls = report.get("calls").and_then(Value::as_u64).unwrap_or(0);
+                if report.get("ok").and_then(Value::as_bool) == Some(true) {
+                    println!(
+                        "Saved {} ({calls} API calls)",
+                        report
+                            .get("output")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Onshape bundle")
+                    );
+                } else {
+                    let message = report
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Onshape fetch could not finish; check the document and retry.");
+                    if calls == 0 {
+                        eprintln!("{message}");
+                    } else {
+                        eprintln!("{message} ({calls} API calls)");
+                    }
+                }
+            }
+            if report.get("ok").and_then(Value::as_bool) == Some(true) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
         Command::Report {
             folder,
             report_id,
@@ -1781,6 +1916,97 @@ fn print_losses(losses: &[Value], verbose: bool) {
     }
 }
 
+/// The error's own words, with the system's reason when it has one. Never the keys.
+fn onshape_reason(error: &dutchman::onshape::Error) -> String {
+    match &error.detail {
+        Some(detail) => format!("{} ({detail})", error.message),
+        None => error.message.to_owned(),
+    }
+}
+
+fn onshape_login() -> ExitCode {
+    use std::io::{BufRead, Write};
+    let mut err = std::io::stderr();
+    let _ = writeln!(
+        err,
+        "Create API keys in Onshape: My account > Developer > API keys, ticking read your profile information and read your documents."
+    );
+    let _ = write!(err, "Access key: ");
+    let _ = err.flush();
+    let mut access = String::new();
+    if std::io::stdin().lock().read_line(&mut access).is_err() {
+        eprintln!("Could not read the access key.");
+        return ExitCode::FAILURE;
+    }
+    let Ok(secret) = rpassword::prompt_password("Secret key (not shown): ") else {
+        eprintln!("Could not read the secret key.");
+        return ExitCode::FAILURE;
+    };
+    let store = dutchman::onshape::Store::system();
+    match dutchman::onshape::login(
+        &store,
+        &mut dutchman::onshape::NetworkClient::default(),
+        access.trim().to_owned(),
+        secret.trim().to_owned(),
+    ) {
+        Ok((user, source)) => {
+            println!("Connected as {user}. Keys saved in {}.", source.label());
+            if store.environment_overrides() {
+                println!("ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY are set and take precedence over saved keys.");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{} Nothing was saved.", onshape_reason(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn onshape_logout() -> ExitCode {
+    let store = dutchman::onshape::Store::system();
+    match store.forget() {
+        Ok(()) => {
+            println!("Saved Onshape keys removed.");
+            if store.environment_overrides() {
+                println!("ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY are still set in your environment; remove them to disconnect fully.");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{}", onshape_reason(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn onshape_status() -> ExitCode {
+    use dutchman::onshape::Connection;
+    let store = dutchman::onshape::Store::system();
+    match dutchman::onshape::status(&store, &mut dutchman::onshape::NetworkClient::default()) {
+        Ok(Connection::Connected { user, source }) => {
+            println!("Connected as {user} (keys from {}).", source.label());
+            ExitCode::SUCCESS
+        }
+        Ok(Connection::NotConnected) => {
+            println!("Not connected. Run `dutchman onshape login`.");
+            ExitCode::FAILURE
+        }
+        Ok(Connection::Unchecked { source, error }) => {
+            println!(
+                "Keys are saved in {}, but Onshape could not confirm them: {}",
+                source.label(),
+                onshape_reason(&error)
+            );
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("{}", onshape_reason(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(test)]
 mod output_tests {
     use super::*;
@@ -2033,3 +2259,7 @@ mod output_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/net.rs"]
+mod test_support;

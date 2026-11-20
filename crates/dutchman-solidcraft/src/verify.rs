@@ -419,6 +419,12 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Linked Insert Design with cached bodies and a source file.
+    LinkedDesign,
+    /// Thin walls verified against the current SolidCraft document format.
+    ThinExtrude,
+    /// Sweep paths selected from proven input edges.
+    TopologicalEdges,
     /// Explicit flat tips compensate for changed entry-recess angle handling.
     EntryRecessTip,
     /// Editable sketch-profile coils.
@@ -427,6 +433,19 @@ pub enum VersionGate {
     MirrorChain,
     /// Cone and frustum primitives.
     ConePrimitive,
+    /// A tapped hole's thread length and left hand (`thread_depth`, `hand`). SolidCraft has
+    /// stored a thread length since 0.22.1; the gate starts at the oldest release of the
+    /// support window, and older targets keep the full-length label and report the loss.
+    HoleThreadDepth,
+    /// A tapped hole's tolerance class (`thread_class`), first stored by SolidCraft 0.43.0.
+    HoleThreadClass,
+    /// Fillets and chamfers that blend only their listed edges (`tangent_chain: false`). Only
+    /// Onshape blends need it, so it does not count towards an installed release's history notice.
+    BlendListedEdges,
+    /// Extrude From and To Object on a flat face at a slant to the sketch.
+    SlantedFaceExtent,
+    /// Removals of whole bodies (`remove`).
+    RemoveBody,
     /// Earlier body snapshots used by editable history.
     HistoryBody,
     /// Coplanar input faces used as a Split Body tool.
@@ -440,10 +459,18 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::LinkedDesign => SolidCraftVersion::V0_44_0,
+            Self::ThinExtrude => SolidCraftVersion::V0_44_0,
+            Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::HistoryBody | Self::SplitFaces => SolidCraftVersion::V0_40_0,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+            Self::HoleThreadDepth => SolidCraftVersion::V0_40_0,
+            Self::HoleThreadClass => SolidCraftVersion::V0_43_0,
+            Self::BlendListedEdges => SolidCraftVersion::V0_40_0,
+            Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
+            Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
             Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
         }
@@ -457,6 +484,11 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if VersionGate::ThinExtrude.supported(SolidCraftVersion::default())
+        && !VersionGate::ThinExtrude.supported(target)
+    {
+        return true;
+    }
     if [
         VersionGate::HistoryBody,
         VersionGate::SplitFaces,
@@ -479,7 +511,8 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         !matches!(gate, VersionGate::EntryRecessTip)
             && gate.supported(SolidCraftVersion::default())
             && !gate.supported(target)
-    })
+    }) || (VersionGate::SlantedFaceExtent.supported(SolidCraftVersion::default())
+        && !VersionGate::SlantedFaceExtent.supported(target))
 }
 
 /// Installed-version status, independent of CLI discovery or network access.
@@ -512,7 +545,12 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// Release used for body-edge sweep paths.
+    /// Also the first release with dimensional 3D sketch wire constraints and scoped extrude booleans.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
+
     /// Oldest release in the window when history-body and face-tool mapping was added.
+    /// Also names a tapped hole's thread `hand` (earlier: `handedness`).
     pub const V0_40_0: Self = Self([0, 40, 0]);
 
     /// Release used to prove closed circular blend paths.
@@ -530,8 +568,8 @@ impl SolidCraftVersion {
     /// First release with saved component History bar visibility.
     pub const V0_30_0: Self = Self([0, 30, 0]);
 
-    /// First release with dimensional 3D sketch wire constraints and scoped extrude booleans.
-    pub const V0_44_0: Self = Self([0, 44, 0]);
+    /// First release that stores a tapped hole's `thread_class`.
+    pub const V0_43_0: Self = Self([0, 43, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
@@ -1315,9 +1353,10 @@ pub(crate) fn bodies_differ(
 /// What is wrong with a design's body `volumes` in SolidCraft, for a design with
 /// `bodies.solids` solid bodies (0: not counted): bodies inside out, and solids without a volume.
 ///
-/// A sheet body bounds no volume, but SolidCraft gives it one, of either sign, and does not
-/// say which of its bodies are sheets. So as many bodies inside out as the design has sheets
-/// are taken for them, and only the rest are reported.
+/// A sheet body bounds no volume. SolidCraft 0.23 and newer give it none (read as zero); older
+/// releases give it one, of either sign, and do not say which of its bodies are sheets. So as
+/// many bodies inside out as the design has sheets are taken for them, and only the rest are
+/// reported.
 fn volume_problems(volumes: &[f64], bodies: Expected) -> Vec<String> {
     let solids = bodies.solids;
     let mut problems = Vec::new();
@@ -1696,13 +1735,24 @@ pub(crate) struct ReplayedCircle {
 }
 
 /// One face of a body SolidCraft replayed, as `model.faces` gives it. `normal` is the
-/// outward unit normal of a planar face, `None` for another surface.
+/// outward unit normal of a planar face, `None` for another surface; `cylinder` is set for a
+/// circular cylinder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ReplayedFace {
     pub name: String,
     pub area: f64,
     pub normal: Option<[f64; 3]>,
+    pub cylinder: Option<ReplayedCylinder>,
     pub point: [f64; 3],
+}
+
+/// The circular cylinder a replayed face lies on: a point on its axis, its unit axis and its
+/// radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ReplayedCylinder {
+    pub origin: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
 }
 
 /// What SolidCraft rebuilt at one point of a replayed timeline: the bodies with their edges,
@@ -1967,7 +2017,7 @@ fn replayed_edge(row: &Value) -> Result<ReplayedEdge, String> {
 }
 
 fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
-    let point = |key: &str| -> Option<[f64; 3]> {
+    let triple = |row: &Value, key: &str| -> Option<[f64; 3]> {
         let values = row.get(key)?.as_array()?;
         if values.len() != 3 {
             return None;
@@ -1978,6 +2028,17 @@ fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
         }
         Some(out)
     };
+    let cylinder = |row: &Value| -> Option<ReplayedCylinder> {
+        let cylinder = row.get("cylinder")?;
+        Some(ReplayedCylinder {
+            origin: triple(cylinder, "origin")?,
+            axis: triple(cylinder, "axis")?,
+            radius: cylinder
+                .get("radius")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v > 0.0)?,
+        })
+    };
     (|| {
         Some(ReplayedFace {
             name: row.get("name")?.as_str()?.to_owned(),
@@ -1985,8 +2046,9 @@ fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
                 .get("area")
                 .and_then(Value::as_f64)
                 .filter(|v| v.is_finite() && *v >= 0.0)?,
-            normal: point("plane_normal"),
-            point: point("point")?,
+            normal: triple(row, "plane_normal"),
+            cylinder: cylinder(row),
+            point: triple(row, "point")?,
         })
     })()
     .ok_or_else(|| format!("{CLI_NAME} result has a face without its name, area or point"))
@@ -2206,10 +2268,13 @@ fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = bodies
         .iter()
         .map(|body| {
-            let volume = body
-                .get("volume_mm3")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| format!("{CLI_NAME} result has a body without a volume"))?;
+            // SolidCraft 0.23 and newer give an open body no volume: it bounds none.
+            let volume = match body.get("volume_mm3") {
+                None | Some(Value::Null) => 0.0,
+                Some(volume) => volume
+                    .as_f64()
+                    .ok_or_else(|| format!("{CLI_NAME} result has a malformed body volume"))?,
+            };
             let corner = |end: &str| -> Option<[f64; 3]> {
                 let corner = body.pointer(&format!("/bbox/{end}"))?.as_array()?;
                 let corner: Option<Vec<f64>> = corner.iter().map(Value::as_f64).collect();
@@ -2946,6 +3011,13 @@ mod tests {
         });
         let eval = parse(&value).unwrap();
         assert_eq!(eval.volumes(), [1000.0, 24.0]);
+
+        // An open body: SolidCraft 0.23 and newer give it no volume.
+        let open = serde_json::json!({"bodies": [{"name": "Skin", "area_mm2": 314.0},
+            {"name": "Other", "volume_mm3": null, "area_mm2": 10.0}], "timeline": []});
+        assert_eq!(parse(&open).unwrap().volumes(), [0.0, 0.0]);
+        let malformed = serde_json::json!({"bodies": [{"volume_mm3": "big"}], "timeline": []});
+        assert!(parse(&malformed).is_err());
         assert_eq!(eval.bodies[0].area, None);
         assert_eq!(eval.bodies[1].area, Some(52.0));
         assert_eq!(eval.bodies[1].size, Some(7.0));
@@ -3636,7 +3708,9 @@ mod version_tests {
             );
         }
         assert_eq!(target.extension(), SolidCraftVersion::V0_30_0.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3653,7 +3727,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3670,7 +3746,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3687,7 +3765,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        // Scoped extrude bodies need 0.44, so every earlier target keeps less history.
+        // Legacy capabilities stay unchanged; newer representations need 0.44.
+        assert!(!VersionGate::ThinExtrude.supported(target));
+        assert!(!VersionGate::SlantedFaceExtent.supported(target));
         assert!(target_loses_history(target));
     }
 
@@ -3757,13 +3837,22 @@ mod version_tests {
         let after: SolidCraftVersion = "0.25.1".parse().unwrap();
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
-        assert!(VersionGate::MirrorChain.supported(after));
-        // Both lose the 0.44 scoped bodies; the patch release still adds its own gate.
-        assert!(target_loses_history(after));
         assert!(!VersionGate::SketchProfileCoil.supported(before));
         assert!(VersionGate::SketchProfileCoil.supported(after));
+        assert!(!VersionGate::MirrorChain.supported(before));
+        assert!(VersionGate::MirrorChain.supported(after));
+        // The patch-sensitive capabilities work, while current representations
+        // still require a newer target and keep the history-loss notice.
+        assert!(target_loses_history(after));
+        assert!(!VersionGate::ThinExtrude.supported(after));
+        assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
+        assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));
+        assert!(VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_40_0));
+        assert!(!VersionGate::HoleThreadClass.supported("0.42.0".parse().unwrap()));
+        assert!(VersionGate::HoleThreadClass.supported(SolidCraftVersion::V0_43_0));
         assert!(!VersionGate::ClosedCircleBlend.supported("0.44.0".parse().unwrap()));
         assert!(VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::V0_44_1));
         assert!("0.18.1".parse::<SolidCraftVersion>().is_err());

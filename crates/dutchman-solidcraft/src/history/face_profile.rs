@@ -171,9 +171,11 @@ pub(super) fn map(
         subject: String::new(),
         edges: Vec::new(),
         angle_chamfer: false,
+        unequal: None,
         face: Some(proof),
         extra: None,
         trimmed: false,
+        path: false,
     });
     Ok((key, json!({"type": "all"})))
 }
@@ -420,9 +422,11 @@ impl EntryFace {
             subject: String::new(),
             edges: Vec::new(),
             angle_chamfer: false,
+            unequal: None,
             face: Some(self.proof),
             extra: None,
             trimmed: false,
+            path: false,
         }
     }
 }
@@ -1609,6 +1613,7 @@ mod tests {
             name: "cap".to_owned(),
             area: std::f64::consts::PI * 100.0,
             normal: Some([0.0, 0.0, 1.0]),
+            cylinder: None,
             point: [0.0; 3],
         };
         let mut replay = Replay {
