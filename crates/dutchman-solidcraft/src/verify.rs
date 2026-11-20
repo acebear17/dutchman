@@ -1157,19 +1157,14 @@ fn compare_measurements(
     let replayed = match evaluate(timeout, "history", history) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) => {
-            // A process refusal alone cannot identify a failed feature when neither
-            // evaluation could run. Named timeline failures below still take priority.
-            if let Ok(Evaluation::Failed(source)) | Err(source) = &expected {
-                return Outcome::Unverified(format!(
-                    "cannot evaluate the original geometry: {source}"
-                ));
-            }
-            return Outcome::Differs(format!("SolidCraft cannot replay it: {why}"));
+            return Outcome::Unverified(format!(
+                "SolidCraft could not evaluate the history: {why}"
+            ));
         }
         Err(why) => return Outcome::Unverified(why),
     };
-    if let Some(error) = replayed.errors.first() {
-        return Outcome::Differs(error.clone());
+    if let Some(outcome) = timeline_outcome(&replayed) {
+        return outcome;
     }
     let expected = match expected {
         Ok(Evaluation::Done(eval)) => eval,
@@ -1203,8 +1198,8 @@ pub(crate) fn replay(
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
     match evaluate(cli, timeout, "prefix", design) {
-        Ok(Evaluation::Done(eval)) => match eval.errors.first() {
-            Some(why) => (Outcome::Differs(why.clone()), None),
+        Ok(Evaluation::Done(eval)) => match timeline_outcome(&eval) {
+            Some(outcome) => (outcome, None),
             None => {
                 let placed = eval
                     .bodies
@@ -1217,7 +1212,7 @@ pub(crate) fn replay(
                 (Outcome::Matches, Some(placed))
             }
         },
-        Ok(Evaluation::Failed(why)) => (Outcome::Differs(why), None),
+        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
         Err(why) => (Outcome::Unverified(why), None),
     }
 }
@@ -1437,10 +1432,13 @@ pub(crate) fn check_import(
     let eval = match evaluate(cli, timeout, "import", design) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) => {
-            return Shown::Short(format!("SolidCraft cannot open it: {why}"))
+            return Shown::Unchecked(format!("SolidCraft could not evaluate it: {why}"))
         }
         Err(why) => return Shown::Unchecked(why),
     };
+    if let Some(Outcome::Unverified(why)) = timeline_outcome(&eval) {
+        return Shown::Unchecked(why);
+    }
     shown(&eval, expected)
 }
 
@@ -1641,9 +1639,19 @@ impl Eval {
     }
 }
 
+/// Only a named timeline refusal establishes that a feature failed to rebuild.
+fn timeline_outcome(eval: &Eval) -> Option<Outcome> {
+    if let Some(why) = eval.errors.iter().find(|why| why.starts_with("feature \"")) {
+        return Some(Outcome::Differs(why.clone()));
+    }
+    eval.errors
+        .first()
+        .map(|why| Outcome::Unverified(why.clone()))
+}
+
 enum Evaluation {
     Done(Eval),
-    /// SolidCraft ran and refused the design.
+    /// SolidCraft ran but did not return a usable evaluation.
     Failed(String),
 }
 
@@ -1739,7 +1747,7 @@ pub(crate) fn evaluate_json(
         }
         Err(err) => return Err(format!("{CLI_NAME} result: {err}")),
     };
-    let named_failure = value
+    let timeline_error = value
         .get("timeline")
         .and_then(Value::as_array)
         .is_some_and(|timeline| {
@@ -1750,7 +1758,7 @@ pub(crate) fn evaluate_json(
                     .is_some_and(|why| !why.is_empty())
             })
         });
-    if !status.success() && !named_failure {
+    if !status.success() && !timeline_error {
         return Ok(
             serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
         );
@@ -2370,9 +2378,18 @@ fn parse(value: &Value) -> Result<Eval, String> {
     let errors = timeline
         .iter()
         .filter_map(|entry| {
-            let error = entry.get("error").and_then(Value::as_str)?;
-            let name = entry.get("name").and_then(Value::as_str).unwrap_or("?");
-            Some(format!("feature \"{name}\" failed: {error}"))
+            let error = entry
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|why| !why.trim().is_empty())?;
+            match entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+            {
+                Some(name) => Some(format!("feature \"{name}\" failed: {error}")),
+                None => Some(format!("SolidCraft did not name a failed feature: {error}")),
+            }
         })
         .collect();
     let warnings = timeline
@@ -3050,6 +3067,27 @@ mod tests {
     }
 
     #[test]
+    fn unnamed_errors_are_unavailable_but_do_not_hide_named_feature_failures() {
+        let mut value =
+            serde_json::json!({"bodies": [], "timeline": [{"error": "Evaluation stopped"}]});
+        let unnamed = super::parse(&value).unwrap();
+        assert!(
+            matches!(super::timeline_outcome(&unnamed), Some(super::Outcome::Unverified(why)) if why.contains("Evaluation stopped"))
+        );
+        value["timeline"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"name": "Edit", "error": "No face"}));
+        let named = super::parse(&value).unwrap();
+        assert_eq!(
+            super::timeline_outcome(&named),
+            Some(super::Outcome::Differs(
+                "feature \"Edit\" failed: No face".to_owned()
+            ))
+        );
+    }
+
+    #[test]
     fn parses_an_eval_result() {
         let value = serde_json::json!({
             "bodies": [
@@ -3535,9 +3573,12 @@ mod cli_tests {
     }
 
     #[test]
-    fn a_history_solidcraft_refuses_differs() {
+    fn a_history_evaluation_without_named_failures_is_unverified() {
         let script = by_design(&eval(1000.0, "null"), "exit 3");
-        assert!(matches!(run(&script, DEFAULT_TIMEOUT), Outcome::Differs(_)));
+        assert!(matches!(
+            run(&script, DEFAULT_TIMEOUT),
+            Outcome::Unverified(_)
+        ));
     }
 
     #[test]
@@ -3591,7 +3632,7 @@ mod cli_tests {
             import_check(short),
             Shown::Short("3 face(s) could not be meshed".to_owned())
         );
-        assert!(matches!(import_check("exit 3"), Shown::Short(_)));
+        assert!(matches!(import_check("exit 3"), Shown::Unchecked(_)));
         assert!(matches!(import_check("echo nonsense"), Shown::Unchecked(_)));
     }
 

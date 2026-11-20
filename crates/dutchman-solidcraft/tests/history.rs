@@ -19055,7 +19055,7 @@ fn failed_rebuilds_keep_the_final_shape_and_name_the_feature_even_without_source
 }
 
 #[test]
-fn a_refused_source_import_is_left_out_instead_of_writing_a_failed_feature() {
+fn a_refused_source_import_reports_missing_geometry_as_a_last_resort() {
     let model = cube_with_history(10.0, first_profile(), None);
     let host = std::sync::Arc::new(FailedRebuild {
         feature_type: "import",
@@ -19076,10 +19076,35 @@ fn a_refused_source_import_is_left_out_instead_of_writing_a_failed_feature() {
     assert!(
         report.losses().iter().any(
             |loss| loss.code.as_deref() == Some("geometry/import-failed")
-                && loss.detail.contains("not transferred")
+                && loss.detail.contains("MISSING")
                 && loss.detail.contains("Synthetic rebuild refusal")
                 && loss.detail.contains(&loss.subject)
         ),
+        "{report:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_nonzero_evaluator_exit_without_named_failures_writes_an_unverified_design() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = tempfile::tempdir().unwrap();
+    let cli = scratch.path().join("solidcraft-cli");
+    std::fs::write(&cli, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.45.0'; exit 0; fi\nexit 1\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli));
+    let (document, report) = convert(&cube_with_history(10.0, first_profile(), None), &writer);
+    assert!(!document["features"].as_array().unwrap().is_empty());
+    assert!(
+        matches!(&report.outcome().unwrap().check,
+        Check::Unverified(why) if why.contains("exited with")),
+        "{report:?}"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("geometry/import-failed")),
         "{report:?}"
     );
 }
