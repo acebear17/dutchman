@@ -1,7 +1,7 @@
 # CADIR v11 in Dutchman
 
 Dutchman reads the wire and Rust types at cadmpeg commit
-`1a8c520c18a5a7b812d6a365c4b95f19ebb6a41f`. The field map in cadmpeg's
+`20abb6277a84ef3ada4040cff452a3e69024a83c`. The field map in cadmpeg's
 `docs/cadir-v11.md`, section 9.2, describes the complete design vocabulary.
 The pinned implementation also retains the `features` vocabulary in `model`;
 its native readers still emit those records. `Design` is a separate namespace
@@ -37,6 +37,12 @@ together without conflating `design`'s
 restated identities. Imported region appearances follow the region directly,
 without reconstructing the removed body membership field. The empty `native` home is written explicitly on slices;
 v11 requires it even when there are no retained native records.
+
+Decoded documents state exactly one root product definition, stored in the file
+without a separate source. A bare root represents the document itself. Component
+and minimum-reproduction subsets are marked `fragment`: they retain source
+coordinates and identities, while the enclosing document root may lie outside
+the selected records. Their geometry and reference checks still run.
 
 A document with only `design.features` is kept as final geometry with a specific
 history refusal: its ordered selections and evaluation states have no

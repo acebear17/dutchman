@@ -3396,6 +3396,8 @@ fn slice(
         })
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
+    // A component slice is a fragment: its document root can lie outside it.
+    fields.insert("fragment".to_owned(), Value::Bool(true));
     // V11 requires the native home even when the slice deliberately retains no records.
     fields.insert("native".to_owned(), serde_json::json!({}));
     let part = slicing::Part {
