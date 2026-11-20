@@ -685,6 +685,12 @@ The mesh-body refusal keeps `error.stage: "decode"` when no geometry was transfe
 or `"project"` when mesh geometry was read but no B-rep bodies can be converted.
 `error.upstream` stays `"cadmpeg"`; no report fields or error kinds are added.
 
+When cadmpeg reports `f3d/design.mesh-only-untransferred` for a Fusion design with no decoded
+B-rep bodies or placed components (its only bodies are meshes, and none of them could be
+read), Dutchman says "it holds only mesh bodies, which Dutchman doesn't convert yet, and none
+of them could be read" with the same advice, at `error.stage: "decode"`. That loss carries no
+mesh count, so the message names none.
+
 `error.message` is for people; do not parse its wording. Unreadable-container errors retain
 cadmpeg's cause and add recovery advice and a link to the
 **A file didn't convert** issue form. The CLI and MCP return the same message, stage, and upstream.
