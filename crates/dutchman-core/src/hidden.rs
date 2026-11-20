@@ -551,7 +551,7 @@ mod tests {
             {"id": "synthetic:test:binding#face", "target": {"entity": {"kind":"face","value":face}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
             {"id": "synthetic:test:binding#missing", "target": {"entity": {"kind":"face","value":"synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}
         ]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         let shown = fusion(model, &mut report);
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
@@ -627,7 +627,7 @@ mod tests {
             rows.extend(copies);
         }
         Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::test_products::read(&wire),
             ..part
         }
     }
@@ -688,7 +688,7 @@ mod tests {
         m["product_definitions"] = json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target], "bom_properties": {}, "sketches": []}]);
         m["features"] = json!([{"id": "test:model:feature#cut", "ordinal": 0, "suppressed": false, "outputs": [target], "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"op": "cut", "keep_tools": false, "operands": {"target": {"kind": "bodies", "value": [target]},
                     "tools": {"kind": "bodies", "value": [id("body", 0)]}}, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         model
     }
 
@@ -731,7 +731,7 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(tool);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
         assert_eq!(kept.ir.geometry.bodies.len(), 2);
@@ -755,7 +755,8 @@ mod tests {
             "prototype": {"kind": "local", "definition": "test:model:component#tool"},
             "parent": {"kind": "root"}, "transform": crate::placement::IDENTITY,
             "scale": [1, 1, 1], "visible": false}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
+        let definitions = model.ir.model.product_definitions.clone();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
         assert_eq!(kept.ir.geometry.bodies.len(), 2);
@@ -765,7 +766,20 @@ mod tests {
             .iter()
             .all(|loss| !loss.detail.contains("not converted")));
         // Component membership is protected even when the occurrence itself is hidden.
-        assert_eq!(kept.ir.model.product_definitions.len(), 2);
+        // The two component definitions plus the file definition that owns the placement.
+        assert_eq!(kept.ir.model.product_definitions, definitions);
+        assert_eq!(
+            kept.ir.model.product_definitions[0].id.as_str(),
+            "test:model:component#box"
+        );
+        assert_eq!(
+            kept.ir.model.product_definitions[1].id.as_str(),
+            "test:model:component#tool"
+        );
+        assert!(matches!(
+            kept.ir.model.product_definitions[2].storage,
+            cadmpeg_ir::products::Storage::File { source: None, .. }
+        ));
     }
 
     #[test]
@@ -865,7 +879,7 @@ mod tests {
         ];
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["native"]["fcstd"] = json!({"objects":[{"id":"test:visibility:object#container", "type_name":"App::Part", "name":"Container"}]});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         assert!(
             shown(&model).unwrap().is_none(),
             "the shown insertion keeps its shared geometry"
@@ -942,10 +956,10 @@ mod tests {
         assert!(!hidden_bodies(&wire, &wire["model"]).contains(second.as_str().unwrap()));
         let _ = wire["model"]["occurrences"].as_array_mut().unwrap().pop();
         // Other formats state each occurrence's own visibility, so nothing is propagated.
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         assert!(shown(&model).unwrap().is_none());
         wire["native"]["fcstd"] = json!({"objects":[{"id":"test:visibility:object#container", "type_name":"App::Part", "name":"Container"}]});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (shown, count) = shown(&model).unwrap().unwrap();
         assert_eq!(count, 1);
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
@@ -984,7 +998,7 @@ mod tests {
         m["curves"].as_array_mut().unwrap().extend(bases);
         m.insert("procedural_curves".to_owned(), json!(constructions));
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::test_products::read(&wire),
             ..model
         };
         let (shown, _) = shown(&model).unwrap().unwrap();
@@ -1063,7 +1077,7 @@ mod tests {
                 wire["model"]["features"][1]["definition"]["value"]["value"]["flip_direction"] =
                     json!(false);
             }
-            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.ir = crate::test_products::read(&wire);
             let (shown, _) = shown(&model).unwrap().unwrap();
             assert_eq!(shown.ir.geometry.bodies.len(), 1);
             assert!(shown
@@ -1095,7 +1109,7 @@ mod tests {
             .map(|body| body["id"].clone())
             .collect();
         wire["model"]["product_definitions"] = json!([{"id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids, "bom_properties": {}, "sketches": []}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (shown, _) = shown(&model).unwrap().unwrap();
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
     }
@@ -1112,7 +1126,7 @@ mod tests {
                 "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}, "profiles": []}]);
         wire["model"]["sketch_entities"] = json!([{"id": "fcstd:model:sketch-entity#1", "sketch": sketch, "geometry": {"kind": "line",
             "start": {"u": 0.0, "v": 0.0}, "end": {"u": 10.0, "v": 0.0}}, "endpoint_refs": [], "construction": false}]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (shown, _) = shown(&model).unwrap().unwrap();
         assert_eq!(shown.ir.geometry.bodies.len(), 1);
         assert_eq!(shown.ir.geometry.faces.len(), 6);
@@ -1131,7 +1145,7 @@ mod tests {
         let mut model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["geometry"]["bodies"][0]["visible"] = json!(false);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         assert!(shown(&model).unwrap().is_none());
     }
 }

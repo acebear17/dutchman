@@ -334,7 +334,9 @@ revolute, and slider joints the SolidCraft output writes are written to FreeCAD 
 same resolved parts, connector frames, frame sense, angles, and limits, through
 sub-assemblies as well. Between parts placed directly in the assembly, cylindrical, ball,
 distance, parallel, perpendicular, and angle joints are also written; axis coincidence uses
-a cylindrical joint, and an insert uses a revolute joint with its plane offset. Their
+a cylindrical joint, and an insert uses a revolute joint with its plane offset. Joint lookup
+between directly placed parts follows the file definition's child order and prototype storage in CADIR,
+independently of the occurrence arena's record order. Their
 attachment offsets are kept, angular limits use degrees and linear limits millimetres, and
 either bound may be enabled alone. FreeCAD's static solve preserves free coordinates; limit
 properties are kept for the workbench rather than used to drive a pose during conversion.

@@ -482,7 +482,7 @@ mod tests {
         wire["native"]["fcstd"] = json!({"objects": [{
             "id": "test:source:object#body", "name": "Standalone"
         }]});
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         let (selected, _) = select(&model, "Standalone").unwrap();
         assert_eq!(selected.ir.geometry.bodies.len(), 1);
         assert_eq!(
@@ -537,7 +537,7 @@ mod tests {
                 100.0
             ),
         ]);
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.ir = crate::test_products::read(&wire);
         model.assembly = local_assembly(&model).unwrap();
         let (selected, placement) = select(&model, "TargetPart").unwrap();
         assert_eq!(placement[0][3], 10.0);

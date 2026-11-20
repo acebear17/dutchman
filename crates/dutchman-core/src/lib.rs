@@ -23,6 +23,8 @@ mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
+#[cfg(test)]
+mod test_products;
 pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
@@ -681,7 +683,6 @@ fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error>
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
-    let expected = writer.extension();
     let matches = output
         .extension()
         .and_then(|ext| ext.to_str())
@@ -691,7 +692,7 @@ fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
     } else {
         Err(Error::WrongOutputExtension {
             path: output.to_path_buf(),
-            expected,
+            expected: writer.extension(),
         })
     }
 }
@@ -714,4 +715,43 @@ fn check_input(input: &Path) -> Result<(), Error> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod output_checks {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn accepted_suffixes_do_not_probe_the_default_and_errors_still_name_it() {
+        struct ProbedWriter(Cell<usize>);
+        impl Writer for ProbedWriter {
+            fn extension(&self) -> &'static str {
+                self.0.set(self.0.get() + 1);
+                "sc"
+            }
+
+            fn accepts_extension(&self, extension: &str) -> bool {
+                matches!(extension, "sc" | "solidcraft")
+            }
+
+            fn write(
+                &self,
+                _: &Model,
+                _: &mut dyn std::io::Write,
+                _: &mut Report,
+            ) -> Result<(), Error> {
+                Ok(())
+            }
+        }
+        let writer = ProbedWriter(Cell::new(0));
+        assert!(check_output(Path::new("design.sc"), &writer).is_ok());
+        assert!(check_output(Path::new("design.solidcraft"), &writer).is_ok());
+        assert_eq!(writer.0.get(), 0);
+        assert!(matches!(
+            check_output(Path::new("design.txt"), &writer),
+            Err(Error::WrongOutputExtension { expected: "sc", .. })
+        ));
+        assert_eq!(writer.0.get(), 1);
+    }
 }

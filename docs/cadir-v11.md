@@ -142,6 +142,8 @@ prototype definition id. Fusion's `tree::own_once`, FreeCAD's
 `product::transfer_neutral` and SolidWorks'
 `NativeAssembly::into_projection` emit this structure. External paths and
 configuration/object names now live in the prototype definition's `storage`.
+`ExternalDocument` is a record of optional path, document identity, version, stamp
+and object fields without a `kind` tag; external joint operands use the same record.
 This is an API change; the readers retain the product tree.
 
 Dutchman projects that neutral graph into an internal placed tree for component
@@ -161,6 +163,11 @@ uses the same placed view so a shown insertion keeps shared geometry. Parent and
 in the existing placement builder; overrides never transform source geometry.
 Alternate representations and instance bodies receive a named refusal instead of
 silently using the prototype's default geometry.
+
+Synthetic assembly fixtures construct the same definition-owned graph. Different
+layouts of a shared component use insertion overrides, preserving checks of
+placement, visibility, history ownership and definition reuse. Malformed parent
+placements are checked at the internal placed-tree boundary.
 
 Commit `9522b16732` (#1437) adds definition-owned `tessellations` for bodiless STEP
 meshes. It does not change the Fusion, FreeCAD, or SolidWorks occurrence walk.
