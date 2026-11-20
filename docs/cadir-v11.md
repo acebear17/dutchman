@@ -79,6 +79,8 @@ Onshape thin walls pair a typed `design.features` extrusion with the existing
 the thin thickness and side; profile, direction, extent and Boolean semantics
 must agree with the projection before the writer uses it. This narrow bridge does
 not admit design-only histories or infer absent projection operands.
+Other typed design operations leave the retained model-history mapping in control;
+the thin-output bridge applies only to an explicit typed thin extrusion.
 
 ## Changes after the original v11 port
 
