@@ -1988,6 +1988,9 @@ cannot be safely repaired stops conversion before the output is written. An eval
 nonzero exit without named failed features is unavailable verification: output is still written
 with `verification.status: "unverified"` and the reason. Disabled verification remains
 unverified.
+The final opening check has its own time, at least 15 minutes, not what earlier checks left.
+When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
+SolidCraft didn't finish checking the written design in N min".
 An Info loss `geometry/sheet-edges-split` names a refused STEP import whose edge uses beyond
 the first two receive identical edge records. The repaired blob is rechecked before any
 feature is omitted; source faces, curves, vertices, body names, and placements stay unchanged.
