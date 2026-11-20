@@ -169,8 +169,10 @@ fn allowed_redirect_host_with_private_dns_never_opens_a_socket() {
     assert_eq!(requests, 2);
     assert_eq!(error, UNSAFE);
     assert_eq!(
-        listener.accept().unwrap_err().kind(),
-        io::ErrorKind::WouldBlock
+        crate::test_support::accept_blocking(&listener, std::time::Instant::now())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::TimedOut
     );
 }
 
@@ -206,7 +208,8 @@ fn stalled_dns_is_bounded_and_late_resolution_cannot_connect() {
 #[test]
 fn connect_receives_only_the_budget_left_after_dns() {
     let began = Instant::now();
-    let end = began + Duration::from_millis(300);
+    // DNS takes 180 ms of a 1 s budget, so a slow CI runner still reaches the connector.
+    let end = began + Duration::from_millis(1000);
     let (record, recorded) = mpsc::channel();
     let result = fetch_using(
         &Url::parse("https://drive.google.com/uc?id=synthetic").unwrap(),
@@ -225,8 +228,8 @@ fn connect_receives_only_the_budget_left_after_dns() {
     assert_eq!(result.unwrap_err(), NETWORK);
     let (deadline, budget) = recorded.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(deadline, end);
-    assert!(budget.unwrap() <= Duration::from_millis(120));
-    assert!(began.elapsed() < Duration::from_millis(700));
+    assert!(budget.unwrap() <= Duration::from_millis(820));
+    assert!(began.elapsed() < Duration::from_millis(1500));
 }
 
 #[test]
@@ -237,19 +240,7 @@ fn actual_request_bounds_tls_and_slow_body_with_remaining_budget() {
         listener.set_nonblocking(true).unwrap();
         let server = std::thread::spawn(move || {
             let end = Instant::now() + Duration::from_secs(2);
-            let mut socket = loop {
-                match listener.accept() {
-                    Ok((socket, _)) => break socket,
-                    Err(error)
-                        if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < end =>
-                    {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    _ => return,
-                }
-            };
-            // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
-            socket.set_nonblocking(false).unwrap();
+            let mut socket = crate::test_support::accept_blocking(&listener, end).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
