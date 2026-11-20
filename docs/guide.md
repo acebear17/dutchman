@@ -574,6 +574,12 @@ without looking for or launching an installed SolidCraft CLI.
 
 [Feature history and the SolidCraft check](history.md)
 
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
+
 Contour flanges map when cadmpeg supplies an open sketch chain of lines and arcs, a blind
 sweep along the sketch normal, and material on one side. Their thickness, bend radius and
 supplied K-factor become a sheet rule. Unsupported contour forms keep the original geometry
