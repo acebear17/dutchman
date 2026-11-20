@@ -334,6 +334,27 @@ impl<'a> Inputs<'a> {
         Ok(latest.to_owned())
     }
 
+    /// Whole-studio references need every row accounted for. An unknown body must
+    /// not disappear from the evidence and make a subset look like the whole studio.
+    pub(super) fn solid_parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
+        let parts = self.parts(ordinal)?;
+        let response = self
+            .bundle
+            .json(&format!("{}/bodydetails/{ordinal}.json", self.prefix))
+            .map_err(|_| "the whole-studio rollback snapshot is unreadable")?;
+        for body in rows(response, "bodies")? {
+            if text(body, "type")? != "SOLID"
+                || body
+                    .get("consumedByComposite")
+                    .is_some_and(|value| value.as_bool() != Some(false))
+            {
+                return Err("the whole-studio selection contains an unresolved or non-solid body; select a studio of separate solids".into());
+            }
+            text(body, "id")?;
+        }
+        Ok(parts)
+    }
+
     pub(super) fn parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
         if !self
             .indices

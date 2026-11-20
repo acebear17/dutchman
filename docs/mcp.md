@@ -1,5 +1,24 @@
 # The MCP server
 
+Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
+components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
+Select target 0.44 explicitly when the existing default is older.
+Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
+edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
+finds an edited companion, choose another output folder; that companion is kept even
+when overwriting is enabled. Parallel conversions safely share identical companions.
+Earlier targets
+report `design/reference.frozen` and keep frozen derived bodies. Missing references,
+part subsets, configurations or transformed inserts name the reason under
+`onshape/history.not-supported`; fetch a new bundle for missing references.
+
+Derived Boolean conversion requires an explicit stored `keepTools` boolean. Missing or
+contradictory choices retain `onshape/history.not-supported`; later records still convert.
+Captured studio responses are checked against their own manifest microversion, independently
+of the root studio. Fetch a new bundle when the reported reference evidence is missing.
+
+See [Onshape bundles](onshape.md) for the supported reference forms.
+
 Onshape history dependencies follow consumed operands in their stored order. Deterministic
 body, face and edge selections need a unique earlier producer proved by rollback
 transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
@@ -583,7 +602,7 @@ change replay order: the neutral ordinal controls it.
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
 | `contents` | `input`, and optionally `project`, `search` | `dutchman.contents/1` | nothing |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file and required linked-design companions |
 | `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `stand_up`, `no_stand_up`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 | `read_report` | `input` (saved report or its design) | `dutchman.convert/1` plus `loss_groups`, with private local names and paths | nothing |
