@@ -295,6 +295,11 @@ that face's area (within 1 mm² or 3%, which absorbs arcs measured as fine polyg
 there. An extrude whose region cannot be checked this way stays kept and is marked
 `profile_unverified` in the JSON report (see [json.md](json.md)).
 
+Face extrusions on imported bases require a matching final source result after the
+input face is proved. An intermediate result, an unavailable check, or a measured
+mismatch keeps the final imported shape and reports
+`a face extrude on an imported base is not supported yet without a matching source result check`.
+
 History checks stay on by default and fit themselves to free memory. If a second build
 will not fit after reading the design, conversion still saves a usable original shape
 with retained history unverified; the card and report say
@@ -667,7 +672,6 @@ or the original cannot be measured soundly. The original position and shape rema
 visible, and the report explains the unverified check. Other histories keep their
 existing verification behavior.
 
-
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
@@ -796,8 +800,11 @@ Every successful SolidCraft result also gets an advisory body comparison against
 source's stored geometry, using the same joint setting and assembly pose as the
 conversion. Partial-history outputs skip this comparison because eval
 includes intentionally hidden editable bodies; the normal history verification still
-runs. Where supported, SolidCraft writes private whole-design snapshot pairs for
-flagged comparisons under `diagnose/preview/`. Their PNGs and staged designs carry
+runs. A measured replay difference removes the unconfirmed edited body and uses
+the imported final shape. The report names the failed position, box, volume, or area
+check and its measured difference. Source imports before the unconfirmed edit and
+independent sketches remain available. Where supported, SolidCraft writes private
+whole-design snapshot pairs for flagged comparisons under `diagnose/preview/`. Their PNGs and staged designs carry
 geometry. Review them locally; they are excluded from anonymous tool results.
 
 Memory supervision includes kernel subprocesses on Linux, macOS and Windows; a stopped
@@ -1015,7 +1022,6 @@ Each history row in `dutchman.convert/1` and `dutchman.inspect/1` now includes
 can have several ids; dropped or merged rows have none. Inspection returns empty ids
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](json.md) for the matching values.
-
 
 ## Counts-only anonymous reports
 
