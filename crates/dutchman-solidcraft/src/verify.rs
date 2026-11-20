@@ -1152,24 +1152,33 @@ fn compare_measurements(
         });
         evaluate(cli, timeout, name, design)
     };
-    let expected = match evaluate(timeout, "original", original) {
+    // A failed source import must not prevent us from finding failed history features.
+    let expected = evaluate(timeout, "original", original);
+    let replayed = match evaluate(timeout, "history", history) {
+        Ok(Evaluation::Done(eval)) => eval,
+        Ok(Evaluation::Failed(why)) => {
+            // A process refusal alone cannot identify a failed feature when neither
+            // evaluation could run. Named timeline failures below still take priority.
+            if let Ok(Evaluation::Failed(source)) | Err(source) = &expected {
+                return Outcome::Unverified(format!(
+                    "cannot evaluate the original geometry: {source}"
+                ));
+            }
+            return Outcome::Differs(format!("SolidCraft cannot replay it: {why}"));
+        }
+        Err(why) => return Outcome::Unverified(why),
+    };
+    if let Some(error) = replayed.errors.first() {
+        return Outcome::Differs(error.clone());
+    }
+    let expected = match expected {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) | Err(why) => {
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
-    let replayed = match evaluate(timeout, "history", history) {
-        Ok(Evaluation::Done(eval)) => eval,
-        Ok(Evaluation::Failed(why)) => {
-            return Outcome::Differs(format!("SolidCraft cannot replay it: {why}"))
-        }
-        Err(why) => return Outcome::Unverified(why),
-    };
     if let Some(evidence) = evidence {
         *evidence = evidence::measurements(&expected, &replayed);
-    }
-    if let Some(error) = replayed.errors.first() {
-        return Outcome::Differs(error.clone());
     }
     let unsound = volume_problems(&expected.volumes(), bodies);
     if !unsound.is_empty() {
@@ -1702,9 +1711,13 @@ pub(crate) fn evaluate_json(
         if let Some(why) = blocked_failure(cli) {
             return Err(why);
         }
-        return Ok(
-            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
-        );
+        // A rebuild refusal may still write a complete result naming failed features.
+        // Preserve that evidence instead of replacing it with an exit status.
+        if !output.is_file() {
+            return Ok(
+                serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+            );
+        }
     }
     use std::io::Read;
     let mut text = String::new();
@@ -1717,8 +1730,31 @@ pub(crate) fn evaluate_json(
         return Err(format!("{CLI_NAME} result exceeds 64 MiB"));
     }
 
-    let value: Value =
-        serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}"))?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) if !status.success() => {
+            return Ok(
+                serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+            );
+        }
+        Err(err) => return Err(format!("{CLI_NAME} result: {err}")),
+    };
+    let named_failure = value
+        .get("timeline")
+        .and_then(Value::as_array)
+        .is_some_and(|timeline| {
+            timeline.iter().any(|entry| {
+                entry
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|why| !why.is_empty())
+            })
+        });
+    if !status.success() && !named_failure {
+        return Ok(
+            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+        );
+    }
     Ok(value)
 }
 
@@ -3465,6 +3501,20 @@ mod cli_tests {
     fn a_different_volume_differs() {
         let script = by_design(&eval(1000.0, "null"), &eval(900.0, "null"));
         assert!(matches!(run(&script, DEFAULT_TIMEOUT), Outcome::Differs(_)));
+    }
+
+    #[test]
+    fn a_nonzero_eval_preserves_the_named_timeline_failure() {
+        let _turn = crate::testing::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_cli(
+            dir.path(),
+            &format!("{}; exit 1", eval(0.0, "\"Synthetic refusal\"")),
+        );
+        assert_eq!(
+            super::replay(&cli, DEFAULT_TIMEOUT, b"design").0,
+            Outcome::Differs("feature \"Extrude1\" failed: Synthetic refusal".to_owned())
+        );
     }
 
     #[test]

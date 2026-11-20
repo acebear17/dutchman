@@ -1973,3 +1973,14 @@ source feature with a helper location sketch for SolidCraft 0.44.1 or newer. The
 does not increase source feature counts. Unsupported generated edge identities use
 `its generated edge identity has no resolved source geometry, which is not supported yet`
 as the existing history blocker reason. The report schema and field names are unchanged.
+
+Rebuild failures use existing report fields and schema versions. A failed history feature
+is `blocked`, with its name and refusal in `reason`; `partial` or `flattened` describes the
+retained prefix and final source shape. The final opening check adds
+`history/rebuild-failed` (Degraded) when it replaces a refused feature with the final source
+shape, or `geometry/import-failed` (Dropped) when a refused STEP import and its dependent
+features are not transferred. Removed feature IDs are cleared from `history.features[].output_ids` and use
+`output_match: "no_output"` when none remain. A combined import can omit a whole part;
+the loss names the import feature and SolidCraft's reason. Geometry-only output uses `flattened` with the named omission as its reason.
+No successful verification is claimed for the removed history. A failure that cannot be safely repaired stops conversion
+before the output is written. Disabled or unavailable verification remains unverified.

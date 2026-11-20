@@ -1073,3 +1073,13 @@ resolved sketch-entity geometry reports `its generated edge identity has no reso
 source geometry, which is not supported yet`. A numeric feature-local path alone
 does not prove which rebuilt edge to select. The editable prefix and original final
 geometry are retained; a generated reference with missing or blank fields is still refused.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature
+and its dependent body history and keeps the final source shape with the editable prefix
+before the failure. The report names the feature and SolidCraft's reason, even when the
+source shape could not be measured. A final opening check also covers geometry-only
+output, hidden history, and assemblies. A STEP import that SolidCraft refuses is left out
+with `geometry/import-failed` and a named “not transferred” loss; a combined import may
+leave out the whole part. Review these losses before using the result. If a known failure
+cannot be removed and the repaired design checked, conversion stops without writing it.
+Verification turned off or unavailable still means the design has not been checked.
