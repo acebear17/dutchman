@@ -1974,6 +1974,12 @@ does not increase source feature counts. Unsupported generated edge identities u
 `its generated edge identity has no resolved source geometry, which is not supported yet`
 as the existing history blocker reason. The report schema and field names are unchanged.
 
+The [public fixture score workflow](fixture-score.md) wraps the conversion report
+in the fixture sweep result record (`exit`, `reopen_exit`, `report`, `evaluation`,
+`seconds`). Download skips add `skip_reason`; execution failures add
+`failure_reason`. These records are workflow artifacts, separate from CLI report
+schemas. `run.json` records the build and manifest provenance.
+
 Rebuild failures use existing report fields and schema versions. A failed history feature is
 `blocked`, with its name and refusal in `reason`; `partial` or `flattened` describes the
 retained prefix and final source shape. The final opening check adds `history/rebuild-failed`
