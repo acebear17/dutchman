@@ -1296,3 +1296,10 @@ the result. If a named failure cannot be removed, conversion stops without writi
 evaluator error or nonzero exit without named failed features means verification is
 unavailable: the design is still written, marked unverified, with the reason. Verification
 turned off remains unchecked.
+
+The SolidCraft plugin checks estimated memory and time before native decoding. When it
+says the design is too large to open inside SolidCraft, use the
+[Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
+`.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
+"Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
+See [the plugin guide](../../docs/plugin.md).
