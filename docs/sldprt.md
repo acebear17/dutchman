@@ -105,7 +105,9 @@ of its own, conversion stops with "none of the assembly's parts could be found o
 report lists each part file it looked for.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
-Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,
+The file's root component stays around its placed parts, including when CADIR stores
+those occurrences directly on the file definition. Local sub-assemblies keep their
+component tree. Referenced assembly files are read recursively,
 with cycle protection and a depth limit of 32. Repeated references to the saved active
 configuration share one read across the whole assembly tree, including sibling sub-assemblies.
 Saved display tessellations are released before building that tree; exact geometry and feature

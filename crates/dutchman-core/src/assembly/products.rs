@@ -101,10 +101,10 @@ pub(crate) fn project(model: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-/// CADIR's file root is now the component itself. Keep the document container
-/// Dutchman wrote around that component before the fold in cadmpeg #1465.
-/// The component identity survives the fold; archive document identities use
-/// the separate `f3d:archive:product-definition` namespace. This is a placed
+/// Fusion and SolidWorks file roots are now the components themselves. Keep
+/// the document containers Dutchman wrote around them before cadmpeg #1465.
+/// Component identities survive the fold; Fusion archive document identities
+/// use the separate `f3d:archive:product-definition` namespace. This is a placed
 /// view only: neither the decoded definitions nor their geometry are rewritten.
 fn file_containers(model: &mut Value) -> Result<(), String> {
     let Some(definitions) = model.get("product_definitions").and_then(Value::as_array) else {
@@ -117,6 +117,7 @@ fn file_containers(model: &mut Value) -> Result<(), String> {
             .map(|(namespace, _)| namespace)
             .unwrap_or("");
         (namespace == "f3d:model:component"
+            || namespace == "sldprt:assembly:model"
             || (namespace.starts_with("f3d:xref/") && namespace.ends_with("/model:component")))
             && definition.pointer("/storage/kind").and_then(Value::as_str) == Some("file")
     };
@@ -198,7 +199,9 @@ fn file_containers(model: &mut Value) -> Result<(), String> {
             .ok_or("a component definition has no fields")?;
         // Fusion component names are source_name. The fold adopts the archive
         // document's label; that label belongs on its surrounding container.
-        fields.remove("label");
+        if id.starts_with("f3d:") {
+            fields.remove("label");
+        }
         fields.insert("storage".to_owned(), json!({"kind":"embedded"}));
         fields.insert("occurrences".to_owned(), Value::Array(part_children));
         parts.push(part);
@@ -212,8 +215,19 @@ fn file_containers(model: &mut Value) -> Result<(), String> {
         fields.insert("sketches".to_owned(), json!([]));
         fields.insert("occurrences".to_owned(), Value::Array(file_children));
         containers.push(container);
-        roots.push(json!({"id":root_id, "prototype":id, "transform":IDENTITY,
-            "overrides":[], "file_root_component":true}));
+        let mut root = json!({"id":root_id, "prototype":id, "transform":IDENTITY,
+            "overrides":[], "file_root_component":true});
+        if id.starts_with("sldprt:") {
+            let fields = root
+                .as_object_mut()
+                .ok_or("a root component placement has no fields")?;
+            for (key, source) in [("name", "source_name"), ("native_ref", "native_ref")] {
+                if let Some(value) = definition.get(source) {
+                    fields.insert(key.to_owned(), value.clone());
+                }
+            }
+        }
+        roots.push(root);
         replaced.insert(id.to_owned(), container_id);
     }
     if replaced.is_empty() {
@@ -383,6 +397,57 @@ impl Products<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn solidworks_file_root_keeps_its_name_and_children_without_changing_cadir() {
+        use cadmpeg_ir::ids::{OccurrenceId, ProductDefinitionId};
+        use cadmpeg_ir::products::{ExternalDocument, Occurrence, ProductDefinition, Storage};
+        let definition = |id| ProductDefinitionId::mint(id).unwrap();
+        let occurrence = |key| OccurrenceId::mint(format!("test:model:occurrence#{key}")).unwrap();
+        let mut model = crate::read(
+            Format::SolidWorksPart,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/solidworks_cube.sldprt"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let mut root = ProductDefinition::root(
+            definition("sldprt:assembly:model#synthetic"),
+            ExternalDocument::default(),
+        );
+        root.source_name = Some("Root component".to_owned());
+        root.label = Some("Root label".to_owned());
+        root.native_ref = Some("sldprt:assembly:model#synthetic".to_owned());
+        root.occurrences = vec![occurrence("first"), occurrence("second")];
+        let mut part =
+            ProductDefinition::new(definition("test:model:product#cube"), Storage::Embedded);
+        part.bodies = model
+            .ir
+            .geometry
+            .bodies
+            .iter()
+            .map(|body| body.id.clone())
+            .collect();
+        model.ir.model.product_definitions = vec![root, part.clone()];
+        model.ir.model.occurrences = ["first", "second"]
+            .into_iter()
+            .map(|key| Occurrence::new(occurrence(key), part.id.clone(), None))
+            .collect();
+        let before = model.ir.clone();
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(assembly.placements.len(), 1);
+        assert_eq!(
+            assembly.placements[0].name.as_deref(),
+            Some("Root component")
+        );
+        assert_eq!(assembly.placements[0].transform, IDENTITY);
+        let root = &assembly.parts[assembly.placements[0].part];
+        assert_eq!(root.name, "Root label");
+        let children = root.assembly.as_ref().unwrap();
+        assert_eq!(children.placements.len(), 2);
+        assert_eq!(children.parts.len(), 1);
+        assert_eq!(children.parts[0].ir.geometry, model.ir.geometry);
+        assert_eq!(model.ir, before);
+    }
 
     #[test]
     fn shared_definitions_expand_in_source_order_and_keep_external_identity() {
