@@ -790,7 +790,9 @@ fn member_error_code(error: &CodecError) -> &'static str {
 /// would otherwise be converted as part of the design. Only a Remove whose bodies cadmpeg
 /// resolves can say which bodies those are; any other is left as it is.
 fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
-    use cadmpeg_ir::{BodyRetentionMode, BodySelection, FeatureOperation};
+    use cadmpeg_ir::features::operation_settings::BodyRetentionMode;
+    use cadmpeg_ir::features::selections::BodySelection;
+    use cadmpeg_ir::FeatureOperation;
     let mut removed: Vec<(cadmpeg_ir::ids::BodyId, String)> = Vec::new();
     for feature in &ir.model.features {
         if feature.suppressed == Some(true) {

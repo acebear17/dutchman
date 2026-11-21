@@ -4257,15 +4257,34 @@ mod tests {
     }
 
     #[test]
-    fn cadir_cannot_receive_component_or_occurrence_appearance_targets_yet() {
-        for kind in ["component", "occurrence"] {
-            let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
-            wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"entity": {"kind": kind, "value": "f3d:model:component#block"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
-            let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains(kind), "{error}");
-        }
+    fn cadir_has_no_component_appearance_target_and_an_occurrence_one_is_left_out() {
+        let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
+        wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
+        let binding = |kind: &str| json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"entity": {"kind": kind, "value": "f3d:model:component#block"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+        wire["model"]["appearance_bindings"] = binding("component");
+        let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("component"), "{error}");
+        // cadmpeg now reads an occurrence target; the components have no geometry
+        // to carry it, so it is reported as left out.
+        wire["model"]["appearance_bindings"] = binding("occurrence");
+        let mut model = with_components(true);
+        model.ir = crate::test_products::read(&wire);
+        let mut report = Report::default();
+        assert!(matches!(
+            local(&model, 1, crate::PartPositions::LastShown, &mut report),
+            Components::Assembly(_)
+        ));
+        let losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "appearance")
+            .collect();
+        assert_eq!(losses.len(), 1);
+        assert!(losses[0]
+            .detail
+            .ends_with("its target has no placed component geometry"));
     }
 
     #[test]

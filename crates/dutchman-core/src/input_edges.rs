@@ -319,7 +319,7 @@ fn sample(ir: &cadmpeg_ir::CadIr, id: &str, body: &str) -> Option<Value> {
         if !rigid(transform) {
             return None;
         }
-        let placed = |point: cadmpeg_ir::features::FinitePoint3| transform.apply_point(point.get());
+        let placed = |point: cadmpeg_ir::features::geometry::FinitePoint3| transform.apply_point(point.get());
         let edge = ir
             .geometry
             .edges
@@ -353,7 +353,7 @@ fn sample(ir: &cadmpeg_ir::CadIr, id: &str, body: &str) -> Option<Value> {
                 .map(|p| p.position())
         };
         let sample = json!({"edge": id, "interior": placed(interior)?, "tangent": tangent,
-            "faces": [], "start": placed(position(edge.start()?)?)?, "end": placed(position(edge.end()?)?)?});
+            "faces": [], "supports": [], "start": placed(position(edge.start()?)?)?, "end": placed(position(edge.end()?)?)?});
         ctx.finish_session().ok()?;
         Some(sample)
     }))

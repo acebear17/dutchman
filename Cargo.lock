@@ -245,7 +245,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "x11rb",
 ]
 
@@ -767,7 +767,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "cadmpeg-asm"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-derive",
@@ -779,7 +779,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-catia"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -792,7 +792,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-creo"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -803,7 +803,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-f3d"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -824,7 +824,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-freecad"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -839,7 +839,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-iges"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -853,7 +853,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-inventor"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -868,7 +868,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-nx"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -884,7 +884,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-pvz"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -896,7 +896,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-rhino"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -914,7 +914,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-sat"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-core",
@@ -924,7 +924,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-sldprt"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -942,7 +942,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-step"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-container",
@@ -957,7 +957,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-container"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "crc32fast",
@@ -968,14 +968,13 @@ dependencies = [
 [[package]]
 name = "cadmpeg-core"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-derive",
  "flate2",
  "memchr",
  "roxmltree 0.21.2",
  "ruzstd",
- "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -984,20 +983,18 @@ dependencies = [
 [[package]]
 name = "cadmpeg-derive"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 
 [[package]]
 name = "cadmpeg-ir"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-core",
  "cadmpeg-derive",
  "libm",
- "schemars",
  "serde",
- "serde-value",
  "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",
@@ -1006,7 +1003,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-measure"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -1017,7 +1014,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-parasolid"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -1027,7 +1024,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-protein"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -1041,7 +1038,7 @@ dependencies = [
 [[package]]
 name = "cadmpeg-registry"
 version = "0.6.12"
-source = "git+https://github.com/cadmpeg/cadmpeg?rev=0096ab934288be9586fec8a60655e41e78410cb2#0096ab934288be9586fec8a60655e41e78410cb2"
+source = "git+https://github.com/cadmpeg/cadmpeg?rev=bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055#bb8c69a74e0c4e0b48dc8fd57b43b1e3b7263055"
 dependencies = [
  "cadmpeg-codec-catia",
  "cadmpeg-codec-creo",
@@ -1895,12 +1892,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dyn-clone"
-version = "1.0.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
-
-[[package]]
 name = "ecolor"
 version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2198,7 +2189,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4331,26 +4322,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ref-cast"
-version = "1.0.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e440fb4e4b4147295338efb76001ab9e4efc0e5839df2c47fc5ac2381d365c3"
-dependencies = [
- "ref-cast-impl",
-]
-
-[[package]]
-name = "ref-cast-impl"
-version = "1.0.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4582,7 +4553,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4648,31 +4619,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "schemars"
-version = "1.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
-dependencies = [
- "dyn-clone",
- "ref-cast",
- "schemars_derive",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "schemars_derive"
-version = "1.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1c3a92094fa7d61aa124645844facb6b554dfc797136d0f5fd1f890e2bffc69"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_derive_internals",
- "syn 3.0.9",
 ]
 
 [[package]]
@@ -4799,17 +4745,6 @@ name = "serde_derive"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
-
-[[package]]
-name = "serde_derive_internals"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5199,10 +5134,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6345,7 +6280,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

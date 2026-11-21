@@ -705,7 +705,7 @@ fn sample(edge: &Value) -> Mapping<Value> {
         other => return Err(format!("{other} input edges are not supported yet")),
     };
     Ok(
-        json!({"edge": text(edge, "id")?, "interior": point(mid), "start": point(start), "end": point(end), "tangent": point(tangent)}),
+        json!({"edge": text(edge, "id")?, "interior": point(mid), "start": point(start), "end": point(end), "tangent": point(tangent), "supports": []}),
     )
 }
 

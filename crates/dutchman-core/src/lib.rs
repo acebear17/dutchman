@@ -858,11 +858,19 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
+        // The older tagged form of a missing design names no definition at all.
+        assert_eq!(
+            missing_linked_component_names(
+                &json!([]),
+                &json!([{"id": "synthetic:assembly:occurrence#1", "name": "Component",
+                    "prototype": {"kind": "unresolved"}}])
+            ),
+            vec!["Component"]
+        );
         let body = model.ir.geometry.bodies[0].id.clone();
-        // Both reader representations of a missing design, then a component embedded
+        // A missing design, then a component embedded
         // after breaking its link. All identities and product structure are synthetic.
         for (prototype, bodies, missing) in [
-            (json!({"kind": "unresolved"}), json!([]), true),
             (
                 json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"}),
                 json!([]),
@@ -874,17 +882,17 @@ mod tests {
                 false,
             ),
         ] {
-            model.ir.model.product_definitions = serde_json::from_value(json!([{
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["product_definitions"] = json!([{
                 "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
                 "bodies": bodies, "sketches": [], "bom_properties": {}
-            }]))
-            .unwrap();
-            model.ir.model.occurrences = serde_json::from_value(json!([{
+            }]);
+            wire["model"]["occurrences"] = json!([{
                 "id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component",
                 "parent": {"kind": "root"}, "prototype": prototype,
                 "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
-            }]))
-            .unwrap();
+            }]);
+            model.ir = crate::test_products::read(&wire);
             let names = missing_linked_components(&model);
             assert_eq!(names, if missing { vec!["Component"] } else { vec![] });
             let mut report = Report::default();

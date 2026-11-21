@@ -1017,7 +1017,9 @@ fn read_studio(
                         json!({"kind":format!("Onshape design scope: {reason}"),"parameters":{}}),
                     )) {
                         feature.evaluation =
-                            cadmpeg_ir::features::FeatureEvaluation::from_definition(native);
+                            cadmpeg_ir::features::evaluation::FeatureEvaluation::from_definition(
+                                native,
+                            );
                     }
                     feature.dependencies = Default::default();
                     loss(
