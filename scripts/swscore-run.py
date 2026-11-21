@@ -20,7 +20,7 @@ MANIFEST = 'https://progress.dutchmancad.xyz/scoreboard/public-files.json'
 
 def prepare(out):
     out.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(MANIFEST, timeout=60) as response:
+    with urllib.request.urlopen(urllib.request.Request(MANIFEST, headers={"User-Agent": "dutchman-swscore"}), timeout=60) as response:
         data = response.read(16 * 1024 * 1024 + 1)
     if len(data) > 16 * 1024 * 1024:
         raise ValueError('Manifest exceeds 16 MiB')

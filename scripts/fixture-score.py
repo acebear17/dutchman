@@ -67,7 +67,7 @@ def prepare(args):
     if urllib.parse.urlsplit(args.manifest_url).scheme != 'https':
         raise ValueError('Manifest URL must use HTTPS')
     args.out.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(args.manifest_url, timeout=60) as response:
+    with urllib.request.urlopen(urllib.request.Request(args.manifest_url, headers={'User-Agent': 'dutchman-fixture-score'}), timeout=60) as response:
         data = response.read(16 * 1024 * 1024 + 1)
     if len(data) > 16 * 1024 * 1024:
         raise ValueError('Manifest exceeds 16 MiB')
@@ -100,7 +100,7 @@ def download(row, destination, local_root=None):
     else:
         if urllib.parse.urlsplit(row['url']).scheme != 'https':
             raise ValueError('File URL must use HTTPS')
-        response = urllib.request.urlopen(row['url'], timeout=60)
+        response = urllib.request.urlopen(urllib.request.Request(row['url'], headers={'User-Agent': 'dutchman-fixture-score'}), timeout=60)
     deadline = time.monotonic() + 300
     with response, destination.open('wb') as output:
         while True:
