@@ -613,11 +613,20 @@ When conversion reports `verification_checks`, explain the individual source com
 volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
 including their quantity kinds.
 A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
-never be called a pass. Face, edge and shell counts are informational: `info` when equal,
-`differs` when unequal. These count differences never reject a history. Omitted or renamed
+never be called a pass. Raw kernel face, edge and shell counts are informational: `info` when equal,
+`differs` when unequal. These raw count differences never reject a history. Omitted or renamed
 parameters are `not_checked`.
 Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
 a rejected final history even when the delivered design retains the original geometry.
+
+Final SolidCraft history verification also requires matching available merged face and
+edge counts per body (`merged_faces` and `merged_edges` in `verification_checks`).
+These counts merge adjacent pieces of one surface and periodic seam edges. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 ## 5. Explain the loss report
 
