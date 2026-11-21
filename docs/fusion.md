@@ -544,7 +544,9 @@ transform, and each component as a product definition.
   inserted. Within an already posed component, an isolated leaf pose marker yields to a
   partner held by joints that already close; the design root alone does not override that
   child pose. Explicit holder poses and child poses already
-  confirmed by a solved joint stay protected. This also preserves a child component named by
+  confirmed by a solved joint stay protected. A joint from the design root to a child with
+  an explicit source pose checks that child's placement directly, including when its containing
+  component has no pose of its own. This also preserves a child component named by
   a contained pose inside an inserted design when that design has no current pose of its own. An inserted design's own current
   pose holds the design; its children still use their own poses or joints. A contained pose is
   matched within that design instance and its stored owner chain, so an

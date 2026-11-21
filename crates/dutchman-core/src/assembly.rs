@@ -1509,6 +1509,29 @@ fn keep_holders_the_joints_agree_on(
     posed: &BTreeSet<Vec<usize>>,
     joints: &mut [Joint],
 ) {
+    // Root joints check source-posed parts where they are. Keep every holder
+    // containing one of those parts out of promotion, including when another
+    // joint picks a different child of the same holder.
+    let root_poses: BTreeSet<Vec<usize>> = assembly
+        .joints
+        .iter()
+        .filter(|joint| !joint.suppressed)
+        .filter_map(|joint| {
+            if joint.a.is_empty() && posed.contains(&joint.b) {
+                Some(joint.b.clone())
+            } else if joint.b.is_empty() && posed.contains(&joint.a) {
+                Some(joint.a.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let contains_root_pose = |holder: &[usize]| {
+        root_poses
+            .range(holder.to_vec()..)
+            .next()
+            .is_some_and(|path| path.starts_with(holder))
+    };
     let proposed = joints.to_vec();
     // For each holder, the places the joints that reach into it ask for it, per joint side.
     let mut asked: BTreeMap<Vec<usize>, Vec<(usize, bool, Placement3x4)>> = BTreeMap::new();
@@ -1533,7 +1556,8 @@ fn keep_holders_the_joints_agree_on(
             // Nothing binds the rest of a holder to the part the joint names, so the rest has
             // no reason to follow it: the joint places that part alone.
             // The file places both parts a joint names: it checks them and moves neither.
-            if posed.contains(&exact.a) && posed.contains(&exact.b) {
+            if (posed.contains(&exact.a) && posed.contains(&exact.b)) || contains_root_pose(holder)
+            {
                 reverted.push((index, is_a));
                 continue;
             }
@@ -1612,6 +1636,7 @@ fn keep_holders_the_joints_agree_on(
                     continue;
                 };
                 if holder == rejected
+                    || contains_root_pose(holder)
                     || assembly.joints.iter().any(|other| {
                         !other.suppressed
                             && ((other.a == holder && !other.b.starts_with(holder))
@@ -5414,6 +5439,149 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_joint_picking_an_inserted_containers_child_keeps_its_source_world_pose() {
+        // Synthetic definition-owned placements: an insertion at x = 100 holds
+        // an identity container with children at x = 5 and 30. Their internal
+        // joint binds the container, so an outside pick can promote to it.
+        // A source pose holds the picked child in the design. A root joint
+        // that asks for a second insertion must be checked, not move its holder.
+        for (nested_pick, root_x) in [(false, 105.0), (true, 105.0), (false, 205.0), (true, 205.0)]
+        {
+            let model = with_mid(nested(
+                false,
+                Some(json!([
+                    placed(0, "frame", root(), 100.0),
+                    placed(1, "mid", inside(0), 0.0),
+                    posed_child(
+                        placed(2, "block", inside(1), 5.0),
+                        "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                    ),
+                    placed(3, "block", inside(1), 30.0),
+                ])),
+            ));
+            let model = with_current_poses(
+                model,
+                &["f3d:Design/BulkStream.dat:design-component-occurrence#11"],
+            );
+            let picked = if nested_pick {
+                connector_at(0, &["1", "2"], facing(at([5.0, 0.0, 0.0], 0.0)))
+            } else {
+                connector_at(2, &[], facing(IDENTITY))
+            };
+            let mut root_frame = connector(None);
+            root_frame["frame"] = json!(at([root_x, 0.0, 0.0], 0.0));
+            let model = with_joints(
+                model,
+                json!([
+                    joint(
+                        1,
+                        json!({"kind": "fixed"}),
+                        connector_at(2, &[], at([25.0, 0.0, 0.0], 0.0)),
+                        connector_at(3, &[], facing(IDENTITY))
+                    ),
+                    joint(2, json!({"kind": "fixed"}), root_frame, picked),
+                ]),
+            );
+            let (assembly, notes) = local_components(&model).unwrap().unwrap();
+            for (path, source) in [
+                (vec![0], vec![0]),
+                (vec![0, 0], vec![0, 1]),
+                (vec![0, 0, 0], vec![0, 1, 2]),
+                (vec![0, 0, 1], vec![0, 1, 3]),
+            ] {
+                let steps = source
+                    .iter()
+                    .map(|key| {
+                        json!({"occurrence": {
+                            "kind": "occurrence", "value": format!("f3d:model:occurrence#{key}")
+                        }})
+                    })
+                    .collect::<Vec<_>>();
+                let source = model
+                    .ir
+                    .effective_transform(&serde_json::from_value(json!(steps)).unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .affine_rows();
+                let written = world_at(&assembly, &path).unwrap();
+                assert!(
+                    near(&written, &source),
+                    "{path:?}: {written:?} != {source:?}"
+                );
+            }
+            assert_eq!(notes.len(), usize::from(root_x != 105.0), "{notes:?}");
+            assert!(!assembly.joints[0].suppressed);
+            assert_eq!(assembly.joints[1].suppressed, root_x != 105.0);
+        }
+    }
+
+    #[test]
+    fn root_pose_evidence_survives_another_joint_picking_its_sibling() {
+        let model = with_mid(nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 100.0),
+                placed(1, "mid", inside(0), 0.0),
+                posed_child(
+                    placed(2, "block", inside(1), 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                ),
+                placed(3, "block", inside(1), 30.0),
+            ])),
+        ));
+        let model = with_current_poses(
+            model,
+            &["f3d:Design/BulkStream.dat:design-component-occurrence#11"],
+        );
+        let rooted = |number, key, x| {
+            let mut frame = connector(None);
+            frame["frame"] = json!(at([x, 0.0, 0.0], 0.0));
+            joint(
+                number,
+                json!({"kind": "fixed"}),
+                frame,
+                connector_at(key, &[], facing(IDENTITY)),
+            )
+        };
+        let model = with_joints(
+            model,
+            json!([
+                joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector_at(2, &[], at([25.0, 0.0, 0.0], 0.0)),
+                    connector_at(3, &[], facing(IDENTITY))
+                ),
+                rooted(2, 2, 105.0),
+                rooted(3, 3, 230.0),
+            ]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        for (path, x) in [
+            (vec![0, 0], 100.0),
+            (vec![0, 0, 0], 105.0),
+            (vec![0, 0, 1], 230.0),
+        ] {
+            assert!(
+                near(
+                    &world_at(&assembly, &path).unwrap(),
+                    &at([x, 0.0, 0.0], 0.0)
+                ),
+                "{path:?}"
+            );
+        }
+        assert_eq!(
+            assembly
+                .joints
+                .iter()
+                .map(|joint| joint.suppressed)
+                .collect::<Vec<_>>(),
+            [true, false, false]
+        );
+        assert_eq!(notes.len(), 1, "{notes:?}");
     }
 
     #[test]
