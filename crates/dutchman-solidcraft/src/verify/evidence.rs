@@ -1015,6 +1015,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                single_body_regions: 1,
             },
             None,
             &model(),
@@ -1255,6 +1256,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                single_body_regions: 1,
             },
             None,
             &model(),
