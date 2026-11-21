@@ -4,6 +4,16 @@ For the Solid Edge sub-issues of [#840](https://github.com/dutchman-cad/dutchman
 (#841-#854). Read [AGENTS.md](../../AGENTS.md) first: it has the build, the checks and the
 pull-request rules. This page adds what is specific to Solid Edge.
 
+Each issue starts with a block to paste into your agent, with that issue's link in it:
+
+```
+Work on https://github.com/dutchman-cad/dutchman/issues/<N>
+Clone https://github.com/dutchman-cad/dutchman
+Follow AGENTS.md and docs/agents/solid-edge.md
+Use the repro files linked from the issue
+Open a pull request when the issue's "How to verify" passes
+```
+
 ## Where the work splits
 
 cadmpeg reads the file; Dutchman maps what cadmpeg read onto SolidCraft. A Dutchman issue starts
