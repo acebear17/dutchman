@@ -5,13 +5,14 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`20abb627`).
-State at the cadmpeg commit pinned in `Cargo.toml` (`f1338aa2`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`0096ab93`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
 placements resolve. Mapping still depends on the resolved operands each feature needs.
 Sketch names follow their timeline sketch features.
+Independent F3Z member decodes state their own document root, so minimum-reproduction
+checks validate each member as a complete document.
 
 Revolve profiles and axes now follow their stored curve and region selections, including
 resolved unions of subdivided regions. Unresolved stored selections remain native and
