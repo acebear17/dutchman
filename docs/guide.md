@@ -1132,6 +1132,24 @@ says the design is too large to open inside SolidCraft, use the
 "Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
 See [the plugin guide](plugin.md).
 
+### Batch report
+
+After a folder run finishes in the desktop app, choose **Batch report** in the
+bottom bar, after the converted and failed counts. The button is hidden before
+a run and while conversion is running. Writing runs in the background; the
+status then says `<converted> converted, <failed> failed · Report saved to <output folder name>/` or shows a folder
+permission error.
+
+For a fresh CLI run, use `dutchman convert-all designs --out-dir converted --batch-report`.
+For saved results, run `dutchman batch-report converted`. Both write
+`dutchman-batch-report.md` and `dutchman-batch-report.csv` in the output folder.
+Markdown starts with totals for full history, partial history, geometry only,
+and failed files, including zero counts. CSV has a header and one row per file,
+with no summary rows. Each file has its relative input path, output path,
+outcome (Full history, Partial N of M, Geometry only, or Failed), and first reason. Partial counts use
+rebuilt features and features needing rebuilding, with older mapped/total counts
+as a fallback. These local summaries include names and paths.
+
 The [public fixture score workflow](fixture-score.md) checks public fixture
 history on GitHub runners each week or on demand. It records conversion and
 SolidCraft reopen evidence for the fixture scoreboard.

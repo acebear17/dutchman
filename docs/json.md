@@ -1992,6 +1992,39 @@ does not increase source feature counts. Unsupported generated edge identities u
 `its generated edge identity has no resolved source geometry, which is not supported yet`
 as the existing history blocker reason. The report schema and field names are unchanged.
 
+### Whole-folder summaries
+
+`dutchman batch-report <output-folder>` reads existing `dutchman.convert/1`
+`<stem>.report.json` and `<stem>.failed.json` reports recursively, without opening
+source designs. `convert-all --batch-report` summarises that invocation's results.
+The desktop app offers **Batch report** in the bottom bar after a folder run
+finishes, beside the converted and failed counts. After writing, its status
+says `<converted> converted, <failed> failed · Report saved to <output folder name>/`. JSON schemas are unchanged.
+
+The Markdown and CSV files are named `dutchman-batch-report.md` and
+`dutchman-batch-report.csv`. Columns are Input path, Output path, Outcome, and
+First reason. Directly below the Markdown heading, a totals line counts all
+files and each of the four outcomes, including zero categories, using “1 file”
+for a single file. CSV contains only its header and one row per file.
+Inputs are relative to their common parent; outputs beneath the
+output folder are relative to that folder. Output paths elsewhere remain as
+recorded. A failed file without an output path has an empty cell. Rows sort by
+input path. Full history and Geometry only describe the retained mode; they do
+not add a verification claim. Partial N of M uses `history.rebuilt` and
+`history.needing`, falling back to `history.mapped` and `history.total` for older
+reports. Flattened verification always gives Geometry only.
+
+First reason uses the failure message, otherwise the first `blocked` or
+`left_out` feature reason, excluding downstream notes (including “after the
+first” and “follows … blocker”), then the verification reason or first loss.
+When both success and failure sidecars name the same input, the newest sidecar
+wins; equal timestamps choose the last report in path order. Other duplicate
+input paths follow the same rule. Unreadable or unrecognised reports stop the
+export with an error. Reads skip symbolic links and are bounded to 32 directory
+levels, 100,000 entries, 10,000 reports, 64 MiB per report, and 256 MiB in total.
+Each output file is replaced atomically. These are local reports containing
+names, paths, and unredacted reasons.
+
 The [public fixture score workflow](fixture-score.md) wraps the conversion report
 in the fixture sweep result record (`exit`, `reopen_exit`, `report`, `evaluation`,
 `seconds`). Download skips add `skip_reason`; execution failures add
