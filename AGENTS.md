@@ -3,6 +3,8 @@
 A task brief or issue that states its own rule for its work takes precedence over this file.
 [CONTRIBUTING.md](CONTRIBUTING.md) is the full guide; this page is the short version for agents.
 
+Format-specific guides: [Solid Edge](docs/agents/solid-edge.md).
+
 ## Build and test
 
 Rust 1.88 or newer.
