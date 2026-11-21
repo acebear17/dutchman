@@ -141,7 +141,8 @@ fn body_check(want: &Measured, got: &Measured, source: &Value, written: &Value) 
         checks.insert(name.to_owned(), check);
     }
     // inspect.measure's top-level counts merge adjacent pieces of one surface,
-    // periodic seams and their split edge chains. Raw /kernel counts above do not.
+    // periodic seams. Edge chains can still split differently after mirror or full-turn
+    // revolve operations, so merged edges remain informational, like raw counts.
     // No geometric tolerance can safely substitute for these discrete checks:
     // missing small holes can fit inside the measuring mesh's volume allowance.
     // Free-form pieces can use different surface records on import and replay,
@@ -164,7 +165,9 @@ fn body_check(want: &Measured, got: &Measured, source: &Value, written: &Value) 
                 written.get(field).and_then(Value::as_u64),
             ) {
                 (Some(a), Some(b)) => json!({
-                    "status": if a == b { "pass" } else { "fail" },
+                    "status": if field == "edges" {
+                        if a == b { "info" } else { "differs" }
+                    } else if a == b { "pass" } else { "fail" },
                     "source": a, "written": b
                 }),
                 _ => skipped("Source or replay merged topology count is unavailable"),
@@ -365,7 +368,8 @@ fn failed(value: &Value) -> bool {
         Value::Object(fields) => {
             fields.get("status").and_then(Value::as_str) == Some("fail")
                 || fields.iter().any(|(name, value)| {
-                    !matches!(name.as_str(), "faces" | "edges" | "shells") && failed(value)
+                    !matches!(name.as_str(), "faces" | "edges" | "shells" | "merged_edges")
+                        && failed(value)
                 })
         }
         Value::Array(rows) => rows.iter().any(failed),
@@ -399,7 +403,9 @@ fn failure_reason(evidence: &Value) -> String {
         for body in bodies {
             if let Some(checks) = body.get("checks").and_then(Value::as_object) {
                 for (name, check) in checks {
-                    if !matches!(name.as_str(), "faces" | "edges" | "shells") && is_failure(check) {
+                    if !matches!(name.as_str(), "faces" | "edges" | "shells" | "merged_edges")
+                        && is_failure(check)
+                    {
                         let index = body
                             .get("source_index")
                             .and_then(Value::as_u64)
@@ -942,14 +948,14 @@ mod tests {
             let geometry = &report.verification_checks()[0]["geometry"];
             assert_eq!(status(geometry, count), "differs");
             assert_eq!(geometry["bodies"][0]["checks"][count]["written"], value);
-            for merged in ["merged_faces", "merged_edges"] {
-                assert_eq!(status(geometry, merged), "pass");
-            }
+            assert_eq!(status(geometry, "merged_faces"), "pass");
+            assert_eq!(status(geometry, "merged_edges"), "info");
             assert!(!failed(geometry));
         }
         // Topology counts cannot reject even if a producer supplies a fail status.
         assert!(!failed(&json!({"checks":{"faces":{"status":"fail"},
-            "edges":{"status":"fail"},"shells":{"status":"fail"}}})));
+            "edges":{"status":"fail"},"shells":{"status":"fail"},
+            "merged_edges":{"status":"fail"}}})));
     }
 
     #[test]
@@ -1021,19 +1027,19 @@ mod tests {
         for check in ["volume", "surface_area", "bounding_box", "centroid"] {
             assert_eq!(status(geometry, check), "pass", "{check}");
         }
-        for check in ["merged_faces", "merged_edges"] {
-            assert_eq!(status(geometry, check), "fail", "{check}");
-        }
+        assert_eq!(status(geometry, "merged_faces"), "fail");
+        assert_eq!(status(geometry, "merged_edges"), "differs");
     }
 
     #[test]
-    fn either_merged_count_difference_rejects_and_missing_counts_are_unchecked() {
+    fn faces_reject_but_split_edges_are_informational_and_missing_counts_are_unchecked() {
         for field in ["faces", "edges"] {
             let mut written = cube();
             written["bodies"][0][field] = json!(99);
             let geometry = compare(written);
-            assert_eq!(status(&geometry, &format!("merged_{field}")), "fail");
-            assert!(failed(&geometry));
+            let expected = if field == "faces" { "fail" } else { "differs" };
+            assert_eq!(status(&geometry, &format!("merged_{field}")), expected);
+            assert_eq!(failed(&geometry), field == "faces");
         }
         let mut written = cube();
         for field in ["faces", "edges"] {
@@ -1043,6 +1049,32 @@ mod tests {
         for check in ["merged_faces", "merged_edges"] {
             assert_eq!(status(&geometry, check), "not_checked");
         }
+        assert!(!failed(&geometry));
+    }
+
+    #[test]
+    fn mirror_and_full_turn_edge_splits_preserve_matching_face_evidence() {
+        let mut source = cube();
+        source["bodies"][0]["edges"] = json!(27);
+        source["bodies"][0]["face_types"] = json!({"plane":4,"cylinder":2});
+        let mut written = source.clone();
+        written["bodies"][0]["edges"] = json!(18);
+        let geometry = measurements(&parse(&source).unwrap(), &parse(&written).unwrap());
+        assert_eq!(status(&geometry, "merged_faces"), "pass");
+        assert_eq!(status(&geometry, "analytic_faces"), "pass");
+        assert_eq!(status(&geometry, "merged_edges"), "differs");
+        assert!(!failed(&geometry));
+        // Edge evidence cannot substitute for unavailable face evidence.
+        for body in [&mut source, &mut written] {
+            body["bodies"][0].as_object_mut().unwrap().remove("faces");
+            body["bodies"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("face_types");
+        }
+        let geometry = measurements(&parse(&source).unwrap(), &parse(&written).unwrap());
+        assert_eq!(status(&geometry, "merged_faces"), "not_checked");
+        assert_eq!(status(&geometry, "analytic_faces"), "not_checked");
         assert!(!failed(&geometry));
     }
 
@@ -1232,9 +1264,8 @@ mod tests {
         for check in ["volume", "surface_area", "bounding_box", "centroid"] {
             assert_eq!(status(geometry, check), "pass", "{check}");
         }
-        for check in ["merged_faces", "merged_edges"] {
-            assert_eq!(status(geometry, check), "fail", "{check}");
-        }
+        assert_eq!(status(geometry, "merged_faces"), "fail");
+        assert_eq!(status(geometry, "merged_edges"), "differs");
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -1278,11 +1309,16 @@ mod tests {
             status(&report.verification_checks()[0]["geometry"], "faces"),
             "differs"
         );
-        for check in ["closed_shell", "surface_area"] {
-            assert_eq!(
-                status(&report.verification_checks()[0]["geometry"], check),
-                "fail"
-            );
+        let geometry = &report.verification_checks()[0]["geometry"];
+        assert_eq!(status(geometry, "surface_area"), "fail");
+        let closure = &geometry["bodies"][0]["checks"]["closed_shell"];
+        // Older evaluators expose no closure measurement. Keep that evidence
+        // explicitly unchecked; the measured area still rejects this open box.
+        if closure.get("source").is_some() {
+            assert_eq!(closure["status"], "fail");
+        } else {
+            assert_eq!(closure["status"], "not_checked");
+            assert_eq!(closure["reason"], "Source or replay closure is unavailable");
         }
         for (scale, depth, differs, check) in [
             (1.0, 10.0, false, "volume"),

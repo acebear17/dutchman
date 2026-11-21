@@ -366,9 +366,11 @@ statuses and never reject a history by themselves. Omitted or renamed parameters
 Missing evidence is never a pass; closure alone does not prove manifoldness.
 See [source comparison evidence](json.md#source-comparison-evidence) for the field contract.
 
-Final SolidCraft history verification also requires matching available merged face and
-edge counts per body (`merged_faces` and `merged_edges` in `verification_checks`).
-These counts merge adjacent pieces of one surface and periodic seam edges. Bodies with
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
 free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
 surface records. Available analytic surface-kind counts (`analytic_faces`) must still
 match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch

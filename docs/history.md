@@ -14,10 +14,11 @@ history, with no flattened-history warning.
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
   installed, Dutchman replays the history in it and compares each body's position, box, area,
-  and volume with the original before keeping it. Available merged face and edge counts
+  and volume with the original before keeping it. Available merged face counts
   must also match on analytic bodies, so small missing holes cannot hide inside mesh tolerances.
   Bodies with free-form faces compare analytic surface-kind counts instead of total topology. Raw kernel counts may differ at periodic seams; SolidCraft
-  merges adjacent pieces on the same surface and their split edges before this check.
+  merges adjacent pieces on the same surface before this check. Merged edge counts remain
+  informational because mirror and full-turn revolve operations can split edges differently.
   An open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
     3D sketches of lines, arcs, circles, splines and points;
@@ -94,7 +95,8 @@ cancel):
 | Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
 | Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
 | Kernel face, edge and shell counts | Informational only: `info` when equal, `differs` when unequal. Equivalent split or merged faces may differ; counts never reject a final history. Earlier inference retains its geometry comparison policy. |
-| Merged face and edge counts | Final history comparisons require equal available top-level counts per paired body. SolidCraft merges adjacent pieces of one surface, removes periodic seams and joins split edge chains. A mismatch retains the imported final shape and reports the differing count. Free-form and mesh surface totals are not comparable and are not checked. Missing counts are not checked. |
+| Merged face counts | Final history comparisons require equal available top-level counts per paired body. SolidCraft merges adjacent pieces of one surface and periodic seams. A mismatch retains the imported final shape and reports the differing count. Free-form and mesh surface totals are not comparable and are not checked. Missing counts are not checked. |
+| Merged edge counts | Informational only: `info` when equal, `differs` when unequal. Edge splitting after mirrors and full-turn revolves can differ across SolidCraft releases without changing the faces or shape. |
 | Analytic surface-kind counts | Available merged counts of planes, cylinders, cones and spheres must match, including in bodies with free-form faces. Mesh bodies are not checked. |
 | Centre of mass | Final history comparisons use the position allowance above on actual centroids, when both are available. A box centre is never substituted. |
 | Closed shell | Final history comparisons require source and replay closure to agree; a source sheet may be open. |
