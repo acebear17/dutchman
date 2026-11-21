@@ -58,7 +58,7 @@ fn numeric(source: Option<f64>, written: Option<f64>, tolerance: f64) -> Value {
     }
 }
 
-fn vector(value: Option<&Value>) -> Option<[f64; 3]> {
+pub(super) fn vector(value: Option<&Value>) -> Option<[f64; 3]> {
     let array = value?.as_array()?;
     if array.len() != 3 {
         return None;
@@ -906,6 +906,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model,
@@ -938,6 +939,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model(),
@@ -1123,6 +1125,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model(),
@@ -1158,6 +1161,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                ..Expected::default()
             },
             None,
             &model(),
@@ -1202,6 +1206,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                ..Expected::default()
             },
             None,
             &model(),
@@ -1298,6 +1303,7 @@ mod tests {
             Expected {
                 solids: 1,
                 sheets: 0,
+                ..Expected::default()
             },
             None,
             &model(),
@@ -1334,6 +1340,7 @@ mod tests {
                 Expected {
                     solids: 1,
                     sheets: 0,
+                    ..Expected::default()
                 },
                 None,
                 &model(),
