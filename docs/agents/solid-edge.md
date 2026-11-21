@@ -10,17 +10,30 @@ Each issue starts with a block to paste into your agent, with that issue's link 
 Work on https://github.com/dutchman-cad/dutchman/issues/<N>
 Clone https://github.com/dutchman-cad/dutchman
 Follow AGENTS.md and docs/agents/solid-edge.md
+If the cadmpeg issue under Depends on is still open, do that one first (its own block is at the top of it)
 Use the repro files linked from the issue
 Open a pull request when the issue's "How to verify" passes
 ```
 
 ## Where the work splits
 
-cadmpeg reads the file; Dutchman maps what cadmpeg read onto SolidCraft. A Dutchman issue starts
-only when the cadmpeg issue it names under **Depends on** has landed **and** Dutchman's cadmpeg pin
-includes it (the `rev` of the `cadmpeg-*` crates in the workspace `Cargo.toml`). Until then, keep
-the pull request a draft. Never read Solid Edge bytes in Dutchman: that belongs in cadmpeg's
-`cadmpeg-codec-solidedge` ([cadmpeg's Solid Edge guide](https://github.com/cadmpeg/cadmpeg/blob/main/docs/agents/solid-edge.md)).
+cadmpeg reads the file; Dutchman maps what cadmpeg read onto SolidCraft. Never read Solid Edge
+bytes in Dutchman: that belongs in cadmpeg's `cadmpeg-codec-solidedge`. Each Dutchman issue names
+the cadmpeg issue it needs under **Depends on**, with its **Status**. Work in this order:
+
+1. **Check Depends on.** If the cadmpeg issue is still open, work it first, following
+   [cadmpeg's agent guide](https://github.com/cadmpeg/cadmpeg/blob/main/docs/agents/README.md), and
+   open the pull request there.
+2. **Open the Dutchman pull request right away, as a draft**, built against that cadmpeg pull
+   request's branch: point the `cadmpeg-*` crates in the workspace `Cargo.toml` at its branch commit
+   (`rev = "<commit>"`, on the repository the branch is in) and say so in the pull request body. Do
+   the mapping and its tests (the steps below) on that draft.
+3. **When the cadmpeg pull request merges,** Dutchman's pin moves to a cadmpeg `main` commit that
+   includes it (maintainers move the pin after a batch of cadmpeg merges; ask in your pull request).
+   Merge `main` into your branch, drop the temporary `rev`, verify again against the repro's STEP,
+   and mark the pull request ready.
+4. **If cadmpeg's review changes what is read,** update the Dutchman mapping and its tests before
+   marking ready.
 
 ## Steps
 
