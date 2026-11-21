@@ -2605,7 +2605,7 @@ fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
         &model,
         &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
     );
-    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
     let volume = volumes(&cli, &bytes);
     assert_eq!(volume.len(), 1);
