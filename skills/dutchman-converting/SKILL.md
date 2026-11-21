@@ -1226,3 +1226,7 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
+
+For the SolidCraft plugin's separate conditional-options package, `options_for` filters the
+form only; conversion still detects the selected file's format. Use the normal package on
+SolidCraft 0.44/0.45. See [plugin options](../../docs/plugin.md#conditional-options-package-031-draft).
