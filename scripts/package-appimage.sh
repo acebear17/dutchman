@@ -3,8 +3,8 @@
 #
 #   scripts/package-appimage.sh <target> <version> [binaries-dir]
 #
-# Takes dutchman, dutchman-mcp, dutchman-gui and dutchman-web (from target/<target>/release, or
-# binaries-dir) and writes, in dist/:
+# Takes dutchman, dutchman-mcp, dutchman-gui and dutchman-web from
+# target/<target>/${CARGO_PROFILE:-release} (or binaries-dir) and writes, in dist/:
 #   dutchman-<version>-<arch>.AppImage         (<arch> is x86_64 or aarch64)
 #   dutchman-<version>-<arch>.AppImage.zsync   for delta updates (AppImageUpdate and the like)
 #   each with its .sha256
@@ -56,7 +56,7 @@ fetch "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERS
   "runtime-$RUNTIME_VERSION-$arch" "$runtime_sha"
 chmod +x "$tools/appimagetool-$APPIMAGETOOL_VERSION-$arch.AppImage"
 
-bins=${3:-target/$target/release}
+bins=${3:-target/$target/${CARGO_PROFILE:-release}}
 appdir="dist/appimage-$arch/Dutchman.AppDir"
 rm -rf "dist/appimage-$arch"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \

@@ -58,6 +58,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE: dist
   DUTCHMAN_RELEASE_BUILD: "1"
 
 jobs:
@@ -120,8 +121,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Two compile jobs on Linux keep the release links (thin LTO, 16 codegen units)
-        # within the runner's memory; with more, the x86_64 runner was lost mid-build.
+        # Keep the existing two-job Linux limit; the benchmark workflow measures
+        # the new distribution profile's peak memory on hosted runners.
         include: >-
           ${{ fromJSON(inputs.targets == 'linux-x86_64' &&
             '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu","container":"debian:bookworm","jobs":2}]' ||
@@ -154,7 +155,7 @@ jobs:
           if [[ '${{ matrix.target }}' == *linux* ]]; then
             packages+=(-p dutchman-web)
           fi
-          cargo build --release --locked "${packages[@]}" --target ${{ matrix.target }}
+          cargo build --profile "$CARGO_PROFILE" --locked "${packages[@]}" --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
@@ -187,12 +188,12 @@ jobs:
           $metadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Could not read the release version' }
           $version = ($metadata.packages | Where-Object name -eq 'dutchman').version
-          cargo run --release --locked -p dutchman-gui --target x86_64-pc-windows-msvc --example ico -- dist/Dutchman.ico
+          cargo run --profile $env:CARGO_PROFILE --locked -p dutchman-gui --target x86_64-pc-windows-msvc --example ico -- dist/Dutchman.ico
           if ($LASTEXITCODE -ne 0) { throw 'Could not render the Windows icon' }
           ./scripts/windows-msi.ps1 -Version $version
           ./scripts/test-windows-msi.ps1 -Version $version
           $env:DUTCHMAN_PORTABLE_TEST_ARCHIVE = (Resolve-Path "dist/$env:ARCHIVE").Path
-          cargo test --release --locked -p dutchman-gui --target x86_64-pc-windows-msvc --lib update:: -- --include-ignored
+          cargo test --profile $env:CARGO_PROFILE --locked -p dutchman-gui --target x86_64-pc-windows-msvc --lib update:: -- --include-ignored
           if ($LASTEXITCODE -ne 0) { throw 'The Windows updater tests failed' }
       - name: Keep Windows installer logs
         if: always() && runner.os == 'Windows'
@@ -241,7 +242,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Build archive programs
-        run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
+        run: cargo build --profile "$CARGO_PROFILE" --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
         run: |
           version=$(cargo metadata --format-version 1 --no-deps \

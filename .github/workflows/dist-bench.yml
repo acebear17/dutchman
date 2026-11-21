@@ -1,0 +1,158 @@
+name: Distribution benchmark
+
+# Temporary comparison on GitHub-hosted runners, without a Rust cache.
+on:
+  push:
+    branches: ["bench-run/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, dist]
+    env:
+      P: ${{ matrix.profile }}
+      LC_ALL: C
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Measure the build
+        shell: bash
+        run: |
+          mkdir -p measured
+          set +e
+          /usr/bin/time -v -o measured/time.txt cargo build --profile "$P" --locked -p dutchman --bin dutchman
+          status=$?
+          set -e
+          cat measured/time.txt
+          if [[ $status -ne 0 ]]; then exit "$status"; fi
+          cp "target/$P/dutchman" measured/dutchman
+          python3 - <<'PYBUILD'
+          import json, os, pathlib, re
+          report = pathlib.Path("measured/time.txt").read_text()
+          elapsed = re.search(r"Elapsed \(wall clock\) time [^\n]*\): ([0-9:.]+)", report).group(1)
+          seconds = 0.0
+          for part in elapsed.split(":"):
+              seconds = seconds * 60 + float(part)
+          stats = {
+              "profile": os.environ["P"],
+              "build_wall_seconds": seconds,
+              "build_max_rss_kib": int(re.search(r"Maximum resident set size \(kbytes\): (\d+)", report).group(1)),
+              "binary_bytes": pathlib.Path("measured/dutchman").stat().st_size,
+          }
+          pathlib.Path("measured/stats.json").write_text(json.dumps(stats, indent=2) + "\n")
+          print(json.dumps(stats, indent=2))
+          PYBUILD
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dist-bench-${{ matrix.profile }}
+          path: measured/
+          if-no-files-found: error
+          retention-days: 7
+
+  bench:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-bench-release
+          path: bin/release
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-bench-dist
+          path: bin/dist
+      - name: Fetch inputs and compare conversion times
+        env:
+          BENCH_INPUTS: >-
+            [{"name": "RailCore II 300ZL - Nov 2019.f3z", "url": "https://raw.githubusercontent.com/railcore/parts/81ef3be6c712e56782142dbce4b736994c4a1477/DXF/f3z/RailCore%20II%20300ZL%20-%20Nov%202019.f3z"}, {"name": "RCM_f360_archive.f3z", "url": "https://raw.githubusercontent.com/railcore/railcore-mini/7126633b332f44c494e80ee9b0425f59cfda134c/parts/F360/RCM_f360_archive.f3z"}, {"name": "00010-M3x5x4mm_Heatset_Bridge_Cutter.f3d", "url": "https://raw.githubusercontent.com/PrintersForAnts/Voron-Construct/59394cdd6d1f16b9dc8d0300020bb13fb5c481d3/Cutters/CrossBridge%20Holes%20M3-M5/Heatset%20Inserts/M3x5x4mm%20Heatset%20Bridge%20Cutter.f3d"}, {"name": "00186-M3_Shim_0.5mm_x_6mm_.f3d", "url": "https://raw.githubusercontent.com/PrintersForAnts/Voron-Construct/59394cdd6d1f16b9dc8d0300020bb13fb5c481d3/Fasteners/M3/5%20-%20Shims/M3%20Shim%200.5mm%20x%206mm%20.f3d"}, {"name": "00121-BMG_Gear_Assembly.f3d", "url": "https://raw.githubusercontent.com/PrintersForAnts/Voron-Construct/59394cdd6d1f16b9dc8d0300020bb13fb5c481d3/Extruder%20Hardware/Gear%20Assemblies/BMG%20Gear%20Assembly.f3d"}, {"name": "00259-MGN12_Rail_-_300mm.f3d", "url": "https://raw.githubusercontent.com/PrintersForAnts/Voron-Construct/59394cdd6d1f16b9dc8d0300020bb13fb5c481d3/Motion%20Components/4%20-%20Linear%20Rails/MGN12%20Rail%20-%20300mm.f3d"}, {"name": "00622-Voron_V1.8_Master_Model_v148.f3z", "url": "https://raw.githubusercontent.com/VoronDesign/Voron-1/1467af422f94ff1cb0bc13bc10f2ff64c94056b7/CAD/Voron%20V1.8%20Master%20Model%20v148.f3z"}]
+        run: |
+          python3 - <<'PYBENCH'
+          import json, os, pathlib, statistics, subprocess, time, urllib.request
+
+          profiles = ("release", "dist")
+          builds = {}
+          for profile in profiles:
+              binary = pathlib.Path("bin") / profile / "dutchman"
+              binary.chmod(0o755)
+              builds[profile] = json.loads(binary.with_name("stats.json").read_text())
+          pathlib.Path("inputs").mkdir(exist_ok=True)
+          pathlib.Path("results").mkdir(exist_ok=True)
+          results = []
+          # Cap each public download at 100 MB, including responses with no Content-Length.
+          limit = 100_000_000
+          for item in json.loads(os.environ["BENCH_INPUTS"]):
+              source = pathlib.Path("inputs") / item["name"]
+              size = 0
+              with urllib.request.urlopen(item["url"], timeout=120) as response, source.open("wb") as output:
+                  while chunk := response.read(1024 * 1024):
+                      size += len(chunk)
+                      if size > limit:
+                          raise SystemExit(f"{item['name']} exceeds 100 MB")
+                      output.write(chunk)
+              result = {**item, "input_bytes": size, "runs": []}
+              # Three pairs keep release and dist interleaved on the same runner.
+              for repeat in range(3):
+                  for profile in profiles:
+                      stem = pathlib.Path("results") / f"{item['name']}-{profile}-{repeat}"
+                      command = [str(pathlib.Path("bin") / profile / "dutchman"),
+                                 "convert", "--json", str(source), "-o", str(stem) + ".sc", "--no-verify"]
+                      with pathlib.Path(str(stem) + ".json").open("wb") as stdout, pathlib.Path(str(stem) + ".log").open("wb") as stderr:
+                          started = time.perf_counter()
+                          process = subprocess.run(command, stdout=stdout, stderr=stderr, check=False)
+                          elapsed = time.perf_counter() - started
+                      result["runs"].append({"profile": profile, "run": repeat + 1,
+                                             "wall_seconds": elapsed, "exit_code": process.returncode})
+                      pathlib.Path(str(stem) + ".sc").unlink(missing_ok=True)
+              medians = {}
+              for profile in profiles:
+                  runs = [run for run in result["runs"] if run["profile"] == profile]
+                  medians[profile] = (statistics.median(run["wall_seconds"] for run in runs)
+                                      if all(run["exit_code"] == 0 for run in runs) else None)
+              result["median_seconds"] = medians
+              result["speedup_percent"] = ((medians["release"] / medians["dist"] - 1) * 100
+                                           if all(medians.values()) else None)
+              results.append(result)
+              print(json.dumps(result), flush=True)
+          report = {"builds": builds, "files": results,
+                    "speedup_definition": "(release median / dist median - 1) * 100"}
+          pathlib.Path("bench.json").write_text(json.dumps(report, indent=2) + "\n")
+          lines = ["| File | Release median s | Dist median s | Speedup % |",
+                   "| --- | ---: | ---: | ---: |"]
+          def number(value):
+              return f"{value:.3f}" if value is not None else "failed"
+          for result in results:
+              medians = result["median_seconds"]
+              lines.append(f"| {result['name']} | {number(medians['release'])} | {number(medians['dist'])} | {number(result['speedup_percent'])} |")
+          lines += ["", "Speedup = (release median / dist median − 1) × 100.", "",
+                    "| Profile | Binary bytes | Build wall s | Build peak RSS KiB |",
+                    "| --- | ---: | ---: | ---: |"]
+          for profile, stats in builds.items():
+              lines.append(f"| {profile} | {stats['binary_bytes']} | {stats['build_wall_seconds']:.3f} | {stats['build_max_rss_kib']} |")
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+          if any(run["exit_code"] != 0 for result in results for run in result["runs"]):
+              raise SystemExit("Conversion failed; see bench.json and conversion logs.")
+          PYBENCH
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dist-bench-results
+          path: |
+            bench.json
+            results/*.json
+            results/*.log
+          if-no-files-found: error
+          retention-days: 7

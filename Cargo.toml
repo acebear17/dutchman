@@ -60,3 +60,10 @@ indexing_slicing = "deny"
 lto = "thin"
 codegen-units = 16
 strip = true
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true

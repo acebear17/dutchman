@@ -1,11 +1,15 @@
 # WiX 4.0.6 is installed by release-build.yml; it is a build tool only.
 param(
     [Parameter(Mandatory)][string]$Version,
-    [string]$BinDir = 'target/x86_64-pc-windows-msvc/release',
+    [string]$BinDir,
     [string]$Icon = 'dist/Dutchman.ico',
     [string]$Output
 )
 $ErrorActionPreference = 'Stop'
+if (!$BinDir) {
+    $profileDir = if ($env:CARGO_PROFILE) { $env:CARGO_PROFILE } else { 'release' }
+    $BinDir = "target/x86_64-pc-windows-msvc/$profileDir"
+}
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "MSI needs a stable three-part version: $Version" }
 $parts = $Version.Split('.')
 if ([int]$parts[0] -gt 255 -or [int]$parts[1] -gt 255 -or [int]$parts[2] -gt 65535) {

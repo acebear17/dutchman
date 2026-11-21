@@ -8,7 +8,7 @@
 # LICENSE, NOTICE, dependency and font licences, skills, docs, installed AGENTS.md, and the
 # README with its links pinned to <ref>
 # (a tag or a commit). An optional binaries-dir supplies prebuilt programs instead of
-# target/<target>/release.
+# target/<target>/${CARGO_PROFILE:-release}.
 # Prints the archive's file name. The programs are run once to check them, unless this machine
 # cannot run the target's (SKIP_RUN=1, for a cross-compiled target).
 set -euo pipefail
@@ -28,7 +28,7 @@ mkdir -p "dist/$name/licences"
 programs=(dutchman dutchman-mcp dutchman-gui)
 [[ $target == *linux* ]] && programs+=(dutchman-web)
 for program in "${programs[@]}"; do
-  cp "${4:-target/$target/release}/$program$exe" "dist/$name/"
+  cp "${4:-target/$target/${CARGO_PROFILE:-release}}/$program$exe" "dist/$name/"
 done
 cp LICENSE NOTICE "dist/$name/"
 python3 scripts/package-docs.py "dist/$name"

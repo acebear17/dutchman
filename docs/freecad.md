@@ -191,7 +191,7 @@ FreeCAD support is the `freecad` cargo feature of `dutchman` and `dutchman-gui`,
 default. A build without it says it leaves FreeCAD files out:
 
 ```sh
-cargo build --release -p dutchman -p dutchman-gui --no-default-features
+cargo build --profile dist -p dutchman -p dutchman-gui --no-default-features
 ```
 
 ## Testing without FreeCAD

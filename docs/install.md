@@ -334,9 +334,11 @@ or newer only.
 ## Building and packaging
 
 ```sh
-cargo build --release
+cargo build --profile dist
 cargo test --workspace
 ```
+
+The distribution profile uses whole-program optimisation and writes programs to `target/dist/`.
 
 For packagers: the std-only `dutchman-launcher` crate provides a tiny front command for
 installations that ship with Pilot alone. Install its binary as `dutchman`;
