@@ -235,6 +235,8 @@ Merge groups also build the source `Dockerfile` when either Docker recipe, `.doc
 Rust source/manifests, runtime files, or another potential build input changes. Unknown
 paths or an unavailable diff base require the source build. A pushed tag has no previous
 commit, so it is compared with the nearest earlier release tag and with where it left main: when
+paths or an unavailable diff base require the source build. A pushed tag has no previous
+commit, so it is compared with the nearest earlier release tag and with where it left main: when
 either shows only docs, Rust sources or CI configuration changed, the tag takes main's fast path.
 Docs/support-only changes retain the fast image path. CI's Docker job reports its result but
 doesn't fail CI or hold a release: before a release image is pushed, the release workflow builds
