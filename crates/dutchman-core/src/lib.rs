@@ -424,7 +424,7 @@ fn local_components(
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
-/// their prototype as unresolved.
+/// their prototype as unresolved or refers to an empty unresolved definition.
 fn missing_linked_components(model: &Model) -> Vec<String> {
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
@@ -432,6 +432,13 @@ fn missing_linked_components(model: &Model) -> Vec<String> {
     ) else {
         return Vec::new();
     };
+    missing_linked_component_names(&definitions, &occurrences)
+}
+
+fn missing_linked_component_names(
+    definitions: &serde_json::Value,
+    occurrences: &serde_json::Value,
+) -> Vec<String> {
     // The placeholder is either a definition with no bodies and no children, or no definition
     // at all (readers that name the unresolved prototype without stating it).
     let empty = |id: &str| {
@@ -453,15 +460,19 @@ fn missing_linked_components(model: &Model) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|row| {
-            // The reader states the prototype as unresolved, or (newer readers) as an empty
-            // placeholder definition named for the unresolved occurrence.
+            // Definition-owned products name the prototype directly by id. Keep the older
+            // tagged forms too; an unresolved suffix alone must not hide stored geometry.
             let unresolved = row
                 .pointer("/prototype/kind")
                 .and_then(serde_json::Value::as_str)
                 == Some("unresolved")
                 || row
-                    .pointer("/prototype/definition")
+                    .get("prototype")
                     .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        row.pointer("/prototype/definition")
+                            .and_then(serde_json::Value::as_str)
+                    })
                     .is_some_and(|definition| {
                         definition.ends_with("/unresolved") && empty(definition)
                     });
@@ -870,5 +881,37 @@ mod output_checks {
             Err(Error::WrongOutputExtension { expected: "sc", .. })
         ));
         assert_eq!(writer.0.get(), 1);
+    }
+}
+
+#[cfg(test)]
+mod missing_links_tests {
+    use super::missing_linked_component_names;
+    use serde_json::json;
+
+    #[test]
+    fn unresolved_prototypes_keep_both_tagged_forms_and_definition_ids() {
+        let definitions = json!([
+            {"id":"link/unresolved", "storage":{"kind":"external"}, "bodies":[], "occurrences":[]},
+            {"id":"body/unresolved", "bodies":["body"], "occurrences":[]},
+            {"id":"assembly/unresolved", "bodies":[], "occurrences":["child"]},
+            {"id":"local", "storage":{"kind":"embedded"}, "bodies":[], "occurrences":[]}
+        ]);
+        let occurrences = json!([
+            {"name":"direct", "prototype":"link/unresolved"},
+            {"name":"tagged", "prototype":{"kind":"local", "definition":"link/unresolved"}},
+            {"name":"old", "prototype":{"kind":"unresolved"}},
+            {"name":"absent", "prototype":"absent/unresolved"},
+            {"name":"old absent", "prototype":{"definition":"absent/unresolved"}},
+            {"name":"stored body", "prototype":"body/unresolved"},
+            {"name":"stored children", "prototype":"assembly/unresolved"},
+            {"name":"tagged body", "prototype":{"definition":"body/unresolved"}},
+            {"name":"tagged children", "prototype":{"definition":"assembly/unresolved"}},
+            {"name":"local empty", "prototype":"local"}
+        ]);
+        assert_eq!(
+            missing_linked_component_names(&definitions, &occurrences),
+            ["direct", "tagged", "old", "absent", "old absent"]
+        );
     }
 }

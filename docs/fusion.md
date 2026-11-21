@@ -14,6 +14,11 @@ Sketch names follow their timeline sketch features.
 Independent F3Z member decodes state their own document root, so minimum-reproduction
 checks validate each member as a complete document.
 
+Linked components whose designs are absent from the file are left out and reported,
+including unresolved placeholders in definition-owned product structure. Export the
+assembly as `.f3z`, or put the linked designs' `.f3d` files beside it. Breaking a link
+before export stores the component locally and does not report it as missing.
+
 Revolve profiles and axes now follow their stored curve and region selections, including
 resolved unions of subdivided regions. Unresolved stored selections remain native and
 reported; a known sketch carrier can still map when Dutchman's source body check confirms
