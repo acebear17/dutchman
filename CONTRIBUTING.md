@@ -39,7 +39,7 @@ To test Dutchman on a whole library of your own without sharing a file, see
 You need Rust 1.88 or newer.
 
 ```sh
-cargo build --release
+cargo build --profile dist
 ```
 
 Before you open a pull request, run the checks CI runs (`.github/workflows/ci.yml`):
@@ -138,13 +138,14 @@ cargo build -p dutchman --config profile.dev.opt-level=2 --config profile.dev.de
 target/debug/dutchman convert path/to/design.f3d --no-verify
 ```
 
-Use `--release` for timings and for anything you report as a speed.
+Use `--profile dist` for timings and for anything you report as a speed.
+The distribution profile uses whole-program optimisation; `release` remains available for CI.
 
 ### Use CI-built binaries instead of building locally
 
 Pull requests and pushes to main build the debug profile and run the tests, which is what
-checks them. The optimised programs (thin LTO, the same `dutchman`, `dutchman-mcp` and
-`dutchman-gui` a release ships) come from three places:
+checks them. The optimised programs (`dutchman`, `dutchman-mcp`, and `dutchman-gui`)
+come from three places. Stable releases use whole-program optimisation:
 
 - `main`: the nightly build, made every day from main and kept for 7 days. The script says which
   commit and day it took.
