@@ -487,14 +487,30 @@ minimum/maximum coordinate; volume and area retain their measuring mesh toleranc
 A face-count difference alone does not establish a defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](history.md#how-a-history-is-checked).
+
 Conversion JSON includes `verification_checks` when a final history comparison is attempted.
 It records each body's measurements, counts, closure and centre of mass against source
 geometry, plus source parameter values and quantity kinds after replay. Geometric, closure
 and parameter checks say `pass`, `fail` or `not_checked` with evidence or a reason. A failed check can cause conversion to retain the
-original geometry. Face, edge and shell counts are informational: `info` when equal and
-`differs` when unequal. Split or merged equivalent faces never reject a history on counts
-alone. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
+original geometry. Raw kernel face, edge and shell counts are informational: `info` when equal and
+`differs` when unequal. These raw count differences alone never reject a history. Omitted or renamed parameters are `not_checked`. Manifoldness remains explicitly unchecked because
 there is no evaluator result proving it. See [JSON reports](json.md#source-comparison-evidence).
+
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 Which SolidCraft a design is written for, and how Dutchman finds the installed one, is in
 [SolidCraft versions](command-line.md#solidcraft-versions).
@@ -607,6 +623,16 @@ are kept and reported as a conflict. Single-file output paths are unchanged.
 
 ### Feature history and the SolidCraft check
 
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
+and axis-angle rotations, including explicit pivots, when every selected body has
+a proven earlier name. CADIR supplies millimetres and radians; the writer never
+infers a transform from final geometry. Unresolved body selections, unresolved
+point-to-point motion, and copied body result identities remain blockers. Bodies
+available only as final geometry also require a captured pre-move body. Older
+targets keep the original final geometry with a named version refusal.
+
 [Feature history and the SolidCraft check](history.md)
 
 Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
@@ -614,6 +640,13 @@ secondary numeric values. ISO metric table designations tolerate decimal roundin
 floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
 separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
 [cosmetic threads](history.md) for details.
+
+Separate modeled Thread features keep their helical shape in the imported final geometry
+and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
+preserves the designation when available and explains that CADIR does not resolve hand, tolerance class or the exact
+groove profile. SolidCraft 0.45's modeled option does not recover those missing facts.
+The designation remains in the report; no cosmetic face selection is guessed on the
+threaded final body. See [thread history](history.md).
 
 One stored sketch loop does not prove a native profile selection when other solid
 curves remain, including curves needed by a later trimmed cut. Dutchman requires
@@ -709,7 +742,8 @@ consumers carry independent resolved sketch placements. Otherwise the history re
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
 
 Offset faces targeting SolidCraft 0.45 or newer bind their historical face points to the
-unique earlier named body in the part's history. Circular boundaries use points clear of
+unique earlier named body in the part's history. Multiple source names for that same body
+count as one body. Circular boundaries use points clear of
 both outer trims and holes. An offset-face body blocker means ownership is not proven;
 selecting among several input bodies is not supported yet. The original geometry is kept.
 Older targets keep the previous point-only representation.
@@ -1183,3 +1217,13 @@ sketch contains only points or reference axes is refused with "its sketch featur
 resolved non-construction profile curves; this is not supported yet". The decoder must
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
+
+## Claim work before starting
+
+Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
+even rough. Comment `/unclaim` to release it. After a linked pull request exists, claims
+lapse after 5 days without activity from you. The bot reminds you at 12 hours without a
+pull request, and a day before an idle claim lapses. A ready pull request waiting on a
+maintainer or an open dependency keeps the claim active; maintainer claims never lapse.
+On lapse, pull requests stay open for others to continue with the original author credited
+in a `Co-authored-by:` trailer. See [claiming an issue](claiming.md) for the full rules.

@@ -409,7 +409,8 @@ jobs:
       - uses: docker/setup-buildx-action@v4
         timeout-minutes: 5
       - name: Build the source Dockerfile
-        timeout-minutes: 100
+        # A cold cache compiles everything (84-91 min on GitHub runners); a warm one takes ~2.
+        timeout-minutes: 160
         uses: docker/build-push-action@v7
         if: needs.changes.outputs.full != 'true' || steps.source.outputs.required == 'true'
         with:
@@ -544,6 +545,13 @@ jobs:
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
           cargo test --locked -p dutchman-solidcraft --test history --test assembly --test topological_edges
+      - name: Test written-design comparison in SolidCraft
+        if: matrix.solidcraft.version == 'newest'
+        env:
+          BODY_COMPARE_NO_SCOPE: "1"
+        run: |
+          export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
+          python3 -m unittest discover -s scripts/tests -p test_written_design_compare.py -v
 
   # Share the Linux tools; queue groups run only the small placement smoke checks.
   placements:

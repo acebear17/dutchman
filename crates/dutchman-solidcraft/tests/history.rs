@@ -2605,7 +2605,7 @@ fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
         &model,
         &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
     );
-    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
     assert_eq!(report.outcome().unwrap().check, Check::Verified);
     let volume = volumes(&cli, &bytes);
     assert_eq!(volume.len(), 1);
@@ -11649,6 +11649,101 @@ fn cube_body() -> Value {
     json!({"kind": "bodies", "value": ["synthetic:cube:body#0"]})
 }
 
+/// Deliberately attach a modeled-thread row to the synthetic cube. The row is a
+/// blocker, not permission to infer a cylinder or alter any of the stored geometry.
+fn unresolved_modeled_thread() -> Model {
+    modifying(json!({"kind": "cosmetic_thread", "value": {
+        "face": cube_faces(&["right"]), "standard": "ISO Metric profile",
+        "designation": "M8x1.25", "diameter": 8.0, "pitch": 1.25,
+        "modeled": true, "extent": {"kind": "blind", "length": 5.0}
+    }}))
+}
+
+#[test]
+fn modeled_thread_retains_final_geometry_and_reports_the_missing_recipe() {
+    let (document, report) = convert(
+        &unresolved_modeled_thread(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| { feature["type"] == "import" && feature["suppressed"] == false }));
+    assert!(!document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| feature["type"] == "thread"));
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some("history/modeled-thread-retained"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss.detail.contains("M8x1.25"));
+    let outcome = report.outcome().unwrap();
+    let thread = outcome
+        .features
+        .iter()
+        .find(|f| f.kind == "cosmetic_thread")
+        .unwrap();
+    assert_eq!(thread.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(thread
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("exact groove profile"));
+}
+
+#[test]
+fn modeled_thread_fallback_replays_without_changing_the_source_volume() {
+    let Some(cli) = solidcraft() else { return };
+    let model = unresolved_modeled_thread();
+    let (bytes, _) = written(&model);
+    let mut original = Vec::new();
+    SolidCraftWriter::new()
+        .import_only(true)
+        .verification(Verification::Off)
+        .write(&model, &mut original, &mut Report::default())
+        .unwrap();
+    // Evaluation lists the hidden editable prefix too. Only the visible imported
+    // shape is the final model; the prefix intentionally remains a separate body.
+    evaluated(&cli, &bytes);
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("thread.sc");
+    let script = dir.path().join("inspect.json");
+    let output = dir.path().join("bodies.json");
+    std::fs::write(&design, bytes).unwrap();
+    std::fs::write(
+        &script,
+        json!([{ "command": "document.inspect", "params": {"measure": true} }]).to_string(),
+    )
+    .unwrap();
+    assert!(std::process::Command::new(&cli)
+        .arg("run")
+        .arg(&script)
+        .arg("--in")
+        .arg(&design)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap()
+        .success());
+    let inspected: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    let actual: Vec<_> = inspected[0]["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|body| body["visible"] == true)
+        .map(|body| body["volume_mm3"].as_f64().unwrap())
+        .collect();
+    assert_eq!(actual, volumes(&cli, &original));
+    assert_eq!(actual.len(), 1);
+    assert!((actual[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE);
+}
+
 fn body_mirror_definition() -> Value {
     json!({"kind": "pattern", "value": {"seeds": [{"kind": "bodies", "value": cube_body()}], "pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
             "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}})
@@ -15878,6 +15973,88 @@ fn offset_face_body_binding_preserves_older_targets() {
 }
 
 #[test]
+fn offset_faces_count_live_bodies_instead_of_source_aliases() {
+    for second_body in [false, true] {
+        let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["geometry"]["bodies"][0]["id"].clone();
+        let mut extra = wire["model"]["features"][1].clone();
+        wire["model"]["features"][1]["definition"] = json!({"kind": "operation", "value": {
+            "kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {
+                "bodies": [body], "native": "synthetic:base#1"
+            }}}
+        }});
+        // The historical base import binds both the final source ID and its
+        // historical ID to the same written body name through the real mapper.
+        let nests = serde_json::to_value(&based_cube_changed_later(true).ir).unwrap();
+        wire["model"]["history_bodies"] = nests["model"]["history_bodies"].clone();
+        wire["model"]["history_bodies"][0]["produced_by"] = json!("f3d:model:feature#2");
+        if second_body {
+            // A new-body extrude adds a genuinely distinct live body through
+            // generated_bodies, alongside the imported body's two aliases.
+            extra["id"] = json!("f3d:model:feature#4");
+            extra["ordinal"] = json!(2);
+            extra["name"] = json!("Second block");
+            extra["outputs"] = json!([]);
+            wire["model"]["features"][2]["ordinal"] = json!(3);
+            wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .insert(2, extra);
+            wire["model"]["feature_result_topologies"] = json!([{
+                "id": "test:face:feature-result#4", "output_of": "f3d:model:feature#4",
+                "members": [{"kind": "body", "id": "test:face:generated-body#second"}]
+            }]);
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        for target in ["0.18.2", "0.44.1", "0.45.0"] {
+            let (doc, report) = convert(
+                &model,
+                &SolidCraftWriter::new()
+                    .target_version(Some(target.parse().unwrap()))
+                    .verification(Verification::Off),
+            );
+            let features = doc["features"].as_array().unwrap();
+            let offset = features.iter().find(|f| f["type"] == "offset_face");
+            if second_body && target == "0.45.0" {
+                let base = features.iter().find(|f| f["type"] == "import").unwrap();
+                let extra = features.iter().find(|f| f["type"] == "extrude").unwrap();
+                assert!(extra["body_names"][0].is_string());
+                assert_ne!(extra["body_names"][0], base["body_names"][0]);
+                assert!(offset.is_none());
+                assert!(history_line(&report).contains(
+                    "its offset face target is not a unique earlier named body; selecting among several input bodies is not supported yet"
+                ), "{}", history_line(&report));
+            } else {
+                let offset = offset.unwrap_or_else(|| panic!("{}", history_line(&report)));
+                if target == "0.45.0" {
+                    let base = features.iter().find(|f| f["type"] == "import").unwrap();
+                    assert_eq!(offset["body"], base["body_names"][0]);
+                    assert!(offset["body"].is_string());
+                    if let Some(cli) = solidcraft() {
+                        let writer = SolidCraftWriter::new()
+                            .target_version(Some(target.parse().unwrap()))
+                            .replay(Verification::With(cli.clone()))
+                            .verification(Verification::Off);
+                        let (bytes, report) = written_with(&model, &writer);
+                        assert!(
+                            history_line(&report).contains("features rebuilt"),
+                            "{}",
+                            history_line(&report)
+                        );
+                        let actual = volumes(&cli, &bytes);
+                        assert_eq!(actual.len(), 1);
+                        assert!((actual[0] - 1200.0).abs() < 1e-3, "{actual:?}");
+                    }
+                } else {
+                    assert!(offset.get("body").is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn offset_faces_refuse_input_topology_without_unique_body_ownership() {
     let mut model = face_move(json!({"kind": "offset", "distance": 2.0}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
@@ -17097,15 +17274,11 @@ fn a_host_evaluator_reports_geometry_warnings_after_replacing_a_differing_replay
         report.outcome().unwrap().check,
         Check::Flattened(_)
     ));
+    // The final opening check gets the same bytes the import check evaluated, so it reuses
+    // that evaluation instead of asking SolidCraft again.
     assert_eq!(
         *host.calls.lock().unwrap(),
-        [
-            "original",
-            "history",
-            "verification-parameters",
-            "import",
-            "opening"
-        ]
+        ["original", "history", "verification-parameters", "import"]
     );
     assert!(report
         .losses()
@@ -20058,4 +20231,365 @@ fn feature_profiles_do_not_treat_reference_axes_as_profile_geometry() {
             .contains("its sketch feature has no resolved non-construction profile curves")),
         "{report:?}"
     );
+}
+
+/// Two synthetic 10 mm boxes, separated by 20 mm, owned by one CADIR body.
+fn multi_region_boxes() -> Model {
+    fn move_origins(value: &mut Value) {
+        match value {
+            Value::Object(object) => {
+                for (name, child) in object {
+                    if matches!(name.as_str(), "position" | "origin") {
+                        if let Some(x) = child.get("x").and_then(Value::as_f64) {
+                            child["x"] = json!(x + 30.0);
+                        }
+                    } else {
+                        move_origins(child);
+                    }
+                }
+            }
+            Value::Array(array) => array.iter_mut().for_each(move_origins),
+            _ => {}
+        }
+    }
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let mut second: Value = serde_json::from_str(
+        &wire["geometry"]
+            .to_string()
+            .replace("synthetic:cube:", "synthetic:second:"),
+    )
+    .unwrap();
+    move_origins(&mut second);
+    second["regions"][0]["body"] = wire["geometry"]["bodies"][0]["id"].clone();
+    for (name, values) in second.as_object().unwrap() {
+        if name != "bodies" {
+            wire["geometry"][name]
+                .as_array_mut()
+                .unwrap()
+                .extend(values.as_array().unwrap().iter().cloned());
+        }
+    }
+    let m = &mut wire["model"];
+    let mut sketch: Value = serde_json::from_str(
+        &m["sketches"][0]
+            .to_string()
+            .replace("f3d:model:sketch", "synthetic:second:sketch"),
+    )
+    .unwrap();
+    sketch["placement"]["frame"]["origin"]["x"] = json!(30.0);
+    m["sketches"].as_array_mut().unwrap().push(sketch);
+    let entities: Value = serde_json::from_str(
+        &m["sketch_entities"]
+            .to_string()
+            .replace("f3d:model:sketch", "synthetic:second:sketch"),
+    )
+    .unwrap();
+    m["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend(entities.as_array().unwrap().iter().cloned());
+    let mut sketch_feature = m["features"][0].clone();
+    sketch_feature["id"] = json!("synthetic:second:feature#1");
+    sketch_feature["ordinal"] = json!(2);
+    sketch_feature["definition"]["value"]["value"]["sketch"]["sketch"] =
+        json!("synthetic:second:sketch#1");
+    m["features"].as_array_mut().unwrap().push(sketch_feature);
+    let mut extrude: Value = serde_json::from_str(
+        &m["features"][1]
+            .to_string()
+            .replace("f3d:model:sketch", "synthetic:second:sketch"),
+    )
+    .unwrap();
+    extrude["id"] = json!("synthetic:second:feature#2");
+    extrude["ordinal"] = json!(3);
+    extrude["dependencies"] = json!(["f3d:model:feature#2", "synthetic:second:feature#1"]);
+    extrude["definition"]["value"]["value"]["op"] = json!("join");
+    m["features"].as_array_mut().unwrap().push(extrude);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn multi_region_history_and_import_verify_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let model = multi_region_boxes();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+    let (bytes, report) = written_with(&model, &writer);
+    assert!(
+        matches!(report.outcome().unwrap().check, Check::Verified),
+        "{report:?}"
+    );
+    let checks = &report.verification_checks()[0]["geometry"]["bodies"][0]["checks"];
+    for name in ["merged_faces", "analytic_faces"] {
+        assert_eq!(checks[name]["status"], "pass", "{checks}");
+    }
+    assert_eq!(checks["merged_faces"]["source"], 12);
+    assert_eq!(checks["analytic_faces"]["source"]["plane"], 12);
+    let replayed = volumes(&cli, &bytes);
+    assert_eq!(replayed.len(), 1, "{replayed:?}");
+    assert!((replayed[0] - 2000.0).abs() < 1e-6);
+    let (bytes, report) = written_with(&model, &writer.import_only(true));
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "geometry" && loss.severity == Severity::Degraded),
+        "{report:?}"
+    );
+    let imported = volumes(&cli, &bytes);
+    assert_eq!(imported.len(), 2, "{imported:?}");
+    assert!((imported.iter().sum::<f64>() - 2000.0).abs() < 1e-6);
+}
+
+#[test]
+fn multi_region_history_rejects_a_shortened_lump_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = multi_region_boxes();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][3]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["length"] = json!(5.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = written_with(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    assert!(
+        !matches!(report.outcome().unwrap().check, Check::Verified),
+        "{report:?}"
+    );
+    let line = history_line(&report);
+    assert!(
+        line.contains("replay differs") && line.contains("volume"),
+        "{report:?}"
+    );
+}
+
+fn body_move(translation: [f64; 3], rotation: Option<Value>) -> Value {
+    let [x, y, z] = translation;
+    let mut definition = json!({"kind": "move_body", "value": {
+        "bodies": cube_body(), "translation": {"x": x, "y": y, "z": z}, "copies": 0
+    }});
+    if let Some(rotation) = rotation {
+        definition["value"]["rotation"] = rotation;
+    }
+    definition
+}
+
+fn body_rotation(pivot: [f64; 3], angle: f64) -> Value {
+    let [x, y, z] = pivot;
+    json!({"origin": {"x": x, "y": y, "z": z},
+        "direction": {"x": 0.0, "y": 0.0, "z": 1.0}, "angle": angle})
+}
+
+#[test]
+fn body_moves_keep_resolved_transforms_and_selected_bodies() {
+    for rotation in [
+        None,
+        Some(body_rotation([0.0; 3], std::f64::consts::FRAC_PI_2)),
+    ] {
+        let (document, report) = convert(
+            &modifying(body_move([7.0, -3.0, 2.0], rotation.clone())),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+        );
+        let moved = &document["features"][2];
+        assert_eq!(moved["type"], "move", "{}", history_line(&report));
+        assert_eq!(moved["bodies"], document["features"][1]["body_names"]);
+        assert_eq!(moved["translate"], json!(["7 mm", "-3 mm", "2 mm"]));
+        assert_eq!(moved["copy"], false);
+        if rotation.is_some() {
+            assert_eq!(moved["rotate_axis"], json!([0.0, 0.0, 1.0]));
+            assert_eq!(
+                moved["angle"],
+                json!(format!("{} rad", std::f64::consts::FRAC_PI_2))
+            );
+        } else {
+            assert!(moved.get("rotate_axis").is_none());
+        }
+    }
+}
+
+#[test]
+fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
+    let base = based_cube_changed_later(true);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|feature| feature["ordinal"] == 0 || feature["ordinal"] == 9);
+    let mut inputs = Vec::new();
+    for (id, shift) in [(9, 7.0), (10, -7.0)] {
+        let state = format!("synthetic:history-input:state#{id}");
+        let body = format!("synthetic:history-input:body#{id}");
+        let owner = format!("f3d:model:feature#{id}");
+        inputs.push(json!({"id": state, "input_of": owner, "bodies": [body],
+            "faces": [], "edges": [], "vertices": [], "edge_geometry": []}));
+        let mut feature = wire["model"]["features"][1].clone();
+        feature["id"] = json!(owner);
+        feature["ordinal"] = json!(id);
+        feature["name"] = json!(format!("Move {id}"));
+        let mut definition = body_move([shift, 0.0, 0.0], None);
+        definition["value"]["bodies"] = json!({"kind": "historical", "value": {
+            "state": state, "bodies": [body], "native": "synthetic input"
+        }});
+        feature["definition"]["value"] = definition;
+        if id == 9 {
+            wire["model"]["features"][1] = feature;
+        } else {
+            wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .push(feature);
+        }
+    }
+    wire["model"]["feature_input_topologies"] = json!(inputs);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0));
+    let (document, report) = convert(&model, &writer);
+    assert!(
+        history_line(&report).contains("3 of 3 features rebuilt"),
+        "{report:?}"
+    );
+    let features = document["features"].as_array().unwrap();
+    let imported = features.iter().find(|f| f["type"] == "import").unwrap();
+    for moved in features.iter().filter(|f| f["type"] == "move") {
+        assert_eq!(moved["bodies"], imported["body_names"]);
+    }
+    assert_eq!(features.iter().filter(|f| f["type"] == "move").count(), 2);
+    if let Some(cli) = solidcraft() {
+        if dutchman_solidcraft::VersionGate::MoveBody.supported(
+            dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone())),
+        ) {
+            let (_, report) = convert(&model, &writer.verification(Verification::With(cli)));
+            assert!(
+                history_line(&report).contains("3 of 3 features rebuilt; verified"),
+                "{report:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn body_moves_refuse_copies_unresolved_bodies_and_older_targets() {
+    for (change, reason) in [
+        (json!({"copies": 1}), "copied body result identities"),
+        (
+            json!({"bodies": {"kind": "native", "value": "synthetic unresolved selection"}}),
+            "native body reference",
+        ),
+    ] {
+        let mut definition = body_move([1.0, 0.0, 0.0], None);
+        for (key, value) in change.as_object().unwrap() {
+            definition["value"][key] = value.clone();
+        }
+        let (_, report) = convert(
+            &modifying(definition),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_45_0)),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+    for version in ["0.18.2", "0.44.1"] {
+        let (_, report) = convert(
+            &modifying(body_move([1.0, 0.0, 0.0], None)),
+            &SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(version.parse().unwrap())),
+        );
+        assert!(
+            history_line(&report).contains("body moves require SolidCraft 0.45"),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_replays_body_moves_and_later_features_with_source_centroids() {
+    let Some(cli) = solidcraft() else { return };
+    if !dutchman_solidcraft::VersionGate::MoveBody.supported(
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone())),
+    ) {
+        return;
+    }
+    for (forward, backward, expected) in [
+        (
+            body_move([7.0, -3.0, 2.0], None),
+            body_move([-7.0, 3.0, -2.0], None),
+            [12.0, 2.0, 7.0],
+        ),
+        (
+            body_move(
+                [0.0; 3],
+                Some(body_rotation([2.0, 1.0, 0.0], std::f64::consts::FRAC_PI_2)),
+            ),
+            body_move(
+                [0.0; 3],
+                Some(body_rotation([2.0, 1.0, 0.0], -std::f64::consts::FRAC_PI_2)),
+            ),
+            [-2.0, 4.0, 5.0],
+        ),
+    ] {
+        let base = modifying(forward);
+        let moved_bytes = written_with(
+            &base,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        )
+        .0;
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut later = wire["model"]["features"][2].clone();
+        later["id"] = json!("f3d:model:feature#4");
+        later["ordinal"] = json!(3);
+        later["name"] = json!("Return body");
+        later["definition"]["value"] = backward;
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(later);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
+        let (bytes, report) = written_with(&model, &writer);
+        assert!(
+            history_line(&report).contains("4 of 4 features rebuilt; verified"),
+            "{}",
+            history_line(&report)
+        );
+        // The second move rebuilds against the first move's body identity. Its inverse
+        // returns the source cube exactly; evaluate the first move separately as well.
+        let final_bodies = evaluated(&cli, &bytes);
+        assert!((final_bodies["bodies"][0]["volume_mm3"].as_f64().unwrap() - 1000.0).abs() < 1e-6);
+        let moved = evaluated(&cli, &moved_bytes);
+        let body = &moved["bodies"][0];
+        assert!((body["volume_mm3"].as_f64().unwrap() - 1000.0).abs() < 1e-6);
+        for (actual, expected) in body["center_of_mass"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(expected)
+        {
+            assert!((actual.as_f64().unwrap() - expected).abs() < 1e-6, "{body}");
+        }
+        // Editing the original extrusion also rebuilds both downstream body moves.
+        assert_eq!(
+            volumes(&cli, &with_param(&bytes, "side", "20 mm")),
+            [4000.0]
+        );
+    }
 }

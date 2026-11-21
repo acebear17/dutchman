@@ -233,6 +233,12 @@ For other clients:
 
 **Contributing**
 
+- **Where to start:** [pick a CAD program](CONTRIBUTING.md#pick-a-cad-program) and paste its block
+  into your AI agent: [SolidWorks](https://github.com/dutchman-cad/dutchman/issues/866),
+  [Solid Edge](https://github.com/dutchman-cad/dutchman/issues/840), or any issue labelled
+  [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+  or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+  Each one says what is known, what isn't, and how to verify it with public files.
 - [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI contributors.
 - [Architecture](docs/ARCHITECTURE.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
 - Report a file that didn't convert on the [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml) form, with no design file. See [reporting versions and optional steps from report to fix](docs/testing-your-library.md#5-report-what-you-found). Questions: the [Discord](https://discord.gg/yTcseBEdeu).

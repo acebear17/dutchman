@@ -432,6 +432,13 @@ numeric values. Metric labels tolerate decimal rounding and unit-conversion nois
 Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
 is not supported yet; tapped-hole support does not imply separate Thread support.
 
+Separate modeled Thread features keep their helical shape in the imported final geometry
+and stop editable history. When reached in the timeline, a Degraded `history/modeled-thread-retained` loss
+preserves the designation when available and explains that CADIR does not resolve hand, tolerance class or the exact
+groove profile. SolidCraft 0.45's modeled option does not recover those missing facts.
+The designation remains in the report; no cosmetic face selection is guessed on the
+threaded final body. See [thread history](../../docs/history.md).
+
 Planar hole-entry faces can have rounded corners or existing circular holes. Their own
 source boundary and SolidCraft replay must prove the face before drilling; placements must
 stay inside the filled face and drill inward. A blocked boundary or replay reason means the
@@ -621,15 +628,32 @@ Never remove or change the quarantine attribute.
 - If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
   claim the conversion is fine.
 
+For a source consisting of one solid body with disconnected lumps, verification can
+compare the imported pieces together against one replayed body. Every source region
+must remain present; their summed volume and area and combined bounds must agree.
+Single-lump and multiple-source-body comparisons retain their existing checks. See
+[How a history is checked](../../docs/history.md#how-a-history-is-checked).
+
 When conversion reports `verification_checks`, explain the individual source comparisons:
 volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
 including their quantity kinds.
 A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
-never be called a pass. Face, edge and shell counts are informational: `info` when equal,
-`differs` when unequal. These count differences never reject a history. Omitted or renamed
+never be called a pass. Raw kernel face, edge and shell counts are informational: `info` when equal,
+`differs` when unequal. These raw count differences never reject a history. Omitted or renamed
 parameters are `not_checked`.
 Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
 a rejected final history even when the delivered design retains the original geometry.
+
+Final SolidCraft history verification also requires matching available merged face
+counts per body (`merged_faces` in `verification_checks`). Merged edge counts
+(`merged_edges`) are informational: mirror and full-turn revolve operations can split
+edges differently across SolidCraft releases while preserving the faces and shape.
+Face counts merge adjacent pieces of one surface and periodic seams. Bodies with
+free-form or mesh surfaces skip merged totals, since equivalent pieces can have different
+surface records. Available analytic surface-kind counts (`analytic_faces`) must still
+match for planes, cylinders, cones and spheres; mesh bodies skip that check too. A mismatch
+retains the imported final shape, even when volume and area pass. Raw kernel counts remain
+informational.
 
 ## 5. Explain the loss report
 
@@ -669,6 +693,17 @@ supported yet.
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
+
+
+Body moves require SolidCraft 0.45 or newer. This requirement applies only to designs
+with a body move; it does not trigger a general history-loss notice for older targets.
+Dutchman keeps resolved translations
+and axis-angle rotations, including explicit pivots, when every selected body has
+a proven earlier name. CADIR supplies millimetres and radians; the writer never
+infers a transform from final geometry. Unresolved body selections, unresolved
+point-to-point motion, and copied body result identities remain blockers. Bodies
+available only as final geometry also require a captured pre-move body. Older
+targets keep the original final geometry with a named version refusal.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face
@@ -1336,7 +1371,9 @@ an ordered, directed input chain with its radius positions bound to that travers
 Carrier sample order alone does not supply that binding. The editable prefix and original
 final geometry are retained when the direction is unresolved.
 
-The SolidCraft plugin checks estimated memory and time before native decoding. When it
+The SolidCraft plugin checks estimated memory, time and Fusion archive fuel before native decoding.
+Its manifest requests 670,960,576,380 fuel; SolidCraft 0.45 users must raise **Max plugin fuel**
+in **Preferences > Plugins** to at least that value. When it
 says the design is too large to open inside SolidCraft, use the
 [Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
 `.sc` and open that in SolidCraft. Its Import report uses the app's result wording and

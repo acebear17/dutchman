@@ -6,6 +6,7 @@
 use crate::SolidCraftEvaluator;
 
 mod evidence;
+mod regions;
 use dutchman_core::time::Instant;
 pub(crate) use evidence::{compare_report, record_unavailable};
 use std::path::{Path, PathBuf};
@@ -422,6 +423,9 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Rigid moves of resolved earlier bodies. This feature-specific gate does not
+    /// count towards an installed release's general history notice.
+    MoveBody,
     /// Linked Insert Design with cached bodies and a source file.
     LinkedDesign,
     /// Thin walls verified against the current SolidCraft document format.
@@ -464,6 +468,7 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::MoveBody => SolidCraftVersion::V0_45_0,
             Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::TopologicalEdges => SolidCraftVersion::V0_44_0,
@@ -1175,6 +1180,10 @@ fn compare_measurements(
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
+    let (expected, replayed) = match regions::normalize(expected, replayed, bodies) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
     if let Some(evidence) = evidence {
         *evidence = evidence::measurements(&expected, &replayed);
     }
@@ -1421,6 +1430,8 @@ pub(crate) struct Expected {
     pub solids: usize,
     /// Its sheet bodies: open by design, so neither a volume nor an open shell is a fault.
     pub sheets: usize,
+    /// Connected regions when the entire source is one solid body; zero otherwise.
+    pub single_body_regions: usize,
 }
 
 /// A body volume, in cubic millimetres, below which SolidCraft gives the body none.
@@ -2321,6 +2332,11 @@ fn wait(
     }
 }
 
+/// A reusable answer must also pass the geometry reader's existing schema checks.
+pub(crate) fn reusable_evaluation(value: &Value) -> bool {
+    parse(value).is_ok_and(|eval| timeline_outcome(&eval).is_none())
+}
+
 /// The bodies and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value
@@ -3139,6 +3155,7 @@ mod tests {
         let six = Expected {
             solids: 1,
             sheets: 0,
+            ..Expected::default()
         };
         assert_eq!(shown(&eval(6, None), six), Shown::Whole);
         let original = eval(6, None);
@@ -3162,6 +3179,7 @@ mod tests {
         let one_sheet = Expected {
             solids: 1,
             sheets: 1,
+            ..Expected::default()
         };
         assert_eq!(shown(&merged, one_sheet), Shown::Whole);
         for (volume, area, measure) in [(900.0, 600.0, "volume"), (1000.0, 500.0, "area")] {
@@ -3207,6 +3225,7 @@ mod tests {
         let two = Expected {
             solids: 2,
             sheets: 0,
+            ..Expected::default()
         };
         assert_eq!(shown(&eval(&[1000.0, 8.0]), two), Shown::Whole);
         assert_eq!(
@@ -3621,6 +3640,7 @@ mod cli_tests {
             Expected {
                 solids: 0,
                 sheets: 0,
+                ..Expected::default()
             },
         )
     }
@@ -3773,6 +3793,7 @@ mod cli_tests {
         let one_sheet = Expected {
             solids: 1,
             sheets: 1,
+            ..Expected::default()
         };
         assert_eq!(
             shown(&eval(&[1000.0, -2629.0], &[open]), one_sheet),
@@ -3924,6 +3945,9 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
+        assert!(!VersionGate::MoveBody.supported(previous));
+        assert!(VersionGate::MoveBody.supported(target));
+        assert!(!target_loses_history(previous));
         assert!(!target_loses_history(target));
     }
 
