@@ -3959,7 +3959,7 @@ fn historical_entry(round: bool) -> impl FnOnce(&mut Value) {
         let point = |x: f64, y: f64, z: f64| json!({"x": x, "y": y, "z": z});
         let edge = |k: usize, start: Value, interior: Value, end: Value, tangent: Value| {
             json!({"edge": format!("test:hole:historical-edge#{k}"),
-                "start": start, "interior": interior, "end": end, "tangent": tangent,
+                "start": start, "interior": interior, "end": end, "supports": [], "tangent": tangent,
                 "faces": [HOLE_FACE, format!("test:hole:historical-face#other{k}")]})
         };
         let geometry: Vec<Value> = if round {
@@ -4141,7 +4141,7 @@ fn curved_hole(rounded: bool, placement: Value) -> Model {
     let sample = |k: usize, a: (f64, f64), m: (f64, f64), b: (f64, f64), t: (f64, f64)| {
         json!({"edge": format!("test:curved-hole:edge#{k}"), "faces": [HOLE_FACE],
             "start": point(a.0, a.1), "interior": point(m.0, m.1),
-            "end": point(b.0, b.1), "tangent": {"x": t.0, "y": t.1, "z": 0.0}})
+            "end": point(b.0, b.1), "supports": [], "tangent": {"x": t.0, "y": t.1, "z": 0.0}})
     };
     let geometry = &mut wire["model"]["feature_input_topologies"][0]["edge_geometry"];
     if rounded {
@@ -9339,7 +9339,7 @@ fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Mod
             "edge": edges[i], "interior": point(5.0, 10.0 * i as f64, 1.0),
             "start": point(0.0, 10.0 * i as f64, 1.0),
             "end": point(10.0, 10.0 * i as f64, 1.0),
-            "tangent": point(1.0, 0.0, 0.0), "faces": faces,
+            "supports": [], "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
     wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []}]);
@@ -9674,7 +9674,7 @@ fn attached_plate(near: f64, radius: f64, extra: bool) -> Model {
             "edge": edges[i], "interior": point(5.0, 10.0 * i as f64, 1.0),
             "start": point(0.0, 10.0 * i as f64, 1.0),
             "end": point(10.0, 10.0 * i as f64, 1.0),
-            "tangent": point(1.0, 0.0, 0.0), "faces": faces,
+            "supports": [], "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
     let state = |name: &str, owner: &str| json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner, "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []});
@@ -10103,7 +10103,7 @@ fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
         "start": {"x":10.0,"y":10.0,"z":0.0},
         "end": {"x":10.0,"y":10.0,"z":1.0},
         "interior": {"x":10.0,"y":10.0,"z":0.5},
-        "tangent": {"x":0.0,"y":0.0,"z":1.0},
+        "supports": [], "tangent": {"x":0.0,"y":0.0,"z":1.0},
         "faces": ["test:sheet:historical-face#top", "test:sheet:historical-face#rim"],
     });
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -12121,7 +12121,7 @@ fn split_by_face(lift: f64, selection: Option<Value>) -> Model {
                 "edge": format!("test:split:historical-edge#{k}"),
                 "interior": point(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0, (a.2 + b.2) / 2.0)),
                 "start": point(a), "end": point(b),
-                "tangent": {"x": tangent[0], "y": tangent[1], "z": tangent[2]},
+                "supports": [], "tangent": {"x": tangent[0], "y": tangent[1], "z": tangent[2]},
                 "faces": [face, side(k)],
             })
         })
@@ -12186,7 +12186,7 @@ fn split_by_two_faces(second: f64) -> Model {
                 "edge": edge,
                 "interior": point(((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0)),
                 "start": point(a), "end": point(b),
-                "tangent": {"x": 0.0, "y": (b.0 - a.0) / length, "z": (b.1 - a.1) / length},
+                "supports": [], "tangent": {"x": 0.0, "y": (b.0 - a.0) / length, "z": (b.1 - a.1) / length},
                 "faces": [face, side],
             }));
             edges.push(edge);
@@ -12664,7 +12664,7 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
     let sample = |edge: &str, xy: f64| {
         json!({
             "edge": edge, "interior": {"x": xy, "y": xy, "z": z0 + 5.0},
-            "tangent": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "supports": [], "tangent": {"x": 0.0, "y": 0.0, "z": 1.0},
             "start": {"x": xy, "y": xy, "z": z0},
             "end": {"x": xy, "y": xy, "z": z0 + 10.0},
             "faces": if edge == "near" { json!(["front", "left"]) } else { json!(["back", "right"]) },
@@ -12745,7 +12745,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
         "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "vertices": [],
         "edge_geometry": [{"edge": "synthetic:closed:edge#0", "start": point(seam), "end": point(seam),
             "interior": point(seam + std::f64::consts::PI),
-            "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": []}]
+            "supports": [], "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": []}]
     }]);
     // Exact historical carrier in a hidden synthetic input body, separate from final geometry.
     let source = "synthetic:closed:body#0";
@@ -13054,10 +13054,10 @@ fn solidcraft_replays_closed_circle_work_with_a_connected_straight_edge_chain() 
     model["feature_input_topologies"][0]["edge_geometry"] = json!([
         {"edge": "near", "start": {"x": 0, "y": 0, "z": 10},
             "end": {"x": 10, "y": 0, "z": 10}, "interior": {"x": 5, "y": 0, "z": 10},
-            "tangent": {"x": 1, "y": 0, "z": 0}, "faces": ["front", "left"]},
+            "supports": [], "tangent": {"x": 1, "y": 0, "z": 0}, "faces": ["front", "left"]},
         {"edge": "opposite", "start": {"x": 10, "y": 0, "z": 10},
             "end": {"x": 10, "y": 10, "z": 10}, "interior": {"x": 10, "y": 5, "z": 10},
-            "tangent": {"x": 0, "y": 1, "z": 0}, "faces": ["back", "right"]}
+            "supports": [], "tangent": {"x": 0, "y": 1, "z": 0}, "faces": ["back", "right"]}
     ]);
     model["features"][2]["definition"]["value"]["value"]["groups"][0]["edges"]["value"]["edges"] =
         json!(["near", "opposite"]);
@@ -13851,7 +13851,7 @@ fn chamfered_cube(spec: Value, cut: Option<(f64, f64)>) -> Model {
         "native": "synthetic input edge"}}});
     wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#2"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": "chamfer", "value": {"groups": [group], "flip_direction": false}}}, "source_properties": {}, "source_content": []}));
     let sample = json!({"edge": "top-front", "interior": {"x": 5.0, "y": 0.0, "z": 10.0},
-        "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+        "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
         "start": {"x": 0.0, "y": 0.0, "z": 10.0}, "end": {"x": 10.0, "y": 0.0, "z": 10.0},
         "faces": ["front", "top"]});
     wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
@@ -14003,7 +14003,7 @@ fn chamfered_stack() -> Model {
     m["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#3", "ordinal": 3, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#2", "synthetic:lower:feature#0"], "outputs": ["synthetic:cube:body#0", "synthetic:lower:body#0"], "definition": {"kind": "operation", "value": {"kind": "chamfer", "value": {"groups": [group], "flip_direction": false}}}, "source_properties": {}, "source_content": []}));
     let sample = |edge: &str, z: f64, faces: [&str; 2]| {
         json!({"edge": edge, "interior": {"x": 5.0, "y": 0.0, "z": z},
-            "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
             "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
             "faces": faces})
     };
@@ -14122,7 +14122,7 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
     // Keep the source seam distinct from the measured replay seam.
     let start = xyz(5.0, 5.0 + BORE, 10.0);
     let sample = json!({"edge": "synthetic:rim:edge#hole-top", "interior": xyz(5.0, 5.0 - BORE, 10.0),
-        "tangent": xyz(1.0, 0.0, 0.0), "start": start, "end": start,
+        "supports": [], "tangent": xyz(1.0, 0.0, 0.0), "start": start, "end": start,
         "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"]});
     wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
     // Exact input carrier belongs to an earlier hidden result, independently of final edges.
@@ -15836,7 +15836,7 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
                 "edge": format!("test:face:historical-edge#{k}"),
                 "interior": point((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0),
                 "start": point(a.0, a.1), "end": point(b.0, b.1),
-                "tangent": {"x": tangent[0], "y": tangent[1], "z": 0.0},
+                "supports": [], "tangent": {"x": tangent[0], "y": tangent[1], "z": 0.0},
                 "faces": [face, side(k)],
             })
         })
@@ -16163,7 +16163,7 @@ fn solidcraft_offsets_an_annular_face_from_its_interior() {
             let side = if k == 0 { "outer" } else { "inner" };
             json!({"edge": format!("test:face:historical-edge#{side}"),
             "start": {"x": r, "y": 0.0, "z": 10.0}, "end": {"x": r, "y": 0.0, "z": 10.0},
-            "interior": {"x": -r, "y": 0.0, "z": 10.0}, "tangent": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "interior": {"x": -r, "y": 0.0, "z": 10.0}, "supports": [], "tangent": {"x": 0.0, "y": 1.0, "z": 0.0},
             "faces": [face, format!("test:face:historical-face#{side}")]})
         })
         .collect::<Vec<_>>());
@@ -16303,7 +16303,7 @@ fn face_extrude_then_chamfer(up: bool) -> Model {
         .unwrap()
         .push(json!({"id": state, "input_of": "f3d:model:feature#4", "edges": ["corner"], "faces": ["front", "end"], "edge_geometry": [{
                 "edge": "corner", "interior": {"x": 5.0, "y": 0.0, "z": z},
-                "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
                 "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
                 "faces": ["front", "end"],
             }], "bodies": [], "vertices": []}));
@@ -19753,7 +19753,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
         "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"vertices":[],
         "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
             "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
-            "interior":{"x":10,"y":8,"z":13},"tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
+            "interior":{"x":10,"y":8,"z":13},"supports": [], "tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }

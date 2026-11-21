@@ -32,7 +32,7 @@ fn model(wire: &Value) -> Model {
 
 fn sample(edge: &str, start: [f64; 3], mid: [f64; 3], end: [f64; 3], tangent: [f64; 3]) -> Value {
     json!({"edge": edge, "start": xyz(start), "interior": xyz(mid), "end": xyz(end),
-        "tangent": xyz(tangent), "faces": []})
+        "supports": [], "tangent": xyz(tangent), "faces": []})
 }
 
 fn path_wire() -> Value {
