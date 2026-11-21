@@ -174,7 +174,7 @@ docker run --rm --entrypoint solidcraft-cli dutchman --version
 ```
 
 It is the same Dutchman for x86_64 and ARM64, plus the SolidCraft release that Dutchman targets
-(0.44 for now), and adds about 470 MB. Pin a release with `X.Y.Z-solidcraft`, such as
+(0.45 for now), and adds about 550 MB. Pin a release with `X.Y.Z-solidcraft`, such as
 `0.2.1-solidcraft`. In Compose, use `image: ghcr.io/dutchman-cad/dutchman:latest-solidcraft`.
 
 ### Build your own
@@ -207,16 +207,16 @@ RUN set -eu; \
 USER 1000:1000
 ```
 
-Then build it in that folder, with the SolidCraft 0.44.1 archive for x86_64 here, and use
+Then build it in that folder, with the SolidCraft 0.45.0 archive for x86_64 here, and use
 `dutchman` as before:
 
 ```sh
 docker build -t dutchman \
-  --build-arg SOLIDCRAFT_VERSION=0.44.1 \
-  --build-arg SOLIDCRAFT_SHA256=d667d38cf1fd9516d3a09835946a428eb2825faec6765752451435412168b302 .
+  --build-arg SOLIDCRAFT_VERSION=0.45.0 \
+  --build-arg SOLIDCRAFT_SHA256=78170f546e1442db9d14637a4b8a8e6b39b543009d3d3d857cbd65f09afa37f8 .
 ```
 
-It takes about a minute and adds about 470 MB. Build again after each `docker pull` to update
+It takes about a minute and adds about 550 MB. Build again after each `docker pull` to update
 Dutchman. An image you [build yourself](#build-it-yourself) from the repository takes the same
 two arguments.
 
@@ -235,3 +235,13 @@ Merge groups also build the source `Dockerfile` when either Docker recipe, `.doc
 Rust source/manifests, runtime files, or another potential build input changes. Unknown
 paths or an unavailable diff base require the source build. The reused-tools image and
 its smoke tests remain required; docs/support-only changes retain the fast image path.
+
+The source image’s Rust build stops after 30 minutes, including dependency downloads. Cargo uses a
+60-second HTTP timeout and up to three network retries. Optional SolidCraft downloads use
+a 15-second connection timeout, a five-minute transfer timeout, and up to three retries
+within a ten-minute retry window.
+
+In CI, the source image step has a 45-minute deadline. Layer cache transfers have a
+five-minute deadline and export only final-image layers. Each main commit runs independently,
+so a stuck run does not hold up checks for newer commits. Pull requests and merge groups
+keep their existing cancellation behavior.

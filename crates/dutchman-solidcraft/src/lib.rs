@@ -18,6 +18,7 @@ mod container;
 mod document;
 mod evaluator;
 mod linked;
+mod opening;
 mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
@@ -69,7 +70,8 @@ fn slow_part(name: &str) {
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
 /// SolidCraft upgrades it on open. Keep this fixed for every target, including 0.28:
 /// its format 45 adds nested Browser groups, point cloud properties/filters and print
-/// faces, which this writer does not use. Format 23 also keeps older targets readable.
+/// faces, which this writer does not use. Likewise, 0.45 saves format 63 for drawings,
+/// which this writer does not emit. Format 23 also keeps older targets readable.
 pub const FORMAT: &str = "solidcraft/23";
 
 /// The report subject of the lines that say what became of the history.
@@ -80,6 +82,9 @@ const GEOMETRY: &str = "geometry";
 
 /// What the report says turned history off, unless a front end names its own choice.
 const IMPORT_ONLY_REASON: &str = "--import-only";
+
+/// The least time the final opening check gets: a large assembly takes minutes to open.
+pub const OPENING_CHECK_FLOOR: Duration = Duration::from_secs(15 * 60);
 
 /// Writes `.sc` designs.
 #[derive(Clone, Debug)]
@@ -100,6 +105,7 @@ pub struct SolidCraftWriter {
     verification: Verification,
     replay: Verification,
     timeout: Duration,
+    opening_timeout: Option<Duration>,
     hide_unverified: bool,
     stand_up: Option<bool>,
     memory_budget: Option<u64>,
@@ -125,6 +131,7 @@ impl Default for SolidCraftWriter {
             verification: Verification::Auto,
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
+            opening_timeout: None,
             hide_unverified: false,
             stand_up: None,
             memory_budget: None,
@@ -342,6 +349,18 @@ impl SolidCraftWriter {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// The whole time the final opening check of the written design may take. By default it is
+    /// its own budget, at least [`OPENING_CHECK_FLOOR`], never what the replay checks left over.
+    pub fn opening_timeout(mut self, timeout: Duration) -> Self {
+        self.opening_timeout = Some(timeout);
+        self
+    }
+
+    fn opening_budget(&self) -> Duration {
+        self.opening_timeout
+            .unwrap_or_else(|| self.timeout.max(OPENING_CHECK_FLOOR))
     }
 
     /// Whether `model` can be written at all: `Err` with the reason a conversion would fail
@@ -744,7 +763,7 @@ impl SolidCraftWriter {
                         deviation,
                     })
                 }
-                Ok(verify::Outcome::Differs(_)) => Fit::Differs,
+                Ok(verify::Outcome::Differs(why)) => Fit::Differs(why),
                 Ok(verify::Outcome::Unverified(_)) | Err(_) => Fit::Unknown,
             };
         }
@@ -758,16 +777,15 @@ impl SolidCraftWriter {
                     .iter()
                     .all(|body| body.center.is_some() && body.size.is_some()) =>
             {
-                if verify::bodies_differ(Some(stored), Some(&bodies)).is_none() {
-                    Fit::Matches(Measure {
+                match verify::bodies_differ(Some(stored), Some(&bodies)) {
+                    None => Fit::Matches(Measure {
                         against: InferredAgainst::StoredBodies,
                         deviation: None,
-                    })
-                } else {
-                    Fit::Differs
+                    }),
+                    Some(why) => Fit::Differs(why),
                 }
             }
-            (verify::Outcome::Differs(_), _) => Fit::Differs,
+            (verify::Outcome::Differs(why), _) => Fit::Differs(why),
             _ => Fit::Unknown,
         }
     }
@@ -798,9 +816,8 @@ impl SolidCraftWriter {
         Some(results.first()?.get("profiles")?.as_array()?.len())
     }
 
-    /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
-    /// A shape mismatch alone cannot identify a bad operation: retain the mapped timeline
-    /// for correction, hidden beside the original, and say it differs.
+    /// Keeps the prefix before SolidCraft's first error or a measured geometry difference.
+    /// Replaying successfully cannot establish that a differing body is correct.
     fn partial(
         &self,
         model: &Model,
@@ -816,9 +833,13 @@ impl SolidCraftWriter {
                 .and_then(|s| s.strip_suffix(')'))
                 .unwrap_or(&why);
             let identified = self.stop_replay(mapping, error);
-            // A replay that differs without naming a feature: a whole-sketch profile nothing
-            // confirmed is the first suspect.
-            if !identified && !unconfirmed_stop(mapping) {
+            // An unverified pattern is represented as a replay difference so its
+            // original stays visible; it is not a measured geometry mismatch.
+            let measured = why.starts_with("replay differs (")
+                && !error.starts_with("the pattern instance set could not be verified:");
+            if !identified && measured {
+                Self::stop_geometry_difference(mapping, why);
+            } else if !identified && !unconfirmed_stop(mapping) {
                 if let Ok(history) = &mut mapping.result {
                     history.stop = Some(why);
                 }
@@ -877,9 +898,8 @@ impl SolidCraftWriter {
                             "history/body-mismatch",
                             &why,
                         );
-                        return Ok(Check::Partial(format!(
-                            "{summary}; retained features replay in SolidCraft, but {why}"
-                        )));
+                        Self::stop_geometry_difference(mapping, format!("replay differs ({why})"));
+                        continue;
                     }
                     return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified")));
                 }
@@ -900,6 +920,41 @@ impl SolidCraftWriter {
             mapping.result = Err("retained history exceeded the replay repair limit".to_owned());
         }
         Ok(Check::Flattened("no replayable prefix remains".to_owned()))
+    }
+
+    /// A final-body difference does not identify the operation that introduced it.
+    /// Keep source imports before the first unconfirmed body edit, and independent
+    /// sketches; a replayable but unproven edited body must not survive in the file.
+    fn stop_geometry_difference(mapping: &mut history::Mapping, reason: String) {
+        let source = mapping.result.as_ref().ok().and_then(|history| {
+            history
+                .features
+                .iter()
+                .find_map(|feature| {
+                    if matches!(
+                        feature.get("type").and_then(Value::as_str),
+                        Some("sketch" | "import")
+                    ) {
+                        return None;
+                    }
+                    history.sources.get(&feature.get("id")?.as_u64()?).copied()
+                })
+                .or_else(|| {
+                    history.features.iter().find_map(|feature| {
+                        if feature.get("type").and_then(Value::as_str) == Some("sketch") {
+                            return None;
+                        }
+                        history.sources.get(&feature.get("id")?.as_u64()?).copied()
+                    })
+                })
+        });
+        if let Some(source) = source {
+            history::shorten(mapping, source, reason);
+        } else {
+            // Even a stored body must be discarded if it is itself the differing
+            // result. The final import is the only confirmed geometry in this case.
+            mapping.result = Err(reason);
+        }
     }
 
     fn stop_replay(&self, mapping: &mut history::Mapping, why: &str) -> bool {
@@ -1573,6 +1628,7 @@ impl Writer for SolidCraftWriter {
         }
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report, progress)?;
+            let bytes = self.check_opening(bytes, report)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
             let expected = verify::Expected {
                 sheets: placed_sheets(assembly, 0),
@@ -1624,6 +1680,7 @@ impl Writer for SolidCraftWriter {
                 check: self.check_sketches(&bytes),
                 features: mapping.features,
             });
+            let bytes = self.check_opening(bytes, report)?;
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -1883,6 +1940,7 @@ impl Writer for SolidCraftWriter {
         }
         state_tolerances(report, &outcome);
         report.set_outcome(outcome);
+        let bytes = self.check_opening(bytes, report)?;
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }

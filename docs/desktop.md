@@ -97,6 +97,13 @@ counts before conversion. A new folder beside the input, named `Project (SolidCr
 is selected automatically; **Choose…** can select another output folder. Existing folders
 receive a numbered alternative.
 
+Folder runs keep the input tree under the selected output folder. For example,
+`in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`, with linked design companions
+and its `.report.json` beside it. Same-named designs in different subfolders stay
+separate. Repeating a run into the same selected folder reuses the output paths;
+existing designs and reports are replaced, identical linked companions are reused,
+and edited companions are kept with a conflict report.
+
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
 Temporary files are removed when the conversion and its retained retry rows are released.
@@ -212,7 +219,7 @@ Day or Night, and its **Output format** choice also offers a FreeCAD macro.
 The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
 notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
 (before minor 0.18), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
-0.25 patch 1 through 0.44 currently need no such notice. The notice never blocks conversion.
+0.44 patch 1 through 0.45 currently need no such notice. The notice never blocks conversion.
 The pill shows the detected release, or **SolidCraft not found** with a download link in its
 panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
@@ -228,7 +235,7 @@ SolidCraft, or answers as a release older than 0.18.2, is refused with a message
 `solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
 download leaves it out, and the portable ZIP and the MSI installer include it.
 
-Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.44), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
+Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.45), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 
 History checking stays on by default. Before a SolidCraft rebuild, Dutchman compares the
 memory needed for a second build with free memory, using what the design holds after

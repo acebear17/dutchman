@@ -413,11 +413,11 @@ pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 44];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 45];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
-pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
+pub const WINDOW_OLDEST: [u64; 3] = [0, 40, 0];
 
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
@@ -457,6 +457,8 @@ pub enum VersionGate {
     ScopedBodies,
     /// Blends selected by a proven closed circular path.
     ClosedCircleBlend,
+    /// Complete spatial hole entries represented by an editable location sketch.
+    SpatialHoleLocations,
 }
 
 impl VersionGate {
@@ -475,7 +477,7 @@ impl VersionGate {
             Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
             Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
-            Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
+            Self::ClosedCircleBlend | Self::SpatialHoleLocations => SolidCraftVersion::V0_44_1,
         }
     }
 
@@ -497,6 +499,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SplitFaces,
         VersionGate::ScopedBodies,
         VersionGate::ClosedCircleBlend,
+        VersionGate::SpatialHoleLocations,
     ]
     .into_iter()
     .any(|gate| gate.supported(SolidCraftVersion::default()) && !gate.supported(target))
@@ -1149,24 +1152,28 @@ fn compare_measurements(
         });
         evaluate(cli, timeout, name, design)
     };
-    let expected = match evaluate(timeout, "original", original) {
+    // A failed source import must not prevent us from finding failed history features.
+    let expected = evaluate(timeout, "original", original);
+    let replayed = match evaluate(timeout, "history", history) {
+        Ok(Evaluation::Done(eval)) => eval,
+        Ok(Evaluation::Failed(why)) => {
+            return Outcome::Unverified(format!(
+                "SolidCraft could not evaluate the history: {why}"
+            ));
+        }
+        Err(why) => return Outcome::Unverified(why),
+    };
+    if let Some(outcome) = timeline_outcome(&replayed) {
+        return outcome;
+    }
+    let expected = match expected {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) | Err(why) => {
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
-    let replayed = match evaluate(timeout, "history", history) {
-        Ok(Evaluation::Done(eval)) => eval,
-        Ok(Evaluation::Failed(why)) => {
-            return Outcome::Differs(format!("SolidCraft cannot replay it: {why}"))
-        }
-        Err(why) => return Outcome::Unverified(why),
-    };
     if let Some(evidence) = evidence {
         *evidence = evidence::measurements(&expected, &replayed);
-    }
-    if let Some(error) = replayed.errors.first() {
-        return Outcome::Differs(error.clone());
     }
     let unsound = volume_problems(&expected.volumes(), bodies);
     if !unsound.is_empty() {
@@ -1191,8 +1198,8 @@ pub(crate) fn replay(
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
     match evaluate(cli, timeout, "prefix", design) {
-        Ok(Evaluation::Done(eval)) => match eval.errors.first() {
-            Some(why) => (Outcome::Differs(why.clone()), None),
+        Ok(Evaluation::Done(eval)) => match timeline_outcome(&eval) {
+            Some(outcome) => (outcome, None),
             None => {
                 let placed = eval
                     .bodies
@@ -1205,7 +1212,7 @@ pub(crate) fn replay(
                 (Outcome::Matches, Some(placed))
             }
         },
-        Ok(Evaluation::Failed(why)) => (Outcome::Differs(why), None),
+        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
         Err(why) => (Outcome::Unverified(why), None),
     }
 }
@@ -1425,10 +1432,13 @@ pub(crate) fn check_import(
     let eval = match evaluate(cli, timeout, "import", design) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) => {
-            return Shown::Short(format!("SolidCraft cannot open it: {why}"))
+            return Shown::Unchecked(format!("SolidCraft could not evaluate it: {why}"))
         }
         Err(why) => return Shown::Unchecked(why),
     };
+    if let Some(Outcome::Unverified(why)) = timeline_outcome(&eval) {
+        return Shown::Unchecked(why);
+    }
     shown(&eval, expected)
 }
 
@@ -1558,13 +1568,15 @@ fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
         let allowed = (VOLUME_TOLERANCE * v.abs().max(w.abs())).max(mesh_slack(got, want));
         if !within((v - w).abs(), allowed) {
             return Outcome::Differs(format!(
-                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³"
+                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³ (difference {:.6} mm³)",
+                (v - w).abs()
             ));
         }
         if let (Some(a), Some(b)) = (got.area, want.area) {
             if !within((a - b).abs(), AREA_TOLERANCE * a.abs().max(b.abs())) {
                 return Outcome::Differs(format!(
-                    "a body's area is {a:.6} mm², the original's {b:.6} mm²"
+                    "a body's area is {a:.6} mm², the original's {b:.6} mm² (difference {:.6} mm²)",
+                    (a - b).abs()
                 ));
             }
         }
@@ -1627,9 +1639,19 @@ impl Eval {
     }
 }
 
+/// Only a named timeline refusal establishes that a feature failed to rebuild.
+fn timeline_outcome(eval: &Eval) -> Option<Outcome> {
+    if let Some(why) = eval.errors.iter().find(|why| why.starts_with("feature \"")) {
+        return Some(Outcome::Differs(why.clone()));
+    }
+    eval.errors
+        .first()
+        .map(|why| Outcome::Unverified(why.clone()))
+}
+
 enum Evaluation {
     Done(Eval),
-    /// SolidCraft ran and refused the design.
+    /// SolidCraft ran but did not return a usable evaluation.
     Failed(String),
 }
 
@@ -1697,9 +1719,13 @@ pub(crate) fn evaluate_json(
         if let Some(why) = blocked_failure(cli) {
             return Err(why);
         }
-        return Ok(
-            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
-        );
+        // A rebuild refusal may still write a complete result naming failed features.
+        // Preserve that evidence instead of replacing it with an exit status.
+        if !output.is_file() {
+            return Ok(
+                serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+            );
+        }
     }
     use std::io::Read;
     let mut text = String::new();
@@ -1712,8 +1738,31 @@ pub(crate) fn evaluate_json(
         return Err(format!("{CLI_NAME} result exceeds 64 MiB"));
     }
 
-    let value: Value =
-        serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}"))?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) if !status.success() => {
+            return Ok(
+                serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+            );
+        }
+        Err(err) => return Err(format!("{CLI_NAME} result: {err}")),
+    };
+    let timeline_error = value
+        .get("timeline")
+        .and_then(Value::as_array)
+        .is_some_and(|timeline| {
+            timeline.iter().any(|entry| {
+                entry
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|why| !why.is_empty())
+            })
+        });
+    if !status.success() && !timeline_error {
+        return Ok(
+            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+        );
+    }
     Ok(value)
 }
 
@@ -2329,9 +2378,18 @@ fn parse(value: &Value) -> Result<Eval, String> {
     let errors = timeline
         .iter()
         .filter_map(|entry| {
-            let error = entry.get("error").and_then(Value::as_str)?;
-            let name = entry.get("name").and_then(Value::as_str).unwrap_or("?");
-            Some(format!("feature \"{name}\" failed: {error}"))
+            let error = entry
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|why| !why.trim().is_empty())?;
+            match entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+            {
+                Some(name) => Some(format!("feature \"{name}\" failed: {error}")),
+                None => Some(format!("SolidCraft did not name a failed feature: {error}")),
+            }
         })
         .collect();
     let warnings = timeline
@@ -3009,6 +3067,27 @@ mod tests {
     }
 
     #[test]
+    fn unnamed_errors_are_unavailable_but_do_not_hide_named_feature_failures() {
+        let mut value =
+            serde_json::json!({"bodies": [], "timeline": [{"error": "Evaluation stopped"}]});
+        let unnamed = super::parse(&value).unwrap();
+        assert!(
+            matches!(super::timeline_outcome(&unnamed), Some(super::Outcome::Unverified(why)) if why.contains("Evaluation stopped"))
+        );
+        value["timeline"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"name": "Edit", "error": "No face"}));
+        let named = super::parse(&value).unwrap();
+        assert_eq!(
+            super::timeline_outcome(&named),
+            Some(super::Outcome::Differs(
+                "feature \"Edit\" failed: No face".to_owned()
+            ))
+        );
+    }
+
+    #[test]
     fn parses_an_eval_result() {
         let value = serde_json::json!({
             "bodies": [
@@ -3178,11 +3257,19 @@ mod cli_tests {
     #[test]
     fn the_newest_solidcraft_app_carries_the_cli() {
         let dir = tempfile::tempdir().unwrap();
-        for (app, version) in [
-            ("SolidCraft.app", Some("0.18.2")),
-            ("SolidCraft 2.app", Some("0.18.10")),
-            ("SolidCraft old.app", None),
-            ("Other.app", Some("9.0")),
+        for (app, version, id) in [
+            (
+                "SolidCraft.app",
+                Some("0.44.1"),
+                "ai.storyteller.solidcraft",
+            ),
+            (
+                "SolidCraft 2.app",
+                Some("0.45.0"),
+                "io.tangencylabs.solidcraft",
+            ),
+            ("SolidCraft old.app", None, "ai.storyteller.solidcraft"),
+            ("Other.app", Some("9.0"), "org.example.other"),
         ] {
             let macos = dir.path().join(app).join("Contents/MacOS");
             std::fs::create_dir_all(&macos).unwrap();
@@ -3191,7 +3278,7 @@ mod cli_tests {
                 std::fs::write(
                     dir.path().join(app).join("Contents/Info.plist"),
                     format!(
-                        "<dict><key>CFBundleShortVersionString</key>\n<string>{version}</string></dict>"
+                        "<dict><key>CFBundleIdentifier</key><string>{id}</string><key>CFBundleShortVersionString</key>\n<string>{version}</string></dict>"
                     ),
                 )
                 .unwrap();
@@ -3232,14 +3319,14 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join("dutchman");
         assert_eq!(beside(&program), None);
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.44.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
         assert_eq!(beside(&program), Some(cli));
     }
 
     #[test]
     fn a_chosen_cli_must_answer_as_solidcraft() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.44.0");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.0");
         assert_eq!(chosen_cli(&cli), Ok(cli));
         let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
         assert!(chosen_cli(&other)
@@ -3272,7 +3359,7 @@ mod cli_tests {
         .unwrap();
         std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
-        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.44.1");
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.45.1");
         assert_eq!(chosen_cli(&app), Ok(cli));
         assert!(!started.exists());
     }
@@ -3463,6 +3550,20 @@ mod cli_tests {
     }
 
     #[test]
+    fn a_nonzero_eval_preserves_the_named_timeline_failure() {
+        let _turn = crate::testing::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_cli(
+            dir.path(),
+            &format!("{}; exit 1", eval(0.0, "\"Synthetic refusal\"")),
+        );
+        assert_eq!(
+            super::replay(&cli, DEFAULT_TIMEOUT, b"design").0,
+            Outcome::Differs("feature \"Extrude1\" failed: Synthetic refusal".to_owned())
+        );
+    }
+
+    #[test]
     fn a_failing_feature_differs() {
         let script = by_design(&eval(1000.0, "null"), &eval(1000.0, "\"no profile\""));
         assert_eq!(
@@ -3472,9 +3573,12 @@ mod cli_tests {
     }
 
     #[test]
-    fn a_history_solidcraft_refuses_differs() {
+    fn a_history_evaluation_without_named_failures_is_unverified() {
         let script = by_design(&eval(1000.0, "null"), "exit 3");
-        assert!(matches!(run(&script, DEFAULT_TIMEOUT), Outcome::Differs(_)));
+        assert!(matches!(
+            run(&script, DEFAULT_TIMEOUT),
+            Outcome::Unverified(_)
+        ));
     }
 
     #[test]
@@ -3528,7 +3632,7 @@ mod cli_tests {
             import_check(short),
             Shown::Short("3 face(s) could not be meshed".to_owned())
         );
-        assert!(matches!(import_check("exit 3"), Shown::Short(_)));
+        assert!(matches!(import_check("exit 3"), Shown::Unchecked(_)));
         assert!(matches!(import_check("echo nonsense"), Shown::Unchecked(_)));
     }
 
@@ -3574,7 +3678,7 @@ mod cli_tests {
         let dir = tempfile::tempdir().unwrap();
         for version in [
             "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.40.0", "0.41.0", "0.42.0", "0.43.0",
-            "0.44.0", "0.44.9", "0.45.0", "nonsense", "0.17.0",
+            "0.44.0", "0.44.1", "0.44.9", "0.45.0", "0.45.9", "0.46.0", "nonsense", "0.17.0",
         ] {
             let cli = dir.path().join(version);
             std::fs::write(
@@ -3792,11 +3896,32 @@ mod version_tests {
             assert_eq!(gate.supported(target), gate.supported(previous));
         }
         assert_eq!(target.extension(), previous.extension());
-        assert!(!target_loses_history(target));
+        // 0.45 also enables the 0.44.1 closed-circle blend gate by default.
+        assert!(target_loses_history(target));
         assert!(!VersionGate::ScopedBodies.supported(previous));
         assert!(VersionGate::ScopedBodies.supported(target));
         assert!(!VersionGate::ClosedCircleBlend.supported(target));
         assert!(VersionGate::ClosedCircleBlend.supported(SolidCraftVersion::V0_44_1));
+    }
+
+    #[test]
+    fn target_045_keeps_044_patch_1_writer_capabilities() {
+        let target: SolidCraftVersion = "0.45.0".parse().unwrap();
+        let previous = SolidCraftVersion::V0_44_1;
+        for gate in [
+            VersionGate::EntryRecessTip,
+            VersionGate::ConePrimitive,
+            VersionGate::SketchProfileCoil,
+            VersionGate::MirrorChain,
+            VersionGate::HistoryBody,
+            VersionGate::SplitFaces,
+            VersionGate::ScopedBodies,
+            VersionGate::ClosedCircleBlend,
+        ] {
+            assert_eq!(gate.supported(target), gate.supported(previous));
+        }
+        assert_eq!(target.extension(), previous.extension());
+        assert!(!target_loses_history(target));
     }
 
     #[test]
@@ -3810,7 +3935,9 @@ mod version_tests {
             ("0.43.0", "current"),
             ("0.44.0", "current"),
             ("0.44.9", "current"),
-            ("0.45.0", "newer"),
+            ("0.45.0", "current"),
+            ("0.45.9", "current"),
+            ("0.46.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(
@@ -3831,7 +3958,9 @@ mod version_tests {
         assert!(target_loses_history(after));
         assert!(!VersionGate::ThinExtrude.supported(after));
         assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
-        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
+        // The newest target also retains closed-circle blends, added in 0.44.1.
+        assert!(target_loses_history(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_1));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));

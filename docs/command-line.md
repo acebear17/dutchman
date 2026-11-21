@@ -108,7 +108,7 @@ CAD extension selects conversion.
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.44). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.45). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
@@ -302,7 +302,10 @@ The limit line always ends in a full stop. The name and limit (2 min for SolidCr
 
 FreeCAD's `--freecad-timeout` defaults to 300 s for its headless run. A native document
 conversion stops without writing an output document; a macro-only check keeps the macro
-unverified. Reading one design has a limit of its own: a design that makes no progress for
+unverified. Reading one design has a limit of its own whenever the conversion runs in a
+separate worker process: `convert-all`, `convert` of a folder or `.zip`, `watch`, the web server, the MCP
+server, the desktop and `doctor`. A plain `convert` of one file runs in the `dutchman` process
+itself and has no such limit; stop it with Ctrl+C. In those workers, a design that makes no progress for
 20 minutes (no step finishing, no other design starting, memory not moving), or that runs 60
 minutes in all (in a Fusion archive, counted from when that design starts, so a long read of
 the whole archive before its first design is not cut short), counts as stuck and is stopped. `DUTCHMAN_DESIGN_TIME_LIMIT` sets the 20 in
@@ -383,6 +386,14 @@ convert at once (default: the machine's cores, at most 8). It takes the same opt
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches
 folders at most 32 levels deep.
+
+Folder paths are relative to each input folder: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Linked design companions are written beside that design.
+Same-named files in different subfolders keep their own paths. Output names that
+would collide, including names differing only in case, receive a numeric suffix.
+An explicit output folder is reused on a rerun: designs at the same paths are
+replaced unless `--no-clobber` is set. Identical linked companions are reused;
+edited companions are kept and the conversion reports the conflict.
 
 Large batches:
 
@@ -502,7 +513,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest minor known at build time (currently 0.44). The current window is 0.18.2–0.44.
+newest minor known at build time (currently 0.45). The current window is 0.40–0.45.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
 Onshape fillets and chamfers blend exactly the edges Onshape blended (its tangent chain resolved
@@ -510,7 +521,7 @@ from the bundle) only for targets 0.40 or newer; older targets keep the imported
 from that feature on and report the version needed.
 SolidCraft names and status comparisons use minors; patch-sensitive writer gates use full
 versions internally. CI tests the
-latest published patch of the newest minor, while the oldest window release stays pinned.
+latest published patch of the newest minor and keeps the 0.18.2 opens-in check pinned.
 Designs open in their target release and newer releases.
 
 
@@ -527,10 +538,10 @@ than falling back to the writer's older pinned `WINDOW_OLDEST` value.
 
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.44 (found 0.44.0)`,
+even with verification off. Text output includes `Target SolidCraft 0.45 (found 0.45.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.44. Successful conversions print the same installed-version notice beside the
+back to 0.45. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output

@@ -75,6 +75,11 @@ crates come from the same git revision; `scripts/use-cadmpeg-main.sh` updates th
 IGES is also refused before opening the input: cadmpeg does not yet sew its faces into
 solids, so Dutchman directs users to SolidCraft's own IGES importer (File > Import).
 
+The pure memory and time cost model lives in `dutchman-core::estimate`. Desktop and CLI
+planners keep their existing archive sizing and choice policy; the SolidCraft plugin
+uses the same coefficients with bounded host reads before native decoding. Its fixed
+budget is declared once in `dutchman-plugin/src/preflight.rs`.
+
 ## The plugin seam
 
 ```rust
@@ -202,8 +207,8 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.44), unless an explicit target is supplied.
-`WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
+`NEWEST_SOLIDCRAFT` (currently 0.45), unless an explicit target is supplied.
+`WINDOW_OLDEST` (currently 0.40.0) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
 Sketch-profile helical sweeps require a target of 0.25 patch 1 or newer; older targets block them
@@ -346,14 +351,15 @@ sections, tangent-path extension, and post-sweep simplification are not mapped);
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
 holes drilled at the circle centres, arc centres or points of a sketch (including explicit
-entity selections), or at a directed spatial placement, through all or to a depth, flat or,
-for simple holes, with a drill point; axes placed on proven earlier extrusion caps and holes
-ending at those caps (the cap must match the sole polygonal profile of the last earlier
+entity selections), or at a directed spatial placement, through all or to a depth, flat or
+with a drill point (entry recesses retain the point on targets supporting their tip angle);
+axes placed on proven earlier extrusion caps and holes ending at those caps, including
+pointed holes (the cap must match the sole polygonal profile of the last earlier
 solid feature's one-sided new-body extrusion; a face from final geometry alone is not enough);
 chamfered entries map as countersinks; a tapped hole keeps its resolved bore and an ISO
 metric thread label (`M6x1`, the pitch from the designation, the source, or the coarse
 series), and the thread's hand, class, and length are reported as Degraded, not mapped;
-entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
+exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features or named bodies, linear in one or
 two directions (a symmetric direction, with instances on both sides of the original, becomes a
 centred SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along
@@ -391,7 +397,7 @@ length but no tangent. For an open line or circular arc, its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
 splits into pieces and other non-circular curves are refused. Closed input circles map for
-explicit targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
+targets of SolidCraft 0.44.1 or newer. The selected source edge must reference a
 stored circle with exact centre, axis, radius and full-turn parameter range; historical
 samples cannot establish circularity. Stored topology must identify one earlier named owning
 body, and only that body supplies replay candidates. Missing carrier or ownership evidence,

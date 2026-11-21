@@ -784,6 +784,117 @@ fn a_multi_document_archive_converts_like_a_fusion_archive() {
 }
 
 #[test]
+fn folder_outputs_mirror_nested_duplicate_names_and_rerun_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in");
+    let output = dir.path().join("out");
+    let folders = ["ProjectA", "ProjectB/nested"];
+    for folder in folders {
+        std::fs::create_dir_all(input.join(folder)).unwrap();
+        std::fs::copy(
+            fixture("generated_unit_cube.f3d"),
+            input.join(folder).join("part.f3d"),
+        )
+        .unwrap();
+        std::fs::copy(
+            fixture("onshape-derived.onshape-bundle"),
+            input.join(folder).join("linked.onshape-bundle"),
+        )
+        .unwrap();
+    }
+    for command in ["convert-all", "convert"] {
+        // Explicit folder outputs are reused. A rerun must use the same paths,
+        // even when designs and their companions already exist.
+        for _ in 0..2 {
+            let mut args = vec![
+                command,
+                "--json",
+                "--no-verify",
+                "--solidcraft-version",
+                "0.44.1",
+            ];
+            args.extend(if command == "convert-all" {
+                vec![
+                    "--out-dir",
+                    output.to_str().unwrap(),
+                    input.to_str().unwrap(),
+                ]
+            } else {
+                vec![input.to_str().unwrap(), "-o", output.to_str().unwrap()]
+            });
+            let result = dutchman(&args);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let report = json_of(&result);
+            assert_eq!(report["converted"], 4, "{report}");
+            let paths: std::collections::BTreeSet<_> = report["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|result| PathBuf::from(result["output"]["path"].as_str().unwrap()))
+                .collect();
+            assert_eq!(
+                paths,
+                folders
+                    .into_iter()
+                    .flat_map(|folder| [
+                        output.join(folder).join("part.sc"),
+                        output.join(folder).join("linked.sc"),
+                    ])
+                    .collect::<std::collections::BTreeSet<_>>()
+            );
+            for path in paths {
+                assert!(path.is_file());
+                assert!(!path.with_file_name("part-2.sc").exists());
+            }
+            for folder in folders {
+                let companions: Vec<_> = std::fs::read_dir(output.join(folder))
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .filter(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with("derived-")
+                    })
+                    .collect();
+                assert!(!companions.is_empty(), "{folder}");
+                for companion in companions {
+                    assert!(zip::ZipArchive::new(std::fs::File::open(companion).unwrap()).is_ok());
+                }
+            }
+            assert!(!output.join("part.sc").exists());
+        }
+    }
+    let preserved: Vec<_> = folders
+        .into_iter()
+        .flat_map(|folder| {
+            ["part.sc", "linked.sc"].map(|name| {
+                let path = output.join(folder).join(name);
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+        })
+        .collect();
+    let result = dutchman(&[
+        "convert-all",
+        "--json",
+        "--no-verify",
+        "--no-clobber",
+        "--out-dir",
+        output.to_str().unwrap(),
+        input.to_str().unwrap(),
+    ]);
+    assert_eq!(json_of(&result)["failed"], 4);
+    for (path, bytes) in preserved {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn convert_all_converts_a_folder_and_reports_each_file() {
     let root = std::env::temp_dir().join(format!("dutchman-batch-{}", std::process::id()));
     let project = root.join("project");
@@ -1331,7 +1442,7 @@ mod external_tools {
             file.write_all(
                 br#"#!/bin/sh
 if [ "$1" = "--version" ]; then
-    printf 'solidcraft-cli 0.44.0\n'
+    printf 'solidcraft-cli 0.45.0\n'
     exit 0
 fi
 printf 'replay\n' >> "$DUTCHMAN_TEST_REPLAY_MARKER"
@@ -1349,7 +1460,7 @@ exit 1
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.44.0",
+            "0.45.0",
             "--json",
         ];
         // Preflight fits while the calibrated check does not.
@@ -2332,7 +2443,7 @@ fn a_check_stopped_for_memory_keeps_the_design_unverified() {
     let cli = dir.path().join("solidcraft-cli");
     std::fs::write(
         &cli,
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.44.1'; exit 0; fi\nsleep 30\n",
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'solidcraft-cli 0.45.1'; exit 0; fi\nsleep 30\n",
     )
     .unwrap();
     std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -3536,7 +3647,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
         "-o",
         output.to_str().unwrap(),
         "--solidcraft-version",
-        "0.44.0",
+        "0.45.0",
         "--json",
     ];
     let out = dutchman_with(&args, &env);
@@ -3582,7 +3693,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
             "--out-dir",
             dir.path().to_str().unwrap(),
             "--solidcraft-version",
-            "0.44.0",
+            "0.45.0",
             "--json",
         ],
         &env,
@@ -3609,7 +3720,7 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.44.0",
+            "0.45.0",
             "--part",
             "1",
             "--stop-at-feature",
@@ -3657,7 +3768,7 @@ fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
             output.to_str().unwrap(),
             "--no-verify",
             "--solidcraft-version",
-            "0.44.0",
+            "0.45.0",
             "--json",
         ],
         &[("DUTCHMAN_TEST_MEMORY", "100000000,500000000")],

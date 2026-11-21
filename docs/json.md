@@ -7,6 +7,12 @@ overrides apply separately to each insertion.
 Alternate representations and instance bodies are not supported yet;
 the report names that limitation rather than treating the design as empty.
 
+Folder conversions retain paths relative to each input folder in the existing
+`results[].output.path` field: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Same-named files in other subfolders have distinct paths.
+Linked design companions and desktop `.report.json` files stay beside each design.
+Reruns into an explicit output folder reuse these paths. Report schemas are unchanged.
+
 The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
 Folder and selection summaries use the highest per-file memory estimate and sum the displayed
 time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
@@ -193,7 +199,10 @@ Sketch losses describe unresolved distance operands and ambiguous curve-only coi
 specifically, including dimension values that match neither the line nor its finite endpoint. Cosmetic thread blockers distinguish missing diameter/pitch from historical
 faces without input surface geometry. Unspecified modeled construction, when an annotation
 can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
-These use the existing loss fields; no report schema or field changes.
+Cosmetic thread contradictions name the designation’s nominal dimensions and secondary numeric
+values. Decimal rounding and floating-point conversion noise are accepted for metric labels.
+A matching UNC/UNF designation reports the separate SolidCraft cosmetic Thread limitation
+instead of a numeric conflict. These use the existing loss fields; no report schema or field changes.
 
 When bodies belonging only to inactive configurations are left out, `losses` includes an
 Info entry with code `dutchman/configuration.inactive-bodies-left-out`, subject
@@ -404,10 +413,22 @@ Offset datum planes need no building feature when their support resolves or all 
 consumers carry independent resolved sketch placements. Otherwise the history reason
 names the unresolved plane reference; resolved skipped planes count as `not_needed`.
 
+A feature's `mapped` status means its neutral operation has a target representation.
+It does not establish that the rebuilt body matches the source. Use
+`verification.status` for a single part and `history.parts[].status` for assembly
+parts. A measured mismatch in position, box, volume, or area removes the
+unconfirmed edited body from the file and keeps the imported final shape. The
+existing `reason` states the check and measured difference, including absolute
+volume and area differences. Source imports before the unconfirmed edit and
+independent sketches may remain. Numerical `eval` also includes legitimate hidden
+prefix bodies; use `document.inspect` body `visible` flags for final-shape comparisons.
+
 A partial history that replays but whose bodies differ from what the source stores at the same
 point adds a `Degraded` loss with code `history/body-mismatch`, and `verification.reason` says
 so: fewer bodies, or a body the source has with no replayed body whose box centre is near
-enough. When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
+enough. The mismatching edited body is removed; only earlier source imports and
+independent sketches are retained when no earlier edited state can be proved.
+When the source marks a body's box as the solid's own (Fusion's `body_centers_exact`),
 its centre must be within the larger of 0.5 mm and 1% of the replayed body's box diagonal.
 Other boxes are taken over edge vertices, interior samples and proven arc extremes; their
 centres must be within the larger of 1 mm and 2% of the replayed body's box diagonal.
@@ -419,6 +440,12 @@ A base feature written with its body as the design ends (`final_body`) isn't com
 source's stored state after it is the body before later features changed it.
 A base feature written with its own body as the source keeps it (a history body) is compared
 like any other feature.
+
+Face extrusions on imported bases require a matching final source result after the
+input face is proved. An intermediate result, an unavailable check, or a measured
+mismatch keeps the final imported shape and reports
+`a face extrude on an imported base is not supported yet without a matching source result check`.
+
 A mapped Split can emit an extra Import for its consumed history body; `history.features`
 still has one outcome per source feature. Unsupported splitting faces name the missing input
 geometry or nonplanar tool in `history.features[].reason`. No report fields or counts are
@@ -503,9 +530,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.44"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.45"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.44.0"`). Status comparisons use minors, so all 0.44 patches are current; 0.45 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.45 patches are current; 0.46 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -567,7 +594,7 @@ elements count once. Grounded parts appear as rigid joints, and unsupported join
 loss notes while stored placements are retained. No report schema fields are added.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
-explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
 stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
@@ -624,7 +651,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.44). The supported rolling 14-day window is currently 0.18.2–0.44;
+time (currently 0.45). The supported rolling 14-day window is currently 0.40–0.45;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
@@ -650,6 +677,10 @@ Counterbores, countersinks, and chamfered entries with drill points map for Soli
 and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
 `mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
@@ -1837,17 +1868,17 @@ A planar 3D sketch profile copy carries at most 400,000 constraints, including
 repeated line occurrences across all relations. If it exceeds that copy limit,
 reduce repeated relations and convert again; the original shape is retained.
 
-## `dutchman.plugin.loss/1`
+## `dutchman.plugin.report/2`
 
-The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
-structured projection of the core report under `details`: stage counts, coded losses,
-per-feature mapping results, assembly completeness, and verification.
-See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
-CLI and MCP `dutchman.convert/1` reports are unchanged.
-
-The plugin aborts on host input failures before writing output. Its bounded loss report
-prioritizes dropped and degraded losses and includes an explicit truncation notice and
-`details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+The plugin returns SolidCraft's loss report (`summary`, `items`, and `details`). Version 2
+replaces the earlier `dutchman.plugin.loss/1` details projection with plain-language
+`result`, `shape_check`, `features`, `parts`, `losses`, and `help` fields. Results use the
+desktop app's wording; help offers the Discord invite and Dutchy DM before GitHub.
+See [the plugin report](plugin.md#loss-report) for field shapes and truncation bounds.
+Internal archive paths are omitted from this host-facing report and failure notices.
+CLI and MCP `dutchman.convert/1` schemas are unchanged. The plugin checks its memory and
+time budget before native decoding; a refusal returns an importer error, without output,
+and directs the user to the desktop app download.
 
 `history/body-fallback-imported` is a `Degraded` loss naming the feature in `subject`.
 Its stored result becomes a timeline Import and the feature row has status
@@ -1956,3 +1987,50 @@ The CLI options `--stand-up` and `--no-stand-up` (MCP `stand_up` and
 `no_stand_up`) control the saved design orientation. Reports retain the existing
 schemas and source coordinates; these options add no report fields. See
 [the command reference](command-line.md) for the rotation and default.
+
+Spatial hole arrays with complete parallel, coplanar directed entries can map as one
+source feature with a helper location sketch for SolidCraft 0.44.1 or newer. The helper
+does not increase source feature counts. Unsupported generated edge identities use
+`its generated edge identity has no resolved source geometry, which is not supported yet`
+as the existing history blocker reason. The report schema and field names are unchanged.
+
+The [public fixture score workflow](fixture-score.md) wraps the conversion report
+in the fixture sweep result record (`exit`, `reopen_exit`, `report`, `evaluation`,
+`seconds`). Download skips add `skip_reason`; execution failures add
+`failure_reason`. These records are workflow artifacts, separate from CLI report
+schemas. `run.json` records the build and manifest provenance.
+
+Rebuild failures use existing report fields and schema versions. A failed history feature is
+`blocked`, with its name and refusal in `reason`; `partial` or `flattened` describes the
+retained prefix and final source shape. The final opening check adds `history/rebuild-failed`
+(Degraded) when it replaces a refused feature with the final source shape, or `geometry/import-failed` (Dropped) when the available final source shape also fails and omission is the last
+resort. Its detail says the body geometry is `MISSING` and names the part, feature, and
+refusal; the refused import and its dependent features are left out. Removed feature IDs are
+cleared from `history.features[].output_ids` and use `output_match: "no_output"` when none
+remain. A combined import can omit a whole part; the loss names the import feature and
+SolidCraft's reason. Geometry-only output uses `flattened` with the named omission as its
+reason. No successful verification is claimed for the removed history. A named failure that
+cannot be safely repaired stops conversion before the output is written. An evaluator error or
+nonzero exit without named failed features is unavailable verification: output is still written
+with `verification.status: "unverified"` and the reason. Disabled verification remains
+unverified.
+Linked components the file places but doesn't contain are reported as a Dropped `linked components`
+loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
+not all there, whatever the replay says.
+The final opening check has its own time, at least 15 minutes, not what earlier checks left.
+When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
+SolidCraft didn't finish checking the written design in N min".
+An Info loss `geometry/sheet-edges-split` names a refused STEP import whose edge uses beyond
+the first two receive identical edge records. The repaired blob is rechecked before any
+feature is omitted; source faces, curves, vertices, body names, and placements stay unchanged.
+Only an import that still fails after available repairs may be reported as MISSING.
+
+When no final source shape exists, `history/rebuild-failed` also describes retaining the
+editable prefix alone. Its reason names the failed feature, the omitted dependent features,
+and the rebuild error. The remaining design is checked again before writing.
+
+Variable-radius fillets retain `variable fillets need a proven chain direction: their
+radius stations are not bound to a source start vertex, which is not supported yet` until
+the decoded selection binds their radius positions to an ordered, directed input chain.
+Carrier sample order alone does not supply that binding. The refusal retains the editable
+prefix and original final geometry; no report fields or schemas change.

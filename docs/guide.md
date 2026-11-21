@@ -96,6 +96,10 @@ Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
 Onshape quantities need a dimensioned expression or explicit supported units.
 Malformed or repeated Boolean operands, unresolved latest variable bindings,
 face/cap sketch attachments without a stored complete frame, up-to-next extents without
@@ -209,7 +213,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.18.2–0.44.
+converted history. The supported SolidCraft window is currently 0.40–0.45.
 
 ## Your first conversion
 
@@ -301,6 +305,11 @@ end face survives in the stored model, the area of the region the extrude sweeps
 that face's area (within 1 mm² or 3%, which absorbs arcs measured as fine polygons); a mismatch blocks the extrude, and the history stops
 there. An extrude whose region cannot be checked this way stays kept and is marked
 `profile_unverified` in the JSON report (see [json.md](json.md)).
+
+Face extrusions on imported bases require a matching final source result after the
+input face is proved. An intermediate result, an unavailable check, or a measured
+mismatch keeps the final imported shape and reports
+`a face extrude on an imported base is not supported yet without a matching source result check`.
 
 History checks stay on by default and fit themselves to free memory. If a second build
 will not fit after reading the design, conversion still saves a usable original shape
@@ -570,6 +579,13 @@ without looking for or launching an installed SolidCraft CLI.
 
 ### Convert a whole folder: convert-all
 
+Folder runs in the desktop app and CLI keep paths relative to the input folder:
+`in/ProjectA/part.f3d` becomes `out/ProjectA/part.sc`. Designs with the same name in
+other subfolders stay separate. Linked design companions and desktop reports stay
+beside their design. Repeating a run into an explicit output folder reuses those
+paths and replaces designs unless `--no-clobber` is set; edited linked companions
+are kept and reported as a conflict. Single-file output paths are unchanged.
+
 [Convert a whole folder: convert-all](command-line.md#convert-a-whole-folder-convert-all)
 
 ### Watch a folder
@@ -587,6 +603,12 @@ without looking for or launching an installed SolidCraft CLI.
 ### Feature history and the SolidCraft check
 
 [Feature history and the SolidCraft check](history.md)
+
+Cosmetic thread conflicts name the designation's nominal diameter and pitch alongside the
+secondary numeric values. ISO metric table designations tolerate decimal rounding and
+floating-point unit-conversion noise. UNC/UNF values in millimetres or TPI are checked, but
+separate UNC/UNF cosmetic Thread output is not supported yet by SolidCraft. See
+[cosmetic threads](history.md) for details.
 
 One stored sketch loop does not prove a native profile selection when other solid
 curves remain, including curves needed by a later trimmed cut. Dutchman requires
@@ -618,7 +640,7 @@ feature budget covers region discovery (including `sketch.inspect`), mapping and
 evaluations; late results keep the refusal.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
-explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
 stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
 only that body supplies replay candidates, even when another body has a coincident rim.
 Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
@@ -673,7 +695,6 @@ original unless the full comparison succeeds. This also applies when checking is
 or the original cannot be measured soundly. The original position and shape remain
 visible, and the report explains the unverified check. Other histories keep their
 existing verification behavior.
-
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
@@ -803,8 +824,11 @@ Every successful SolidCraft result also gets an advisory body comparison against
 source's stored geometry, using the same joint setting and assembly pose as the
 conversion. Partial-history outputs skip this comparison because eval
 includes intentionally hidden editable bodies; the normal history verification still
-runs. Where supported, SolidCraft writes private whole-design snapshot pairs for
-flagged comparisons under `diagnose/preview/`. Their PNGs and staged designs carry
+runs. A measured replay difference removes the unconfirmed edited body and uses
+the imported final shape. The report names the failed position, box, volume, or area
+check and its measured difference. Source imports before the unconfirmed edit and
+independent sketches remain available. Where supported, SolidCraft writes private
+whole-design snapshot pairs for flagged comparisons under `diagnose/preview/`. Their PNGs and staged designs carry
 geometry. Review them locally; they are excluded from anonymous tool results.
 
 Memory supervision includes kernel subprocesses on Linux, macOS and Windows; a stopped
@@ -1023,7 +1047,6 @@ can have several ids; dropped or merged rows have none. Inspection returns empty
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](json.md) for the matching values.
 
-
 ## Counts-only anonymous reports
 
 Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
@@ -1059,3 +1082,55 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
+
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+Choose that patch explicitly with `--solidcraft-version 0.44.1`.
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.
+
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.
+
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
+
+The SolidCraft plugin checks estimated memory and time before native decoding. When it
+says the design is too large to open inside SolidCraft, use the
+[Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
+`.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
+"Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
+See [the plugin guide](plugin.md).
+
+The [public fixture score workflow](fixture-score.md) checks public fixture
+history on GitHub runners each week or on demand. It records conversion and
+SolidCraft reopen evidence for the fixture scoreboard.
