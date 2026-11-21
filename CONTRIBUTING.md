@@ -4,6 +4,17 @@ Thank you for helping. Dutchman converts native CAD files into SolidCraft design
 native files is done by [cadmpeg](https://github.com/cadmpeg/cadmpeg). Bug reports, small
 synthetic test files and pull requests are all welcome.
 
+## Where to start
+
+Pick an unchecked item on a master issue, comment that you're on it, and open a pull request.
+[Solid Edge support](https://github.com/dutchman-cad/dutchman/issues/840) is the current one; every
+issue labelled [help wanted](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+or [good first issue](https://github.com/dutchman-cad/dutchman/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+is open to anyone. Each issue states what is known, what is unknown, and how to verify the change
+with public CC0 files and their STEP exports, so you can hand it straight to an AI agent: start it
+with [AGENTS.md](AGENTS.md). Reading a native file belongs in
+[cadmpeg](https://github.com/cadmpeg/cadmpeg); its issues use the same format.
+
 ## Reporting a problem
 
 Start with an anonymous report:
