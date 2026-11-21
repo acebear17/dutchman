@@ -4,7 +4,10 @@
 //! against what the model holds.
 
 use crate::SolidCraftEvaluator;
+
+mod evidence;
 use dutchman_core::time::Instant;
+pub(crate) use evidence::{compare_report, record_unavailable};
 use std::path::{Path, PathBuf};
 #[cfg(not(target_family = "wasm"))]
 use std::process::{Command, Stdio};
@@ -454,6 +457,8 @@ pub enum VersionGate {
     ScopedBodies,
     /// Blends selected by a proven closed circular path.
     ClosedCircleBlend,
+    /// Complete spatial hole entries represented by an editable location sketch.
+    SpatialHoleLocations,
 }
 
 impl VersionGate {
@@ -472,7 +477,7 @@ impl VersionGate {
             Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
             Self::RemoveBody => SolidCraftVersion::V0_40_0,
             Self::ScopedBodies => SolidCraftVersion::V0_44_0,
-            Self::ClosedCircleBlend => SolidCraftVersion::V0_44_1,
+            Self::ClosedCircleBlend | Self::SpatialHoleLocations => SolidCraftVersion::V0_44_1,
         }
     }
 
@@ -494,6 +499,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SplitFaces,
         VersionGate::ScopedBodies,
         VersionGate::ClosedCircleBlend,
+        VersionGate::SpatialHoleLocations,
     ]
     .into_iter()
     .any(|gate| gate.supported(SolidCraftVersion::default()) && !gate.supported(target))
@@ -1088,6 +1094,7 @@ pub(crate) fn compare_with_progress(
         part,
         consequence,
         false,
+        None,
     )
 }
 
@@ -1113,6 +1120,7 @@ pub(crate) fn compare_complete(
         part,
         consequence,
         true,
+        None,
     )
 }
 
@@ -1127,6 +1135,7 @@ fn compare_measurements(
     part: &str,
     consequence: &str,
     complete: bool,
+    evidence: Option<&mut Value>,
 ) -> Outcome {
     let evaluate = |timeout: Duration, name: &str, design: &[u8]| {
         let _checking = progress.map(|p| {
@@ -1143,21 +1152,28 @@ fn compare_measurements(
         });
         evaluate(cli, timeout, name, design)
     };
-    let expected = match evaluate(timeout, "original", original) {
+    // A failed source import must not prevent us from finding failed history features.
+    let expected = evaluate(timeout, "original", original);
+    let replayed = match evaluate(timeout, "history", history) {
+        Ok(Evaluation::Done(eval)) => eval,
+        Ok(Evaluation::Failed(why)) => {
+            return Outcome::Unverified(format!(
+                "SolidCraft could not evaluate the history: {why}"
+            ));
+        }
+        Err(why) => return Outcome::Unverified(why),
+    };
+    if let Some(outcome) = timeline_outcome(&replayed) {
+        return outcome;
+    }
+    let expected = match expected {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) | Err(why) => {
             return Outcome::Unverified(format!("cannot evaluate the original geometry: {why}"))
         }
     };
-    let replayed = match evaluate(timeout, "history", history) {
-        Ok(Evaluation::Done(eval)) => eval,
-        Ok(Evaluation::Failed(why)) => {
-            return Outcome::Differs(format!("SolidCraft cannot replay it: {why}"))
-        }
-        Err(why) => return Outcome::Unverified(why),
-    };
-    if let Some(error) = replayed.errors.first() {
-        return Outcome::Differs(error.clone());
+    if let Some(evidence) = evidence {
+        *evidence = evidence::measurements(&expected, &replayed);
     }
     let unsound = volume_problems(&expected.volumes(), bodies);
     if !unsound.is_empty() {
@@ -1182,8 +1198,8 @@ pub(crate) fn replay(
     design: &[u8],
 ) -> (Outcome, Option<Vec<Placed>>) {
     match evaluate(cli, timeout, "prefix", design) {
-        Ok(Evaluation::Done(eval)) => match eval.errors.first() {
-            Some(why) => (Outcome::Differs(why.clone()), None),
+        Ok(Evaluation::Done(eval)) => match timeline_outcome(&eval) {
+            Some(outcome) => (outcome, None),
             None => {
                 let placed = eval
                     .bodies
@@ -1196,7 +1212,7 @@ pub(crate) fn replay(
                 (Outcome::Matches, Some(placed))
             }
         },
-        Ok(Evaluation::Failed(why)) => (Outcome::Differs(why), None),
+        Ok(Evaluation::Failed(why)) => (Outcome::Unverified(why), None),
         Err(why) => (Outcome::Unverified(why), None),
     }
 }
@@ -1416,10 +1432,13 @@ pub(crate) fn check_import(
     let eval = match evaluate(cli, timeout, "import", design) {
         Ok(Evaluation::Done(eval)) => eval,
         Ok(Evaluation::Failed(why)) => {
-            return Shown::Short(format!("SolidCraft cannot open it: {why}"))
+            return Shown::Unchecked(format!("SolidCraft could not evaluate it: {why}"))
         }
         Err(why) => return Shown::Unchecked(why),
     };
+    if let Some(Outcome::Unverified(why)) = timeline_outcome(&eval) {
+        return Shown::Unchecked(why);
+    }
     shown(&eval, expected)
 }
 
@@ -1549,13 +1568,15 @@ fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
         let allowed = (VOLUME_TOLERANCE * v.abs().max(w.abs())).max(mesh_slack(got, want));
         if !within((v - w).abs(), allowed) {
             return Outcome::Differs(format!(
-                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³"
+                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³ (difference {:.6} mm³)",
+                (v - w).abs()
             ));
         }
         if let (Some(a), Some(b)) = (got.area, want.area) {
             if !within((a - b).abs(), AREA_TOLERANCE * a.abs().max(b.abs())) {
                 return Outcome::Differs(format!(
-                    "a body's area is {a:.6} mm², the original's {b:.6} mm²"
+                    "a body's area is {a:.6} mm², the original's {b:.6} mm² (difference {:.6} mm²)",
+                    (a - b).abs()
                 ));
             }
         }
@@ -1605,6 +1626,7 @@ struct Measured {
 
 /// One design as SolidCraft evaluated it.
 struct Eval {
+    raw: Value,
     bodies: Vec<Measured>,
     errors: Vec<String>,
     /// Warnings on timeline features, such as faces that could not be meshed.
@@ -1617,9 +1639,19 @@ impl Eval {
     }
 }
 
+/// Only a named timeline refusal establishes that a feature failed to rebuild.
+fn timeline_outcome(eval: &Eval) -> Option<Outcome> {
+    if let Some(why) = eval.errors.iter().find(|why| why.starts_with("feature \"")) {
+        return Some(Outcome::Differs(why.clone()));
+    }
+    eval.errors
+        .first()
+        .map(|why| Outcome::Unverified(why.clone()))
+}
+
 enum Evaluation {
     Done(Eval),
-    /// SolidCraft ran and refused the design.
+    /// SolidCraft ran but did not return a usable evaluation.
     Failed(String),
 }
 
@@ -1687,9 +1719,13 @@ pub(crate) fn evaluate_json(
         if let Some(why) = blocked_failure(cli) {
             return Err(why);
         }
-        return Ok(
-            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
-        );
+        // A rebuild refusal may still write a complete result naming failed features.
+        // Preserve that evidence instead of replacing it with an exit status.
+        if !output.is_file() {
+            return Ok(
+                serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+            );
+        }
     }
     use std::io::Read;
     let mut text = String::new();
@@ -1702,8 +1738,31 @@ pub(crate) fn evaluate_json(
         return Err(format!("{CLI_NAME} result exceeds 64 MiB"));
     }
 
-    let value: Value =
-        serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}"))?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) if !status.success() => {
+            return Ok(
+                serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+            );
+        }
+        Err(err) => return Err(format!("{CLI_NAME} result: {err}")),
+    };
+    let timeline_error = value
+        .get("timeline")
+        .and_then(Value::as_array)
+        .is_some_and(|timeline| {
+            timeline.iter().any(|entry| {
+                entry
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|why| !why.is_empty())
+            })
+        });
+    if !status.success() && !timeline_error {
+        return Ok(
+            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+        );
+    }
     Ok(value)
 }
 
@@ -2265,6 +2324,9 @@ fn parse(value: &Value) -> Result<Eval, String> {
         .get("bodies")
         .and_then(Value::as_array)
         .ok_or_else(|| format!("{CLI_NAME} result has no bodies"))?;
+    if bodies.len() > 100_000 {
+        return Err("Verification body count exceeds the supported limit".to_owned());
+    }
     let bodies = bodies
         .iter()
         .map(|body| {
@@ -2316,9 +2378,18 @@ fn parse(value: &Value) -> Result<Eval, String> {
     let errors = timeline
         .iter()
         .filter_map(|entry| {
-            let error = entry.get("error").and_then(Value::as_str)?;
-            let name = entry.get("name").and_then(Value::as_str).unwrap_or("?");
-            Some(format!("feature \"{name}\" failed: {error}"))
+            let error = entry
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|why| !why.trim().is_empty())?;
+            match entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+            {
+                Some(name) => Some(format!("feature \"{name}\" failed: {error}")),
+                None => Some(format!("SolidCraft did not name a failed feature: {error}")),
+            }
         })
         .collect();
     let warnings = timeline
@@ -2327,6 +2398,7 @@ fn parse(value: &Value) -> Result<Eval, String> {
         .map(str::to_owned)
         .collect();
     Ok(Eval {
+        raw: serde_json::json!({"bodies": value.get("bodies")}),
         bodies,
         errors,
         warnings,
@@ -2995,6 +3067,27 @@ mod tests {
     }
 
     #[test]
+    fn unnamed_errors_are_unavailable_but_do_not_hide_named_feature_failures() {
+        let mut value =
+            serde_json::json!({"bodies": [], "timeline": [{"error": "Evaluation stopped"}]});
+        let unnamed = super::parse(&value).unwrap();
+        assert!(
+            matches!(super::timeline_outcome(&unnamed), Some(super::Outcome::Unverified(why)) if why.contains("Evaluation stopped"))
+        );
+        value["timeline"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"name": "Edit", "error": "No face"}));
+        let named = super::parse(&value).unwrap();
+        assert_eq!(
+            super::timeline_outcome(&named),
+            Some(super::Outcome::Differs(
+                "feature \"Edit\" failed: No face".to_owned()
+            ))
+        );
+    }
+
+    #[test]
     fn parses_an_eval_result() {
         let value = serde_json::json!({
             "bodies": [
@@ -3103,6 +3196,7 @@ mod tests {
     #[test]
     fn solids_without_a_volume_or_inside_out_are_reported() {
         let eval = |volumes: &[f64]| Eval {
+            raw: Value::Null,
             bodies: volumes_of(volumes),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -3456,6 +3550,20 @@ mod cli_tests {
     }
 
     #[test]
+    fn a_nonzero_eval_preserves_the_named_timeline_failure() {
+        let _turn = crate::testing::scripts();
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_cli(
+            dir.path(),
+            &format!("{}; exit 1", eval(0.0, "\"Synthetic refusal\"")),
+        );
+        assert_eq!(
+            super::replay(&cli, DEFAULT_TIMEOUT, b"design").0,
+            Outcome::Differs("feature \"Extrude1\" failed: Synthetic refusal".to_owned())
+        );
+    }
+
+    #[test]
     fn a_failing_feature_differs() {
         let script = by_design(&eval(1000.0, "null"), &eval(1000.0, "\"no profile\""));
         assert_eq!(
@@ -3465,9 +3573,12 @@ mod cli_tests {
     }
 
     #[test]
-    fn a_history_solidcraft_refuses_differs() {
+    fn a_history_evaluation_without_named_failures_is_unverified() {
         let script = by_design(&eval(1000.0, "null"), "exit 3");
-        assert!(matches!(run(&script, DEFAULT_TIMEOUT), Outcome::Differs(_)));
+        assert!(matches!(
+            run(&script, DEFAULT_TIMEOUT),
+            Outcome::Unverified(_)
+        ));
     }
 
     #[test]
@@ -3521,7 +3632,7 @@ mod cli_tests {
             import_check(short),
             Shown::Short("3 face(s) could not be meshed".to_owned())
         );
-        assert!(matches!(import_check("exit 3"), Shown::Short(_)));
+        assert!(matches!(import_check("exit 3"), Shown::Unchecked(_)));
         assert!(matches!(import_check("echo nonsense"), Shown::Unchecked(_)));
     }
 
@@ -3649,6 +3760,7 @@ mod cli_tests {
     #[test]
     fn sheets_are_not_reported_as_inside_out_or_open() {
         let eval = |volumes: &[f64], warnings: &[&str]| Eval {
+            raw: Value::Null,
             bodies: super::tests::volumes_of(volumes),
             errors: Vec::new(),
             warnings: warnings.iter().map(|w| (*w).to_owned()).collect(),
@@ -3846,7 +3958,9 @@ mod version_tests {
         assert!(target_loses_history(after));
         assert!(!VersionGate::ThinExtrude.supported(after));
         assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
-        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
+        // The newest target also retains closed-circle blends, added in 0.44.1.
+        assert!(target_loses_history(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_1));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));

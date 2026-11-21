@@ -378,6 +378,15 @@ impl History {
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
                 }
             }
+            // Hole locations reference their sketch inside the points selection.
+            if let Some(sketch) = fields
+                .get_mut("points")
+                .and_then(|points| points.get_mut("sketch"))
+            {
+                if let Some(id) = sketch.as_u64() {
+                    *sketch = Value::from(id.saturating_add(offset));
+                }
+            }
             // A loft names the sketch of each section, and a sweep that of each rail.
             for key in ["sections", "rails"] {
                 let Some(Value::Array(rows)) = fields.get_mut(key) else {
@@ -1442,6 +1451,14 @@ fn map_into(
                 ));
             }
             Ok(Mapped::Feature(mut mapped)) => {
+                if let Some(fields) = mapped.as_object_mut() {
+                    if fields.contains_key(extrude::BASE_FACE_RESULT) {
+                        fields.insert(
+                            extrude::BASE_FACE_RESULT.to_owned(),
+                            Value::Bool(last_builder == Some(position)),
+                        );
+                    }
+                }
                 history.mapped += 1;
                 let mut extras = Vec::new();
                 for mut extra in std::mem::take(&mut ctx.extra) {
@@ -2056,6 +2073,7 @@ pub(crate) fn prove_blends(
             }
             proven => proven,
         };
+        let admitted = proven.is_ok();
         match proven {
             Ok(proven @ (Proven::Bodies { .. } | Proven::Path)) => {
                 let (added, changed) = match proven {
@@ -2138,6 +2156,49 @@ pub(crate) fn prove_blends(
                 }
             }
             Err(reason) => {
+                if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
+                    outcome.status = FeatureStatus::Blocked;
+                    outcome.reason = Some(reason.clone());
+                }
+                first.get_or_insert_with(|| {
+                    (pending.outcome, format!("{}: {reason}", pending.subject))
+                });
+            }
+        }
+        let at = pending.feature.saturating_add(inserted);
+        let result_proof = history
+            .features
+            .get_mut(at)
+            .and_then(Value::as_object_mut)
+            .and_then(|fields| fields.remove(extrude::BASE_FACE_RESULT))
+            .and_then(|value| value.as_bool());
+        if admitted && result_proof.is_some() {
+            // Matching the selected face on the imported base proves its boundary and
+            // outward side, but not that the base and the feature share the source's
+            // result frame. Never guess a translation or choose the opposite end face.
+            let final_state = result_proof == Some(true) && history.stop.is_none();
+            let fit = if final_state {
+                measure(history, infer::MEASURE_BUDGET)
+            } else {
+                infer::Fit::Unknown
+            };
+            let refusal = match fit {
+                infer::Fit::Matches(measure)
+                    if measure.deviation.is_some_and(|deviation| deviation.within()) => None,
+                infer::Fit::Matches(measure) if measure.deviation.is_some() => {
+                    measure.deviation.map(|deviation| format!(
+                        "a face extrude on an imported base is not supported yet without a matching source result check: surfaces differ by {:.6} mm",
+                        deviation.max
+                    ))
+                }
+                infer::Fit::Differs(why) => Some(format!(
+                    "a face extrude on an imported base is not supported yet without a matching source result check: {why}"
+                )),
+                infer::Fit::Unknown | infer::Fit::Matches(_) => Some(
+                    "a face extrude on an imported base is not supported yet without a matching source result check".to_owned()
+                ),
+            };
+            if let Some(reason) = refusal {
                 if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
                     outcome.status = FeatureStatus::Blocked;
                     outcome.reason = Some(reason.clone());
@@ -2858,6 +2919,21 @@ mod tests {
             "Part_rise"
         );
         assert_eq!(history.features[0]["id"], 11);
+    }
+
+    #[test]
+    fn hole_location_sketch_follows_relocated_history() {
+        let mut history = History {
+            features: vec![
+                json!({"id":3,"type":"sketch"}),
+                json!({"id":4,"type":"hole","points":{"sketch":3,"ids":["p1"]}}),
+            ],
+            ..History::default()
+        };
+        history.relocate(10, 2, "Part", &mut Default::default());
+        assert_eq!(history.features[0]["id"], 13);
+        assert_eq!(history.features[1]["points"]["sketch"], 13);
+        assert_eq!(history.features[1]["points"]["ids"], json!(["p1"]));
     }
 
     #[test]

@@ -175,16 +175,29 @@ this from full verified history. The reason says whether retained features repla
 remain unverified. Later sketches with unresolved planes or external geometry are
 reported and left out. A sketch that fails replay is retried without constraints, with
 the loss reported. If there is no body-building prefix, resolved sketches remain hidden
-beside the imported shape for reference. A final shape mismatch preserves the mapped
-timeline for correction when it replays; it does not identify which feature needs
-correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
-final shape.
+beside the imported shape for reference. A measured shape mismatch removes
+unconfirmed body-building features from the written design. The imported final shape remains visible, and the report names
+the failed check and its measured difference. Earlier source imports and independent
+sketches remain available; a successfully replayed body cannot stay merely because
+its features run without errors. SolidCraft's numerical eval includes hidden bodies
+as well as the visible final shape.
+
+Face extrusions on imported bases require a matching final source result after the
+input face is proved. An intermediate result, an unavailable check, or a measured
+mismatch keeps the final imported shape and reports
+`a face extrude on an imported base is not supported yet without a matching source result check`.
 
 Assembly visibility reports count source-hidden placements separately from retained
 editable history. An Info `visibility` note, `N editable-history component placement(s)
 are placed hidden`, counts the latter across repeated and nested placements. Both use
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
+
+One stored sketch loop does not prove a native profile selection when other solid
+curves remain, including curves needed by a later trimmed cut. Dutchman requires
+source-confirmed inference in that case; otherwise it preserves the final shape
+and reference sketches instead of rebuilding extra regions. A later fillet may
+therefore be reported behind the earlier unresolved profile.
 
 A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
@@ -219,6 +232,13 @@ their names only after that check passes; intermediate body centres cannot
 confirm them. An output ID alone is not proof. Without proof, selecting the
 tool stops editable history with "it selects a body that an earlier feature
 has not named". Older targets keep the previous mapping.
+
+The desktop Designs list shows one complete estimate sentence for a file, folder, or selection.
+Folder and selection summaries use the highest per-file memory estimate and sum the displayed
+time estimates; hover over the summary for each file’s sentence. Folder paths wrap and show
+the full path on hover. The path and estimate share one paragraph that wraps as needed,
+keeping the complete sentence visible at every window width. The compact header keeps the
+default window’s controls in view. Estimate values in commands, tools and JSON reports are unchanged.
 
 ## Conversion choices and memory
 
@@ -383,9 +403,18 @@ simplification. Explain that the converted design keeps its original geometry.
 
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
-threads, and entry recesses with drill points block history: explain the reported reason.
+threads, and entry recesses with drill points on older targets block history: explain the reported reason.
 "SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
 ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
+
+Holes ending at a proven earlier planar cap can retain both an entry countersink and
+a drill point. For Fusion Extents To, the cylindrical shoulder reaches the face and
+the tip extends beyond it. An unproven target still blocks body-building history.
+
+Cosmetic thread contradictions name both the designation's nominal size and secondary
+numeric values. Metric labels tolerate decimal rounding and unit-conversion noise.
+Matching UNC/UNF values still report that SolidCraft's separate cosmetic Thread feature
+is not supported yet; tapped-hole support does not imply separate Thread support.
 
 Planar hole-entry faces can have rounded corners or existing circular holes. Their own
 source boundary and SolidCraft replay must prove the face before drilling; placements must
@@ -438,6 +467,12 @@ A bend without its mapped attached plate remains blocked.
 - One file: `convert` with `input` and `output` (ending in `.sc`; legacy `.solidcraft`
   and `.solvecraft` names also work). Default names use `.solidcraft` for targets before
   SolidCraft 0.25.1.
+- Folder outputs keep paths relative to each input folder, so `in/ProjectA/part.f3d`
+  writes `out/ProjectA/part.sc`. Same-named files in other subfolders stay separate;
+  linked design companions and desktop reports stay beside the design. Repeating a run
+  into an explicit output folder reuses the paths and replaces designs unless overwrite
+  is disabled. Identical companions are reused; edited companions cause a conflict and
+  are kept. Single-file output paths are unchanged.
 - Many files or a folder: `convert_all` with `inputs` and `out_dir`. One failure does not stop
   the rest; the call is an error when any file failed, and each file has its own report in
   `results`.
@@ -532,7 +567,8 @@ Never remove or change the quarantine attribute.
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
   the larger box diagonal for the centre distance and each minimum/maximum coordinate;
   area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
-  report states every number the check used; face count and centre of mass are not compared.
+  report states every number the check used; final history checks also compare available
+  kernel counts and centre of mass against the source.
   `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
@@ -541,6 +577,7 @@ Never remove or change the quarantine attribute.
   keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
+
 - Mirrored assembly placements use shared mirrored component geometry, including nested
   reflections. Normal copies keep their original history; mirrored definitions use imported
   geometry only and report history left out. Explain Info `placements` notes as preserved
@@ -567,6 +604,16 @@ Never remove or change the quarantine attribute.
   open shells still matter. Sheets remain exempt from volume and closed-shell checks.
 - If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
   claim the conversion is fine.
+
+When conversion reports `verification_checks`, explain the individual source comparisons:
+volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
+including their quantity kinds.
+A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
+never be called a pass. Face, edge and shell counts are informational: `info` when equal,
+`differs` when unequal. These count differences never reject a history. Omitted or renamed
+parameters are `not_checked`.
+Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
+a rejected final history even when the delivered design retains the original geometry.
 
 ## 5. Explain the loss report
 
@@ -978,7 +1025,10 @@ windows. In narrow windows, **Report a problem…** (or **Report this design…*
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
 Discord comes first; **GitHub issue** is a small backup link. **Anonymous report**
 is under **More**, alongside AI help and diagnosis. **Report this file…** selects the file
-in the same panel. Partial history, geometry-only and degraded results use a warning colour.
+in the same panel.
+Partial history says **Partly converted**; geometry-only or flattened results say
+**Converted, no history**, in amber. Full history keeps **Converted** in green unless
+degraded content needs review.
 Failure narrowing is for failed files.
 
 For report sending, call `report_preview` first and show the user the choices, part
@@ -1193,7 +1243,6 @@ can have several ids; dropped or merged rows have none. Inspection returns empty
 with `not_written`. These fields are additive; schemas and existing fields are unchanged.
 See [the JSON report reference](../../docs/json.md) for the matching values.
 
-
 ## Counts-only anonymous reports
 
 Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
@@ -1226,6 +1275,54 @@ by default; `--no-stand-up` explicitly keeps them. For MCP `convert` and
 `convert_all`, use `stand_up: true` or `no_stand_up: true`; the two options
 cannot be combined. This changes the saved design's orientation, while history
 checks use the source coordinates.
+
+Parallel directed hole placements on one entry plane can supply complete locations
+without a source sketch. For SolidCraft 0.44.1 or newer, Dutchman writes an editable
+location sketch and a multi-point hole. The hole's form and termination must also
+be supported. Each placement still passes the single-hole entry-face checks. Different drilling directions, different entry planes, and
+multiple unsigned axes remain not supported yet; the original geometry is retained.
+Older targets report `multiple spatial hole locations need SolidCraft 0.44 patch 1 or newer`.
+Choose that patch explicitly with `--solidcraft-version 0.44.1`.
+
+Generated blend-edge identities are opaque CADIR references. An identity without
+resolved sketch-entity geometry reports `its generated edge identity has no resolved
+source geometry, which is not supported yet`. A numeric feature-local path alone
+does not prove which rebuilt edge to select. The editable prefix and original final
+geometry are retained; a generated reference with missing or blank fields is still refused.
+
+When no final source shape is available, conversion keeps the editable history before the
+failed feature, leaves out its dependent suffix, and checks the remaining design again.
+The report names the omitted features and the rebuild reason. Conversion stops only if
+no usable history remains or the remaining design cannot be made to open.
+
+When SolidCraft reports a feature that fails to rebuild, conversion removes that feature and
+its dependent body history and keeps the final source shape with the editable prefix before the
+failure. The report names the feature and SolidCraft's reason, even when the source shape could
+not be measured. Before omission, refused STEP imports with excess shared edge uses get identical edge
+copies for uses beyond the first two and are rechecked. Faces, curves, vertices, names, and
+placements are retained; `geometry/sheet-edges-split` records the repair. A final opening
+check also covers geometry-only output, hidden history, and
+assemblies. If SolidCraft also refuses the available final source shape, omission is the last
+resort: `geometry/import-failed` says the body geometry is **MISSING** and names the feature
+and reason. A combined import may leave out the whole part. Review these losses before using
+the result. If a named failure cannot be removed, conversion stops without writing it. An
+evaluator error or nonzero exit without named failed features means verification is
+unavailable: the design is still written, marked unverified, with the reason. Verification
+turned off remains unchecked.
+
+Variable-radius fillets with an unproven chain direction report `variable fillets need
+a proven chain direction: their radius stations are not bound to a source start vertex,
+which is not supported yet`. Mapping a radius law requires
+an ordered, directed input chain with its radius positions bound to that traversal.
+Carrier sample order alone does not supply that binding. The editable prefix and original
+final geometry are retained when the direction is unresolved.
+
+The SolidCraft plugin checks estimated memory and time before native decoding. When it
+says the design is too large to open inside SolidCraft, use the
+[Dutchman desktop app](https://github.com/dutchman-cad/dutchman/releases/latest) to save a
+`.sc` and open that in SolidCraft. Its Import report uses the app's result wording and
+"Is there a problem? Is something missing?" help, with Discord and Dutchy before GitHub.
+See [the plugin guide](../../docs/plugin.md).
 
 For the SolidCraft plugin's separate conditional-options package, `options_for` filters the
 form only; conversion still detects the selected file's format. Use the normal package on

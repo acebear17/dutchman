@@ -75,6 +75,11 @@ crates come from the same git revision; `scripts/use-cadmpeg-main.sh` updates th
 IGES is also refused before opening the input: cadmpeg does not yet sew its faces into
 solids, so Dutchman directs users to SolidCraft's own IGES importer (File > Import).
 
+The pure memory and time cost model lives in `dutchman-core::estimate`. Desktop and CLI
+planners keep their existing archive sizing and choice policy; the SolidCraft plugin
+uses the same coefficients with bounded host reads before native decoding. Its fixed
+budget is declared once in `dutchman-plugin/src/preflight.rs`.
+
 ## The plugin seam
 
 ```rust
@@ -118,6 +123,17 @@ state persists between commands within a call. Labels identify requests for diag
 An unavailable answer is `Err`; a design refusal uses `evaluation_failed` in the eval
 JSON. Measurement parsing, matching, tolerances and fallback policy remain shared in
 `verify.rs`, independent of the transport.
+
+Final history comparison evidence lives in `verify/evidence.rs`. The existing geometry
+comparison supplies paired source and replay measurements; the final check adds actual
+centroids, kernel counts and closure when available. Named replay parameters are queried
+separately and compared with CADIR values, using the existing parameter name mapper.
+The core report carries opaque comparison entries through part merges; shared JSON reporting
+exposes them additively as `verification_checks`. A failed available check rejects the final
+history; kernel face, edge and shell counts remain informational. Omitted or renamed
+parameters are not checked. An unavailable check records a reason and cannot upgrade
+the existing outcome.
+Earlier inference and partial-history geometry policies keep their existing checks.
 
 A plugin host must open a design archive with its STEP blobs, evaluate it with `inspect.measure` plus `document.inspect` (the same combined JSON
 that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
@@ -284,7 +300,9 @@ revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved 
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,
 or the complete shape comparison at the final body-building feature, confirms its replay;
-planning has no callback and keeps the blocker. Every admitted candidate has a named loss. When
+planning has no callback and keeps the blocker. A native pick with one stored loop also requires
+this confirmation when other solid mapped curves remain after sketch demotion; the loop
+table cannot establish how many regions the written sketch contains. Every admitted candidate has a named loss. When
 neither is confirmed, measured inference (`history/infer.rs`) maps every region of the sketch the
 pick can name by explicit loop boundaries (bounded, see fusion.md) and asks the same callback to
 measure each; discovery with only centroid selectors is refused. One 120 s feature deadline covers
@@ -333,14 +351,15 @@ sections, tangent-path extension, and post-sweep simplification are not mapped);
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
 holes drilled at the circle centres, arc centres or points of a sketch (including explicit
-entity selections), or at a directed spatial placement, through all or to a depth, flat or,
-for simple holes, with a drill point; axes placed on proven earlier extrusion caps and holes
-ending at those caps (the cap must match the sole polygonal profile of the last earlier
+entity selections), or at a directed spatial placement, through all or to a depth, flat or
+with a drill point (entry recesses retain the point on targets supporting their tip angle);
+axes placed on proven earlier extrusion caps and holes ending at those caps, including
+pointed holes (the cap must match the sole polygonal profile of the last earlier
 solid feature's one-sided new-body extrusion; a face from final geometry alone is not enough);
 chamfered entries map as countersinks; a tapped hole keeps its resolved bore and an ISO
 metric thread label (`M6x1`, the pitch from the designation, the source, or the coarse
 series), and the thread's hand, class, and length are reported as Degraded, not mapped;
-entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
+exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features or named bodies, linear in one or
 two directions (a symmetric direction, with instances on both sides of the original, becomes a
 centred SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along

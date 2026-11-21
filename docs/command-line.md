@@ -302,7 +302,10 @@ The limit line always ends in a full stop. The name and limit (2 min for SolidCr
 
 FreeCAD's `--freecad-timeout` defaults to 300 s for its headless run. A native document
 conversion stops without writing an output document; a macro-only check keeps the macro
-unverified. Reading one design has a limit of its own: a design that makes no progress for
+unverified. Reading one design has a limit of its own whenever the conversion runs in a
+separate worker process: `convert-all`, `convert` of a folder or `.zip`, `watch`, the web server, the MCP
+server, the desktop and `doctor`. A plain `convert` of one file runs in the `dutchman` process
+itself and has no such limit; stop it with Ctrl+C. In those workers, a design that makes no progress for
 20 minutes (no step finishing, no other design starting, memory not moving), or that runs 60
 minutes in all (in a Fusion archive, counted from when that design starts, so a long read of
 the whole archive before its first design is not cut short), counts as stuck and is stopped. `DUTCHMAN_DESIGN_TIME_LIMIT` sets the 20 in
@@ -383,6 +386,14 @@ convert at once (default: the machine's cores, at most 8). It takes the same opt
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches
 folders at most 32 levels deep.
+
+Folder paths are relative to each input folder: `in/ProjectA/part.f3d` writes
+`out/ProjectA/part.sc`. Linked design companions are written beside that design.
+Same-named files in different subfolders keep their own paths. Output names that
+would collide, including names differing only in case, receive a numeric suffix.
+An explicit output folder is reused on a rerun: designs at the same paths are
+replaced unless `--no-clobber` is set. Identical linked companions are reused;
+edited companions are kept and the conversion reports the conflict.
 
 Large batches:
 

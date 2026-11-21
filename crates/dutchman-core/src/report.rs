@@ -255,12 +255,16 @@ pub struct Report {
     placement_assumptions: Vec<(String, crate::PlacementAssumption)>,
     history_check_skipped: Option<(u64, u64)>,
     verification_tolerances: Option<serde_json::Value>,
+    verification_checks: Vec<serde_json::Value>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
     completeness: Option<Completeness>,
     joints: std::collections::BTreeMap<String, u64>,
     names: std::collections::BTreeSet<String>,
+    /// Linked components the source file places but doesn't contain: how many, and why the
+    /// design can't be verified complete.
+    missing_links: Option<(u64, String)>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -695,8 +699,23 @@ impl Report {
         }
     }
 
+    /// Source comparisons that ran, including explicit reasons for unavailable checks.
+    pub fn verification_checks(&self) -> &[serde_json::Value] {
+        &self.verification_checks
+    }
+
+    /// Records a bounded comparison report for one part.
+    pub fn record_verification_checks(&mut self, checks: serde_json::Value) {
+        if self.verification_checks.len() < MAX_NAMES {
+            self.verification_checks.push(checks);
+        }
+    }
+
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
+        for checks in other.verification_checks {
+            self.record_verification_checks(checks);
+        }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
@@ -713,6 +732,9 @@ impl Report {
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        for checks in other.verification_checks {
+            self.record_verification_checks(checks);
+        }
         self.merge_threads(other.threads);
         if let Some((mode, counts)) = other.part_positions {
             self.record_part_positions(mode, counts);
@@ -747,8 +769,40 @@ impl Report {
     }
 
     /// Records what the writer made of the design.
-    pub fn set_outcome(&mut self, outcome: Outcome) {
+    pub fn set_outcome(&mut self, mut outcome: Outcome) {
+        // A design missing linked components is never verified complete, whatever its replay says.
+        if let (Some((_, why)), Check::Verified) = (&self.missing_links, &outcome.check) {
+            outcome.check = Check::Unverified(why.clone());
+        }
         self.outcome = Some(outcome);
+    }
+
+    /// The source places linked components whose designs aren't in the file. The written
+    /// design leaves them out, says so, and is not marked verified.
+    pub fn record_missing_links(&mut self, names: &[String]) {
+        let count = names.len() as u64;
+        if count == 0 {
+            return;
+        }
+        let named = if names.iter().all(|name| name.is_empty()) {
+            String::new()
+        } else {
+            format!(" ({})", names.join(", "))
+        };
+        let why = format!(
+            "{count} linked component{} {} in this file{named}. In Fusion, export the assembly \
+             as .f3z, or put the linked designs' .f3d files next to it",
+            if count == 1 { "" } else { "s" },
+            if count == 1 { "isn't" } else { "aren't" },
+        );
+        self.push(Severity::Dropped, "linked components", why.clone());
+        self.missing_links = Some((count, why));
+        if let Some(completeness) = self.completeness.take() {
+            self.set_completeness(completeness);
+        }
+        if let Some(outcome) = self.outcome.take() {
+            self.set_outcome(outcome);
+        }
     }
 
     /// What the writer made of the design, when it said.
@@ -772,7 +826,21 @@ impl Report {
     }
 
     /// Records how much of the assembly was placed.
-    pub fn set_completeness(&mut self, completeness: Completeness) {
+    pub fn set_completeness(&mut self, mut completeness: Completeness) {
+        if let Some((count, why)) = &self.missing_links {
+            if !completeness
+                .left_out
+                .iter()
+                .any(|group| &group.reason == why)
+            {
+                completeness.left_out.push(LeftOutGroup {
+                    file: None,
+                    reason: why.clone(),
+                    stage: Stage::Decode,
+                    count: *count,
+                });
+            }
+        }
         self.completeness = Some(completeness);
     }
 
@@ -804,7 +872,57 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn missing_linked_components_are_left_out_and_never_verified() {
+        let mut report = Report::default();
+        report.set_completeness(Completeness {
+            placed: 2,
+            placed_empty: 0,
+            left_out: Vec::new(),
+        });
+        report.record_missing_links(&["Pin".to_owned()]);
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: Vec::new(),
+        });
+        let Some(Check::Unverified(why)) = report.outcome().map(|outcome| &outcome.check) else {
+            panic!("expected unverified");
+        };
+        assert!(
+            why.contains("1 linked component isn't in this file (Pin)"),
+            "{why}"
+        );
+        assert!(why.contains("export the assembly as .f3z"), "{why}");
+        let left_out = &report.completeness().unwrap().left_out;
+        assert_eq!(left_out.len(), 1);
+        assert_eq!(left_out[0].count, 1);
+        // A conversion with no missing links keeps its verified result.
+        let mut clean = Report::default();
+        clean.record_missing_links(&[]);
+        clean.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: Vec::new(),
+        });
+        assert_eq!(
+            clean.outcome().map(|outcome| &outcome.check),
+            Some(&Check::Verified)
+        );
+    }
     use super::*;
+
+    #[test]
+    fn verification_evidence_survives_both_report_merges() {
+        let evidence = serde_json::json!({"part":"Cube", "geometry":{"body_count":{"status":"pass","source":1,"written":1}}});
+        let mut a = Report::default();
+        a.record_verification_checks(evidence.clone());
+        let mut b = Report::default();
+        b.append(a.clone());
+        b.append_prefixed(a, "part");
+        assert_eq!(b.verification_checks(), &[evidence.clone(), evidence]);
+    }
 
     #[test]
     fn cadmpeg_losses_are_staged_by_their_code() {
