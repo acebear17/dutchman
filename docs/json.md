@@ -2018,3 +2018,9 @@ Only an import that still fails after available repairs may be reported as MISSI
 When no final source shape exists, `history/rebuild-failed` also describes retaining the
 editable prefix alone. Its reason names the failed feature, the omitted dependent features,
 and the rebuild error. The remaining design is checked again before writing.
+
+Variable-radius fillets retain `variable fillets need a proven chain direction: their
+radius stations are not bound to a source start vertex, which is not supported yet` until
+the decoded selection binds their radius positions to an ordered, directed input chain.
+Carrier sample order alone does not supply that binding. The refusal retains the editable
+prefix and original final geometry; no report fields or schemas change.
