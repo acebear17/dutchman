@@ -229,10 +229,13 @@ fn converting_the_same_source_twice_keeps_every_name_and_id() {
         for round in 0..2 {
             let output = dir.path().join(format!("round{round}.sc"));
             let result = convert(&input, &output, &["--preset", preset, "--no-link-record"]);
+            // A conversion can write its design and still exit 1 (for example parts that
+            // couldn't be placed); determinism is about the design written, so require that.
             assert!(
-                result.status.success(),
-                "{fixture_name}: {}",
-                String::from_utf8_lossy(&result.stderr)
+                output.exists(),
+                "{fixture_name} ({preset}) wrote no design, exit {:?}: {}",
+                result.status.code(),
+                String::from_utf8_lossy(&result.stdout)
             );
             designs.push(design_without_times(&output));
         }
