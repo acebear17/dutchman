@@ -4703,7 +4703,7 @@ mod tests {
                 "scale": [1.0, 1.0, 1.0],
             }));
         let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ir: crate::test_products::read(&wire),
             ..model
         };
         let mut report = Report::default();
