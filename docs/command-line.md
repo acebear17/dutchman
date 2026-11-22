@@ -463,8 +463,9 @@ designs that changed since they were converted.
 - Converting the same source with the same options again rewrites the same record, apart from
   `converted_at`. Component, body and feature names and ids in the design are the same too.
 - The record holds the source's path. Share a design without its `.link.json` if that path
-  should stay private. Pass `--no-link-record` (MCP: `link_record: false`; desktop app: clear
-  "Remember each design's source file") to write none. The hosted web converter writes none.
+  should stay private. Pass `--no-link-record` (MCP: `link_record: false`) to write none. The
+  desktop app always writes one, since keeping designs up to date relies on it; the hosted web
+  converter writes none.
 
 ## Watch a folder
 

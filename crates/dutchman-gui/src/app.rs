@@ -2852,14 +2852,6 @@ impl App {
                     {
                         self.options.no_clobber = !replace;
                     }
-                    let mut record = !self.options.no_link_record;
-                    if ui
-                        .checkbox(&mut record, "Remember each design's source file")
-                        .on_hover_text("Writes a .link.json file beside each design naming the source file it came from and which of its bytes, so a later run can tell the source changed.")
-                        .changed()
-                    {
-                        self.options.no_link_record = !record;
-                    }
                     if ui.small_button("SolidCraft version…").clicked() {
                         self.solidcraft_open = true;
                     }
