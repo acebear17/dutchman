@@ -637,7 +637,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 21] = [
+const OPTIONS: [&str; 22] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
