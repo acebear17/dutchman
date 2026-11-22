@@ -216,14 +216,18 @@ fn design_without_times(path: &Path) -> Vec<(String, Value)> {
 
 #[test]
 fn converting_the_same_source_twice_keeps_every_name_and_id() {
-    for (fixture_name, preset) in [
-        ("design_copy_paste.f3d", "standard"),
-        ("design_copy_paste.f3d", "full"),
+    // Fixtures that convert to geometry; the FreeCAD product holds several components.
+    #[allow(unused_mut)]
+    let mut cases = vec![
         ("generated_unit_cube.f3d", "standard"),
-        ("design_sketch_constraints.f3d", "standard"),
-    ] {
+        ("generated_unit_cube.f3d", "full"),
+    ];
+    #[cfg(feature = "freecad")]
+    cases.push(("core_design_product.FCStd", "standard"));
+    for (fixture_name, preset) in cases {
         let dir = tempfile::tempdir().unwrap();
-        let input = dir.path().join("design.f3d");
+        let extension = Path::new(fixture_name).extension().unwrap();
+        let input = dir.path().join("design").with_extension(extension);
         std::fs::copy(fixture(fixture_name), &input).unwrap();
         let mut designs = Vec::new();
         for round in 0..2 {
