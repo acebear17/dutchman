@@ -970,6 +970,13 @@ fn local_components_in_document(
         .filter(|(id, _)| posed_ids.contains(**id))
         .map(|(_, located)| located.path.clone())
         .collect();
+    let world_ids = world_posed(&document);
+    let world_posed: BTreeSet<Vec<usize>> = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| world_ids.contains(**id))
+        .map(|(_, located)| located.path.clone())
+        .collect();
     let mut assembly = Assembly {
         own_part,
         parts,
@@ -1054,7 +1061,7 @@ fn local_components_in_document(
     }
     assembly.remember_placements();
     left_out.extend(
-        place_by_joints(&mut assembly, &posed)
+        place_by_joints_with(&mut assembly, &posed, &world_posed)
             .into_iter()
             .map(|text| JointNote { text, family: None }),
     );
@@ -1069,6 +1076,33 @@ fn is_root_component(row: &Value) -> bool {
             .get("id")
             .and_then(Value::as_str)
             .is_some_and(|id| id.contains("occurrence#root-"))
+}
+
+/// The occurrences whose source pose is a world pose of their own: an xref occurrence with a
+/// current pose. cadmpeg writes that pose in the occurrence's `transform` slot (and keeps it in
+/// the xref record) as a position in the document frame, whatever holds the occurrence, so
+/// it does not follow a holder that moves. A joint on it never moves the holders above it.
+fn world_posed(document: &Value) -> BTreeSet<String> {
+    let posed_refs: BTreeSet<&str> = document
+        .pointer("/native/f3d/xref_references")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| row.get("current_pose").is_some_and(|pose| !pose.is_null()))
+        .filter_map(|row| row.get("id")?.as_str())
+        .collect();
+    document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| {
+            row.get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|native| posed_refs.contains(native))
+        })
+        .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
+        .collect()
 }
 
 /// The occurrences placed at a source pose, which a Fusion design
@@ -1222,6 +1256,12 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
     posed
 }
 
+#[cfg(test)]
+/// [`place_by_joints_with`] with no world poses.
+fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
+    place_by_joints_with(assembly, posed, &BTreeSet::new())
+}
+
 /// Place joined parts from stored poses and constraints. Closing joints anchor
 /// their parts in their common component before open joints solve. When a joint
 /// group reaches no anchor, prefer a non-identity stored world pose over an
@@ -1234,7 +1274,29 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
 /// their component so it can still travel. Explicit holder poses stay fixed;
 /// isolated leaf pose markers within a posed component yield to closing groups.
 /// Conflicting joints remain suppressed so the target solver preserves the result.
-fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
+///
+/// `world_posed` are the posed occurrences whose pose is a world
+/// pose (see [`world_posed`]). Such a pose does not follow its holder, so an occurrence a joint
+/// names that holds one is placed where the file puts it: moving it to meet the joint would
+/// carry the posed one away from its pose, or leave it behind.
+fn place_by_joints_with(
+    assembly: &mut Assembly,
+    posed: &BTreeSet<Vec<usize>>,
+    world_posed: &BTreeSet<Vec<usize>>,
+) -> Vec<String> {
+    let mut with_world_pose = posed.clone();
+    for joint in assembly.joints.iter().filter(|joint| !joint.suppressed) {
+        for path in [&joint.a, &joint.b] {
+            if !path.is_empty()
+                && world_posed
+                    .iter()
+                    .any(|inner| inner.len() > path.len() && inner.starts_with(path))
+            {
+                with_world_pose.insert(path.clone());
+            }
+        }
+    }
+    let posed = &with_world_pose;
     let mut joints = assembly.joints.clone();
     // An identity holder may need its placement from joints. A joint crossing its boundary
     // places the holder, not only the exact child named by the connector. Joint islands
@@ -6088,6 +6150,50 @@ mod tests {
                     &at([x, 0.0, 0.0], 0.0)
                 ),
                 "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_joint_on_a_holder_of_a_world_posed_child_does_not_move_it() {
+        // The holder sits at the origin and its child at x = 5 in the document frame, as an xref
+        // occurrence whose current pose is a world pose. A joint from the holder to a block at
+        // x = 100 does not close; the block must come to the holder, which stays where it is.
+        let build = || {
+            let model = nested(
+                false,
+                Some(json!([
+                    placed(0, "frame", root(), 0.0),
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", root(), 100.0),
+                ])),
+            );
+            let mut assembly = local_components(&model).unwrap().unwrap().0;
+            assembly.joints = vec![Joint {
+                a: vec![0],
+                b: vec![1],
+                frame_a: IDENTITY,
+                frame_b: IDENTITY,
+                motion: Motion::Rigid,
+                flip: true,
+                suppressed: false,
+            }];
+            assembly
+        };
+        let child = BTreeSet::from([vec![0, 0]]);
+        let mut moved = build();
+        place_by_joints_with(&mut moved, &child, &BTreeSet::new());
+        assert!(
+            !near(&world_at(&moved, &[0]).unwrap(), &at([0.0, 0.0, 0.0], 0.0)),
+            "the holder moves to the joint when the child's pose follows it"
+        );
+        let mut kept = build();
+        place_by_joints_with(&mut kept, &child, &child);
+        for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![1], 0.0)] {
+            assert!(
+                near(&world_at(&kept, &path).unwrap(), &at([x, 0.0, 0.0], 0.0)),
+                "{path:?} {:?}",
+                world_at(&kept, &path)
             );
         }
     }

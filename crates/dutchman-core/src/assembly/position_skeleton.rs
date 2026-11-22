@@ -6,6 +6,7 @@ use super::*;
 pub(super) struct Skeleton<'a> {
     pub assembly: Assembly,
     pub paths: BTreeMap<&'a str, Located>,
+    world_posed: BTreeSet<Vec<usize>>,
 }
 
 impl<'a> Skeleton<'a> {
@@ -80,7 +81,17 @@ impl<'a> Skeleton<'a> {
             .filter_map(|id| paths.get(id))
             .map(|p| p.path.clone())
             .collect();
-        Ok(Self { assembly, paths })
+        let world_ids = world_posed(document);
+        let world_posed = paths
+            .iter()
+            .filter(|(id, _)| world_ids.contains(**id))
+            .map(|(_, p)| p.path.clone())
+            .collect();
+        Ok(Self {
+            assembly,
+            paths,
+            world_posed,
+        })
     }
     pub fn solve(&mut self, posed: &BTreeSet<String>) {
         let paths = self
@@ -89,7 +100,7 @@ impl<'a> Skeleton<'a> {
             .filter(|(id, _)| posed.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
-        let _ = place_by_joints(&mut self.assembly, &paths);
+        let _ = place_by_joints_with(&mut self.assembly, &paths, &self.world_posed);
     }
     pub fn worlds(&self) -> BTreeMap<String, Placement3x4> {
         self.paths
