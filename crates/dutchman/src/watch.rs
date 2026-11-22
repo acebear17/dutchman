@@ -68,7 +68,8 @@ fn stamp(path: &Path) -> Result<Stamp, String> {
     })
 }
 
-fn hash(path: &Path) -> Result<String, String> {
+/// The SHA-256 of a file, as lowercase hex.
+pub(crate) fn hash(path: &Path) -> Result<String, String> {
     let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut digest = Sha256::new();
     let mut buffer = [0; 64 * 1024];
@@ -101,9 +102,25 @@ fn ignored(path: &Path) -> bool {
 }
 
 fn atomic_json(path: &Path, value: &Value) -> Result<(), String> {
+    atomic_with(path, |file| {
+        serde_json::to_writer(file, value).map_err(|e| e.to_string())
+    })
+}
+
+/// Writes `path` whole or not at all: a temporary file in its folder, synced, then renamed.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    atomic_with(path, |file| {
+        file.write_all(bytes).map_err(|e| e.to_string())
+    })
+}
+
+fn atomic_with(
+    path: &Path,
+    write: impl FnOnce(&mut tempfile::NamedTempFile) -> Result<(), String>,
+) -> Result<(), String> {
     let parent = path.parent().ok_or("destination has no parent folder")?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    serde_json::to_writer(&mut temporary, value).map_err(|e| e.to_string())?;
+    write(&mut temporary)?;
     temporary.flush().map_err(|e| e.to_string())?;
     temporary.as_file().sync_all().map_err(|e| e.to_string())?;
     temporary.persist(path).map_err(|e| e.to_string())?;
@@ -308,6 +325,24 @@ fn run_loop(
                 let staged_report = stage.path().join("report.json");
                 atomic_json(&staged_report, &report)?;
                 publish(&staged_report, &sidecar, state, out, &pending.relative)?;
+                if success && !command.options.no_link_record {
+                    let record = crate::link::record(
+                        &pending.job.input,
+                        output,
+                        &command.options,
+                        &report,
+                        &crate::link::Source::with_digest(
+                            &pending.job.input,
+                            pending.digest.clone(),
+                        ),
+                    )?;
+                    let staged_record = stage.path().join("link.json");
+                    crate::link::write_file(&staged_record, &record)?;
+                    let record_path = crate::link::path_for(output);
+                    if owned_or_absent(state, out, &record_path, &pending.relative) {
+                        publish(&staged_record, &record_path, state, out, &pending.relative)?;
+                    }
+                }
                 // Remove an obsolete sidecar only when its bytes still belong to us.
                 let obsolete = output.with_extension(if success {
                     "failed.json"
@@ -480,7 +515,11 @@ fn run_loop(
             job.output = staged;
             job.replace = false;
             let program = program.clone();
-            let options = command.options.clone();
+            // The record names the published output, so it is written after publishing.
+            let options = ConvertOptions {
+                no_link_record: true,
+                ..command.options.clone()
+            };
             let limits = settings.limits.clone();
             let sender = sender.clone();
             let stop = Arc::clone(&stop);

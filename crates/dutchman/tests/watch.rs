@@ -399,3 +399,29 @@ fn a_later_same_stem_input_cannot_replace_another_inputs_design() {
     assert_eq!(std::fs::read(out.join("cube.sc")).unwrap(), design);
     assert_eq!(std::fs::read(out.join("cube.report.json")).unwrap(), report);
 }
+
+#[test]
+fn a_published_design_gets_a_link_record_naming_its_inbox_file() {
+    let root = tempfile::tempdir().unwrap();
+    let inbox = root.path().join("in");
+    let out = root.path().join("out");
+    std::fs::create_dir_all(inbox.join("nested")).unwrap();
+    cube(&inbox.join("nested/cube.f3d"));
+    let first = watch(&inbox, &out, "0");
+    assert!(first.status.success());
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("nested/cube.link.json")).unwrap()).unwrap();
+    assert_eq!(record["schema"], "dutchman.link/1");
+    assert_eq!(record["source"]["path"], "../../in/nested/cube.f3d");
+    assert_eq!(record["output"]["file"], "cube.sc");
+    let state = std::fs::read_to_string(out.join(".dutchman-watch.json")).unwrap();
+    assert!(state.contains("nested/cube.link.json"), "{state}");
+    // Nothing from the staging folder is left behind.
+    let names: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(names
+        .iter()
+        .all(|name| !name.to_string_lossy().starts_with(".tmp")));
+}

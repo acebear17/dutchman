@@ -99,6 +99,7 @@ CAD extension selects conversion.
 | Option | What it does |
 |---|---|
 | `--preset fast`, `--preset standard`, `--preset full` | What to keep; Standard is the default. See [Choosing what to keep](presets.md). |
+| `--no-link-record` | Do not write the [link record](#link-records) beside the design. |
 | `--no-history`, `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
 | `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
@@ -428,6 +429,42 @@ paths it stores, else anywhere under the project folder, the nearest folder abov
 
 When whatever reads Dutchman's output stops early (`dutchman … | head`), Dutchman ends quietly
 with status 141, as other command-line tools do, instead of printing a panic.
+
+## Link records
+
+Every conversion that writes a design also writes `<output stem>.link.json` beside it
+(`part.sc` gets `part.link.json`). The record says which source file the design came from and
+which bytes of it, so a later run can tell that the source changed, and so SolidCraft can find
+the source again. Later releases read it to re-convert changed sources in place and to list
+designs that changed since they were converted.
+
+```json
+{
+  "schema": "dutchman.link/1",
+  "source": {"path": "../in/part.f3d", "sha256": "...", "size": 41210, "modified": "2026-11-22T09:15:00Z"},
+  "output": {"file": "part.sc", "sha256": "..."},
+  "dutchman": {"version": "0.2.10"},
+  "cadmpeg": {"version": "0.3.1+f1338aa"},
+  "options": {"to": "solidcraft", "preset": "standard", "history": true, "sketches": true,
+              "joints": true, "part_positions": "smart", "stand_up": null,
+              "solidcraft_version": "0.44.1", "part": null},
+  "converted_at": "2026-11-22T09:15:07Z"
+}
+```
+
+- `source.path` is relative to the output's folder (with `/` separators) when the two share
+  a folder above the root, otherwise absolute. `sha256` and `size` describe the source as it was
+  when the conversion began, so a file saved during the conversion shows as changed afterwards.
+- `options` holds what changes the result; folders searched for an assembly's part files are
+  not recorded.
+- The record is written whole or not at all. A failed conversion, a refused overwrite and a
+  conversion that wrote no file leave an existing record as it was. `dutchman watch` writes
+  it with each published design and owns it like the design.
+- Converting the same source with the same options again rewrites the same record, apart from
+  `converted_at`. Component, body and feature names and ids in the design are the same too.
+- The record holds the source's path. Share a design without its `.link.json` if that path
+  should stay private. Pass `--no-link-record` (MCP: `link_record: false`; desktop app: clear
+  "Remember each design's source file") to write none. The hosted web converter writes none.
 
 ## Watch a folder
 

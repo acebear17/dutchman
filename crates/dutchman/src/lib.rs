@@ -24,6 +24,7 @@ pub mod formats;
 pub mod investigate;
 pub mod issue;
 pub mod json;
+pub mod link;
 pub mod mcp;
 pub mod onshape;
 pub mod preflight;
@@ -210,6 +211,10 @@ pub struct ConvertOptions {
     /// rebuilds its history step by step, for `solidcraft-cli run`.
     #[arg(long)]
     pub write_replay: bool,
+    /// Do not write `<design>.link.json` beside the output (the record of which source file, and
+    /// which of its bytes, the output was converted from; `dutchman sync` and SolidCraft read it).
+    #[arg(long)]
+    pub no_link_record: bool,
     /// Check FreeCAD macro output by running FreeCAD headlessly.
     #[arg(long, conflicts_with = "no_verify")]
     pub verify: bool,
@@ -263,6 +268,7 @@ impl Default for ConvertOptions {
             solidcraft_version: None,
             no_verify: false,
             write_replay: false,
+            no_link_record: false,
             verify: false,
             freecad_timeout: 300,
             no_clobber: false,
@@ -649,6 +655,7 @@ fn convert_prepared(
     progress: &dutchman_core::Progress<'_>,
     writer: PreparedWriter,
 ) -> Value {
+    let source = link::snapshot(input, options);
     let converted = match options.part {
         Some(part) => dutchman_core::convert_part_with_progress(
             input, output, &writer, replace, search, part, progress,
@@ -668,6 +675,9 @@ fn convert_prepared(
         fields.insert("solidcraft".to_owned(), solidcraft);
     }
     json::conversion_choices(&mut report, input, options);
+    if !options.no_link_record {
+        link::write_for_report(input, output, options, source.as_ref(), &mut report);
+    }
     report
 }
 
