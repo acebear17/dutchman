@@ -170,12 +170,22 @@ pub fn read() -> State {
     path().map_or_else(State::default, |path| read_from(&path))
 }
 
+/// Held while this process reads, edits and writes the state back, so two of its threads never
+/// lose each other's change.
+static UPDATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Reads the state at `path`, lets `change` edit it, and writes it back.
+pub fn update_at(path: &Path, change: impl FnOnce(&mut State)) -> Result<(), String> {
+    let _guard = UPDATING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = read_from(path);
+    change(&mut state);
+    write_to(path, &state)
+}
+
 /// Reads the shared state file, lets `change` edit it, and writes it back.
 pub fn update(change: impl FnOnce(&mut State)) -> Result<(), String> {
     let path = path().ok_or("cannot find the per-user config folder")?;
-    let mut state = read_from(&path);
-    change(&mut state);
-    write_to(&path, &state)
+    update_at(&path, change)
 }
 
 #[cfg(test)]

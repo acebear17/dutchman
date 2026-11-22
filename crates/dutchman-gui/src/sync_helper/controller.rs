@@ -57,15 +57,11 @@ pub fn run(
             Ok(Msg::Quit) | Err(RecvTimeoutError::Disconnected) => {
                 supervisor.stop_all();
                 // The app's switch shows off, as the user quit Sync.
-                let mut state = sync_state::read_from(state_file);
-                state.disable_all();
-                let _ = sync_state::write_to(state_file, &state);
+                let _ = sync_state::update_at(state_file, State::disable_all);
                 break;
             }
             Ok(Msg::TogglePause) => {
-                let mut current = sync_state::read_from(state_file);
-                current.paused = !current.paused;
-                let _ = sync_state::write_to(state_file, &current);
+                let _ = sync_state::update_at(state_file, |state| state.paused = !state.paused);
             }
             Ok(Msg::ShowWindow) => shell.show_window(),
             Ok(Msg::OpenApp) => shell.open_app(),

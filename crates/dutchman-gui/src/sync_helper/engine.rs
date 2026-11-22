@@ -304,11 +304,11 @@ fn record_checked(
         return;
     }
     *last = Some(Instant::now());
-    let mut state = sync_state::read_from(path);
-    if let Some(folder) = state.folder_mut(output) {
-        folder.last_checked = Some(rfc3339(SystemTime::now()));
-        let _ = sync_state::write_to(path, &state);
-    }
+    let _ = sync_state::update_at(path, |state| {
+        if let Some(folder) = state.folder_mut(output) {
+            folder.last_checked = Some(rfc3339(SystemTime::now()));
+        }
+    });
 }
 
 #[cfg(test)]
