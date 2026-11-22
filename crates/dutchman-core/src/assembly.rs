@@ -986,12 +986,18 @@ fn local_components_in_document(
     held.dedup();
     // Occurrences the file places at the pose it shows them in: their joints are checked
     // where they are, not solved again.
-    let mut posed_ids = source_posed(&document);
+    let (mut posed_ids, contained_ids) = source_poses(&document);
     posed_ids.extend(displayed);
     let posed: BTreeSet<Vec<usize>> = tree
         .paths
         .iter()
         .filter(|(id, _)| posed_ids.contains(**id))
+        .map(|(_, located)| located.path.clone())
+        .collect();
+    let contained: BTreeSet<Vec<usize>> = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| contained_ids.contains(**id))
         .map(|(_, located)| located.path.clone())
         .collect();
     let world_ids = world_posed(&document);
@@ -1085,7 +1091,7 @@ fn local_components_in_document(
     }
     assembly.remember_placements();
     left_out.extend(
-        place_by_joints_with(&mut assembly, &posed, &world_posed)
+        place_by_joints_with(&mut assembly, &posed, &world_posed, &contained)
             .into_iter()
             .map(|text| JointNote { text, family: None }),
     );
@@ -1136,6 +1142,14 @@ fn world_posed(document: &Value) -> BTreeSet<String> {
 /// also protect the child occurrence they name. Read from cadmpeg's Fusion records by the
 /// occurrences' native references.
 fn source_posed(document: &Value) -> BTreeSet<String> {
+    source_poses(document).0
+}
+
+/// [`source_posed`] with a second set: the child occurrences a contained pose of an
+/// inserted design names. Such a child has its own stored pose, so a closing group of
+/// joints never takes it from that pose.
+fn source_poses(document: &Value) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut contained = BTreeSet::new();
     let records = |name: &str| {
         document
             .pointer(&format!("/native/f3d/{name}"))
@@ -1268,16 +1282,17 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
         if matches {
             if let Some(id) = target.get("id").and_then(Value::as_str) {
                 posed.insert(id.to_owned());
+                contained.insert(id.to_owned());
             }
         }
     }
-    posed
+    (posed, contained)
 }
 
 #[cfg(test)]
 /// [`place_by_joints_with`] with no world poses.
 fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
-    place_by_joints_with(assembly, posed, &BTreeSet::new())
+    place_by_joints_with(assembly, posed, &BTreeSet::new(), &BTreeSet::new())
 }
 
 /// Place joined parts from stored poses and constraints. Closing joints anchor
@@ -1297,10 +1312,14 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
 /// pose (see [`world_posed`]). Such a pose does not follow its holder, so an occurrence a joint
 /// names that holds one is placed where the file puts it: moving it to meet the joint would
 /// carry the posed one away from its pose, or leave it behind.
+///
+/// `contained` are the posed occurrences a contained pose names. Each keeps its pose: the
+/// yield of an isolated leaf pose marker to a closing group never applies to one.
 fn place_by_joints_with(
     assembly: &mut Assembly,
     posed: &BTreeSet<Vec<usize>>,
     world_posed: &BTreeSet<Vec<usize>>,
+    contained: &BTreeSet<Vec<usize>>,
 ) -> Vec<String> {
     let mut with_world_pose = posed.clone();
     for joint in assembly.joints.iter().filter(|joint| !joint.suppressed) {
@@ -1512,6 +1531,7 @@ fn place_by_joints_with(
         for (side, partner) in [(&joint.a, &joint.b), (&joint.b, &joint.a)] {
             if partner != &scope
                 && pose_only.contains(side)
+                && !contained.contains(side)
                 && posed
                     .iter()
                     .any(|outer| outer.len() < side.len() && side.starts_with(outer))
@@ -2523,7 +2543,9 @@ fn side_path(
                 .get(named)
                 .ok_or("it joins a component the design does not place")?;
             let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
-            Ok((located.clone(), world(id), world(named)))
+            // The connector's frame is in the deepest occurrence the operand names, not in the
+            // occurrence that holds the path to it.
+            Ok((located.clone(), world(named), world(named)))
         }
         Some("external") => {
             // A component inside a design inserted into this one, whose contents the file
@@ -6270,13 +6292,13 @@ mod tests {
         };
         let child = BTreeSet::from([vec![0, 0]]);
         let mut moved = build();
-        place_by_joints_with(&mut moved, &child, &BTreeSet::new());
+        place_by_joints_with(&mut moved, &child, &BTreeSet::new(), &BTreeSet::new());
         assert!(
             !near(&world_at(&moved, &[0]).unwrap(), &at([0.0, 0.0, 0.0], 0.0)),
             "the holder moves to the joint when the child's pose follows it"
         );
         let mut kept = build();
-        place_by_joints_with(&mut kept, &child, &child);
+        place_by_joints_with(&mut kept, &child, &child, &BTreeSet::new());
         for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![1], 0.0)] {
             assert!(
                 near(&world_at(&kept, &path).unwrap(), &at([x, 0.0, 0.0], 0.0)),
@@ -6325,6 +6347,53 @@ mod tests {
                     "{path:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_child_a_contained_pose_names_keeps_its_pose_against_a_closing_group() {
+        for open_first in [false, true] {
+            let model = nested(
+                false,
+                Some(json!([
+                    placed(0, "frame", root(), 100.0),
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", inside(0), 20.0),
+                    placed(3, "block", inside(0), 30.0),
+                ])),
+            );
+            let mut assembly = local_components(&model).unwrap().unwrap().0;
+            let rigid = |a, b, frame_a| Joint {
+                a,
+                b,
+                frame_a,
+                frame_b: IDENTITY,
+                motion: Motion::Rigid,
+                flip: true,
+                suppressed: false,
+            };
+            let open = rigid(vec![0, 0], vec![0, 1], IDENTITY);
+            let closed = rigid(vec![0, 1], vec![0, 2], at([10.0, 0.0, 0.0], 0.0));
+            assembly.joints = if open_first {
+                vec![open, closed]
+            } else {
+                vec![closed, open]
+            };
+            let posed = BTreeSet::from([vec![0], vec![0, 0]]);
+            let mut plain = assembly.clone();
+            place_by_joints_with(&mut plain, &posed, &BTreeSet::new(), &BTreeSet::new());
+            let leaf = |assembly: &Assembly| world_at(assembly, &[0, 0]).unwrap();
+            assert!(
+                near(&leaf(&plain), &at([120.0, 0.0, 0.0], 0.0)),
+                "without a contained pose the leaf yields to the closing group"
+            );
+            let contained = BTreeSet::from([vec![0, 0]]);
+            place_by_joints_with(&mut assembly, &posed, &BTreeSet::new(), &contained);
+            assert!(
+                near(&leaf(&assembly), &at([105.0, 0.0, 0.0], 0.0)),
+                "{:?}",
+                leaf(&assembly)
+            );
         }
     }
 

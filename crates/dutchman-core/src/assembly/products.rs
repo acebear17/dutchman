@@ -651,7 +651,8 @@ mod tests {
             let (located, outer, selected) =
                 side_path(&operand, &skeleton.paths, &worlds, &BTreeMap::new()).unwrap();
             assert_eq!(located.own, path);
-            assert_eq!(outer[0][3], 10.);
+            // The connector's frame is in the deepest occurrence the operand names.
+            assert_eq!(outer[0][3], x);
             assert_eq!(selected[0][3], x);
         }
     }

@@ -7,6 +7,7 @@ pub(super) struct Skeleton<'a> {
     pub assembly: Assembly,
     pub paths: BTreeMap<&'a str, Located>,
     world_posed: BTreeSet<Vec<usize>>,
+    contained: BTreeSet<Vec<usize>>,
 }
 
 impl<'a> Skeleton<'a> {
@@ -87,10 +88,17 @@ impl<'a> Skeleton<'a> {
             .filter(|(id, _)| world_ids.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
+        let contained_ids = source_poses(document).1;
+        let contained = paths
+            .iter()
+            .filter(|(id, _)| contained_ids.contains(**id))
+            .map(|(_, p)| p.path.clone())
+            .collect();
         Ok(Self {
             assembly,
             paths,
             world_posed,
+            contained,
         })
     }
     pub fn solve(&mut self, posed: &BTreeSet<String>) {
@@ -100,7 +108,7 @@ impl<'a> Skeleton<'a> {
             .filter(|(id, _)| posed.contains(**id))
             .map(|(_, p)| p.path.clone())
             .collect();
-        let _ = place_by_joints_with(&mut self.assembly, &paths, &self.world_posed);
+        let _ = place_by_joints_with(&mut self.assembly, &paths, &self.world_posed, &self.contained);
     }
     pub fn worlds(&self) -> BTreeMap<String, Placement3x4> {
         self.paths
