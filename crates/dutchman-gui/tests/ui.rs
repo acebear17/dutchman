@@ -35,7 +35,7 @@ fn test_app(cc: &eframe::CreationContext<'_>) -> App {
     App::new(cc)
 }
 use eframe::egui::{self, ThemePreference};
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 
 #[cfg(feature = "test-support")]
@@ -491,7 +491,10 @@ fn screenshots() {
     std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let failed_input = designs.join("container_metadata_only.f3d");
     std::fs::copy(fixture("container_metadata_only.f3d"), &failed_input).unwrap();
-    let mut index = format!("# Dutchman desktop UI review\n\nBuilt from Dutchman {}. Usually 1100 × 800 logical pixels; long-loss frames use 520 or 1000 × 900. One PNG per state and theme. Day = light; Night = dark.\n\n", env!("CARGO_PKG_VERSION"));
+    let mut index = format!(
+        "# Dutchman desktop UI review\n\nBuilt from Dutchman {}. Usually 1100 × 800 logical pixels; long-loss frames use 520 or 1000 × 900. One PNG per state and theme. Day = light; Night = dark.\n\n",
+        env!("CARGO_PKG_VERSION")
+    );
     for (theme, name) in [
         (ThemePreference::Light, "light"),
         (ThemePreference::Dark, "dark"),
@@ -824,7 +827,14 @@ fn screenshots() {
         std::fs::remove_file(unfinished).unwrap();
         harness.get_by_label("OUTPUT FOLDER").scroll_to_me();
         harness.run_steps(8);
-        shot(&mut harness, &dir, &mut index, "13-settings", name, "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "13-settings",
+            name,
+            "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.",
+        );
         harness.get_by_label("Formats").click_accesskit();
         harness.run_steps(8);
         harness.get_by_label("Fusion archive (.f3d)");
@@ -4409,7 +4419,8 @@ fn report_flow_case_screenshots() {
     };
     let mut index = String::from("# Report flow, five cases\n\n");
     let mut measurements = format!(
-        "# Report flow measurements\n\nSaved walkthrough reports, rendered at {} × {}; running progress is replayed, not a conversion timing.\n\n| Case | Question top (px) | DM bottom (px) | DM right (px) | Step 1 bottom (px) | More bottom (px) | Footer top (px) |\n|---|---:|---:|---:|---:|---:|---:|\n", size.x, size.y,
+        "# Report flow measurements\n\nSaved walkthrough reports, rendered at {} × {}; running progress is replayed, not a conversion timing.\n\n| Case | Question top (px) | DM bottom (px) | DM right (px) | Step 1 bottom (px) | More bottom (px) | Footer top (px) |\n|---|---:|---:|---:|---:|---:|---:|\n",
+        size.x, size.y,
     );
     let harness = || {
         let mut h = Harness::builder()
@@ -4907,3 +4918,298 @@ fn a_single_result_keeps_reporting_close_below_output() {
 #[cfg(feature = "test-support")]
 #[path = "../../dutchman/tests/support/net.rs"]
 mod test_support;
+
+/// `in/bracket.f3d` and `in/plate.f3d` converted into `out/` from the window, so each design has
+/// a link record, and the window has looked at the folder.
+fn converted_pair() -> (Harness<'static, App>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let inputs = dir.path().join("in");
+    std::fs::create_dir_all(&inputs).unwrap();
+    for name in ["bracket.f3d", "plate.f3d"] {
+        std::fs::copy(fixture("generated_unit_cube.f3d"), inputs.join(name)).unwrap();
+    }
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 900.0))
+        .build_eframe(|cc| test_app(cc));
+    harness
+        .state_mut()
+        .add_inputs([inputs.join("bracket.f3d"), inputs.join("plate.f3d")]);
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+    wait_for_sync_list(&mut harness);
+    (harness, dir)
+}
+
+/// Waits until the window has looked at the output folder, and shows the list's heading.
+fn wait_for_sync_list(harness: &mut Harness<'static, App>) {
+    let started = Instant::now();
+    while harness
+        .query_by_label("CHANGED SINCE LAST CONVERT")
+        .is_none()
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the list did not appear"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run_steps(4);
+}
+
+/// Presses Refresh and waits until the list shows `until`.
+fn refresh_sync_list(harness: &mut Harness<'static, App>, until: &str) {
+    harness.get_by_label("Refresh").click_accesskit();
+    harness.run_steps(2);
+    let started = Instant::now();
+    while harness.query_by_label(until).is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the list never showed {until}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run_steps(4);
+}
+
+/// Saves `from` again as `to`, with one more entry, so it has other bytes and the same design.
+fn resave(from: &Path, to: &Path) {
+    use std::io::Write;
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(from).unwrap()).unwrap();
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(to).unwrap());
+    for index in 0..archive.len() {
+        writer
+            .raw_copy_file(archive.by_index_raw(index).unwrap())
+            .unwrap();
+    }
+    writer
+        .start_file(
+            "zz-saved-again.txt",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    writer.write_all(b"saved again").unwrap();
+    writer.finish().unwrap();
+}
+
+fn save_again(source: &Path) {
+    let saved = source.with_extension("saved");
+    resave(source, &saved);
+    std::fs::rename(&saved, source).unwrap();
+}
+
+#[test]
+fn a_folder_with_nothing_changed_says_so() {
+    let (harness, _dir) = converted_pair();
+    assert!(harness
+        .query_by_label("Every design here matches its source.")
+        .is_some());
+    assert!(harness.query_by_label("Source changed").is_none());
+    assert!(harness
+        .get_by_label("Re-convert changed")
+        .accesskit_node()
+        .is_disabled());
+}
+
+#[test]
+fn the_list_shows_a_changed_source_and_a_missing_one() {
+    let (mut harness, dir) = converted_pair();
+    save_again(&dir.path().join("in/bracket.f3d"));
+    std::fs::remove_file(dir.path().join("in/plate.f3d")).unwrap();
+    // Nothing looks again until asked.
+    harness.run_steps(8);
+    assert!(harness.query_by_label("Source changed").is_none());
+    refresh_sync_list(&mut harness, "Source changed");
+    assert!(harness.query_by_label("Source changed").is_some());
+    assert!(harness.query_by_label("Source missing").is_some());
+    assert!(harness.query_all_by_label("bracket.sc").count() >= 1);
+    assert!(harness.query_all_by_label("plate.sc").count() >= 1);
+    assert!(harness.query_all_by_label("Fusion").count() >= 1);
+    assert!(harness
+        .query_by_label("1 to convert again, 1 to look at.")
+        .is_some());
+    assert!(!harness
+        .get_by_label("Re-convert changed")
+        .accesskit_node()
+        .is_disabled());
+}
+
+#[test]
+fn re_convert_changed_updates_the_design_and_its_card() {
+    let (mut harness, dir) = converted_pair();
+    let source = dir.path().join("in/bracket.f3d");
+    let record = dir.path().join("out/bracket.link.json");
+    let before: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    save_again(&source);
+    std::fs::remove_file(dir.path().join("in/plate.f3d")).unwrap();
+    refresh_sync_list(&mut harness, "Source changed");
+
+    harness.get_by_label("Re-convert changed").click_accesskit();
+    harness.step();
+    wait_for_conversion(&mut harness);
+    wait_for_sync_list(&mut harness);
+
+    // Only the changed design was converted, and it has a card.
+    let rows = harness.state().rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, Status::Converted);
+    assert!(rows[0].input.ends_with("bracket.f3d"));
+    assert!(harness.query_by_label("1 converted, 0 failed").is_some());
+    // Its record now names the new source bytes.
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    assert_ne!(after["source"]["sha256"], before["source"]["sha256"]);
+    // The list looked again by itself: the changed design is gone from it, the missing one stays.
+    let started = Instant::now();
+    while harness.query_by_label("Source changed").is_some() {
+        assert!(started.elapsed() < Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    assert!(harness.query_by_label("Source missing").is_some());
+    assert!(harness
+        .get_by_label("Re-convert changed")
+        .accesskit_node()
+        .is_disabled());
+}
+
+#[test]
+fn a_failed_re_convert_keeps_the_previous_design_and_shows_on_its_card() {
+    let (mut harness, dir) = converted_pair();
+    let source = dir.path().join("in/bracket.f3d");
+    let design = dir.path().join("out/bracket.sc");
+    let record = dir.path().join("out/bracket.link.json");
+    let (design_bytes, record_bytes) = (
+        std::fs::read(&design).unwrap(),
+        std::fs::read(&record).unwrap(),
+    );
+    std::fs::write(&source, b"this is not a Fusion design").unwrap();
+    refresh_sync_list(&mut harness, "Source changed");
+
+    harness.get_by_label("Re-convert changed").click_accesskit();
+    harness.step();
+    wait_for_conversion(&mut harness);
+
+    let rows = harness.state().rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, Status::Failed);
+    assert!(harness.query_by_label("0 converted, 1 failed").is_some());
+    assert_eq!(std::fs::read(&design).unwrap(), design_bytes);
+    assert_eq!(std::fs::read(&record).unwrap(), record_bytes);
+    // Still listed as changed, so it can be tried again.
+    wait_for_sync_list(&mut harness);
+    let started = Instant::now();
+    while harness.query_by_label("Source changed").is_none() {
+        assert!(started.elapsed() < Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+}
+
+#[test]
+fn the_list_looks_again_when_the_output_folder_changes() {
+    let (mut harness, dir) = converted_pair();
+    save_again(&dir.path().join("in/bracket.f3d"));
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    harness.state_mut().set_out_dir(elsewhere);
+    harness.run_steps(20);
+    // No designs there: the list is gone, not stale.
+    assert!(harness
+        .query_by_label("CHANGED SINCE LAST CONVERT")
+        .is_none());
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    wait_for_sync_list(&mut harness);
+    assert!(harness.query_by_label("Source changed").is_some());
+}
+
+#[test]
+fn the_keep_up_to_date_switch_is_hidden_until_the_helper_ships() {
+    let (harness, _dir) = converted_pair();
+    assert!(harness
+        .query_by_label("Keep this folder up to date")
+        .is_none());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn the_keep_up_to_date_switch_writes_the_shared_state_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_file = dir.path().join("config/dutchman/sync-state.json");
+    let inputs = dir.path().join("in");
+    std::fs::create_dir_all(&inputs).unwrap();
+    std::fs::copy(
+        fixture("generated_unit_cube.f3d"),
+        inputs.join("bracket.f3d"),
+    )
+    .unwrap();
+    let out = dir.path().join("out");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 900.0))
+        .build_eframe(|cc| test_app(cc));
+    harness
+        .state_mut()
+        .show_keep_switch_for_test(state_file.clone());
+    harness.state_mut().add_inputs([inputs.join("bracket.f3d")]);
+    harness.state_mut().set_out_dir(out.clone());
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+    wait_for_sync_list(&mut harness);
+    assert!(!state_file.exists());
+
+    harness
+        .get_by_label("Keep this folder up to date")
+        .click_accesskit();
+    harness.run_steps(4);
+    let state = dutchman::sync_state::load(&state_file);
+    assert!(state.enabled(&out));
+    assert!(state.folder(&out).unwrap().auto_update);
+
+    harness
+        .get_by_label("Keep this folder up to date")
+        .click_accesskit();
+    harness.run_steps(4);
+    assert!(!dutchman::sync_state::load(&state_file).enabled(&out));
+}
+
+#[test]
+#[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn sync_list_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (theme, label) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        let (mut harness, work) = converted_pair();
+        harness.ctx.set_theme(theme);
+        save_again(&work.path().join("in/bracket.f3d"));
+        std::fs::remove_file(work.path().join("in/plate.f3d")).unwrap();
+        refresh_sync_list(&mut harness, "Source changed");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "changed-since-last-convert",
+            label,
+            "One design whose source changed and one whose source is missing, with Re-convert changed.",
+        );
+        harness.get_by_label("Re-convert changed").click_accesskit();
+        harness.step();
+        wait_for_conversion(&mut harness);
+        wait_for_sync_list(&mut harness);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "re-converted",
+            label,
+            "After Re-convert changed: the card for the updated design; the missing source stays listed.",
+        );
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}

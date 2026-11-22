@@ -37,6 +37,7 @@ pub mod saved_report;
 pub mod share_links;
 pub mod stop;
 pub mod sync;
+pub mod sync_state;
 pub mod watch;
 pub mod worker;
 

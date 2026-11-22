@@ -21,6 +21,26 @@ use crate::worker::{self, Message, Pick, Run};
 
 pub use dutchman::present::Progress as Status;
 
+/// Whether the "Keep this folder up to date" switch is shown. It records the choice in the state
+/// file Dutchman Sync reads, so it stays hidden until the helper that reads it ships: a switch
+/// that changes nothing you can see would only mislead.
+const KEEP_UP_TO_DATE_SWITCH: bool = false;
+
+/// The "Changed since last convert" list of the output folder.
+#[derive(Default)]
+struct SyncList {
+    /// The folder the list is about.
+    folder: Option<PathBuf>,
+    /// Its designs that have a link record.
+    entries: Vec<dutchman::sync::Entry>,
+    /// A look at the folder is running.
+    checking: bool,
+    /// A look is wanted as soon as nothing else is running.
+    wanted: bool,
+    /// Whether the folder is kept up to date, as the state file says.
+    keep: bool,
+}
+
 /// One file of a run.
 pub struct Row {
     pub input: PathBuf,
@@ -207,6 +227,11 @@ pub struct App {
     fit_frames: Option<u8>,
     /// Whether the main screen's page needed to scroll in the last frame.
     page_scrolls: bool,
+    sync: SyncList,
+    /// Whether the "Keep this folder up to date" switch is shown.
+    keep_switch: bool,
+    /// The state file that switch writes.
+    sync_state_path: Option<PathBuf>,
 }
 
 #[derive(PartialEq)]
@@ -533,7 +558,18 @@ impl App {
                 .is_some_and(|storage| storage.get_string("window").is_none())
                 .then_some(FIT_FRAMES),
             page_scrolls: false,
+            sync: SyncList::default(),
+            keep_switch: KEEP_UP_TO_DATE_SWITCH,
+            sync_state_path: dutchman::sync_state::default_path().ok(),
         }
+    }
+
+    /// Shows the "Keep this folder up to date" switch, writing to `state_file`.
+    #[cfg(feature = "test-support")]
+    pub fn show_keep_switch_for_test(&mut self, state_file: PathBuf) {
+        self.keep_switch = true;
+        self.sync_state_path = Some(state_file);
+        self.sync.folder = None;
     }
 
     /// Replaces the system's file manager, so a test sees what would be shown.
@@ -1722,8 +1758,16 @@ impl App {
                         }
                     }
                 }
+                Message::SyncScanned { folder, entries } => {
+                    self.sync.checking = false;
+                    if self.sync.folder.as_ref() == Some(&folder) {
+                        self.sync.entries = entries;
+                    }
+                }
                 Message::Done => {
                     self.run = None;
+                    // A run writes or replaces link records, so the list is looked at again.
+                    self.sync.wanted = true;
                     self.batch_report_key = None;
                     self.batch_report_finished = self.inputs.iter().any(|path| path.is_dir())
                         && self.rows.iter().any(|row| row.report.is_some());
@@ -1939,6 +1983,7 @@ impl App {
         self.updater.tick(ctx);
         self.report_policy.tick(ctx, self.updater.automatic());
         self.receive(ctx);
+        self.sync_tick(ctx);
         if self.diagnosis.as_mut().is_some_and(|wizard| wizard.ui(ctx)) {
             self.diagnosis = None;
         }
@@ -2096,6 +2141,7 @@ impl App {
                 self.inputs_panel(ui);
                 ui.add_space(theme::SPACE_4);
                 self.output_panel(ui, ctx);
+                self.sync_panel(ui, ctx);
                 if !self.rows.is_empty() {
                     ui.add_space(theme::SPACE_8);
                     self.results(ui, view, false);
@@ -2136,6 +2182,7 @@ impl App {
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
+                    self.sync_panel(ui, ctx);
                 });
             // Use spare room below compact controls, while retaining the pinned
             // boundary when Advanced or a long input list needs its own scroll area.
@@ -2942,6 +2989,211 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Looks at the output folder when it changed or a look was asked for, and nothing else is
+    /// running.
+    fn sync_tick(&mut self, ctx: &egui::Context) {
+        if self.out_dir != self.sync.folder {
+            self.sync.folder.clone_from(&self.out_dir);
+            self.sync.entries.clear();
+            self.sync.wanted = true;
+            self.sync.keep = match (&self.out_dir, &self.sync_state_path) {
+                (Some(dir), Some(path)) => dutchman::sync_state::load(path).enabled(dir),
+                _ => false,
+            };
+        }
+        if !self.sync.wanted || self.running() {
+            return;
+        }
+        self.sync.wanted = false;
+        if let Some(folder) = self.sync.folder.clone() {
+            self.sync.checking = true;
+            worker::scan_sync(folder, self.sender.clone(), ctx.clone());
+        }
+    }
+
+    /// Converts the designs whose source changed again, as a run: a card for each.
+    fn reconvert_changed(&mut self, ctx: &egui::Context) {
+        if self.updater.blocks_conversions() || self.running() {
+            return;
+        }
+        let changed: Vec<_> = self
+            .sync
+            .entries
+            .iter()
+            .filter(|entry| entry.status == dutchman::sync::Status::Changed)
+            .cloned()
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        self.refresh_blocked_checker();
+        self.notice = None;
+        self.diagnostic_path = None;
+        self.diagnostic_stopped = false;
+        self.row_logs.clear();
+        self.ai_prompts.clear();
+        self.report_row = None;
+        self.report_done = None;
+        self.private_send = None;
+        self.consent.card = None;
+        self.rows.clear();
+        self.offset = 0;
+        self.salt = dutchman::anon::Salt::random().ok();
+        self.run = Some(Run::update_changed(
+            changed,
+            &self.options,
+            self.sender.clone(),
+            ctx.clone(),
+        ));
+    }
+
+    /// "Changed since last convert": the designs of the output folder whose source is not what
+    /// it was, looked at only when asked, and "Keep this folder up to date".
+    fn sync_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use dutchman::sync::Status as Standing;
+        if self.sync.entries.is_empty() {
+            return;
+        }
+        let p = *theme::palette(ui);
+        ui.add_space(theme::SPACE_4);
+        section_label(ui, &p, "Changed since last convert");
+        let changed = self
+            .sync
+            .entries
+            .iter()
+            .filter(|entry| entry.status == Standing::Changed)
+            .count();
+        let others = self
+            .sync
+            .entries
+            .iter()
+            .filter(|entry| !matches!(entry.status, Standing::Current | Standing::Changed))
+            .count();
+        let running = self.running();
+        let mut refresh = false;
+        let mut reconvert = false;
+        let mut keep = self.sync.keep;
+        card(ui, &p, |ui| {
+            let summary = match (changed, others) {
+                _ if self.sync.checking => "Checking…".to_owned(),
+                (0, 0) => "Every design here matches its source.".to_owned(),
+                (changed, 0) => format!("{changed} to convert again."),
+                (0, others) => format!("{others} to look at."),
+                (changed, others) => format!("{changed} to convert again, {others} to look at."),
+            };
+            theme::control_row(ui, |ui| {
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| {
+                        ui.add(egui::Label::new(RichText::new(&summary).color(p.ink)).truncate());
+                    },
+                    |ui| {
+                        if ui
+                            .add_enabled(
+                                !running && !self.sync.checking,
+                                egui::Button::new("Refresh"),
+                            )
+                            .on_hover_text("Look at the sources again")
+                            .clicked()
+                        {
+                            refresh = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                !running && !self.sync.checking && changed > 0,
+                                egui::Button::new("Re-convert changed"),
+                            )
+                            .on_hover_text(
+                                "Convert each changed source again. A design that fails keeps \
+                                 its previous file.",
+                            )
+                            .clicked()
+                        {
+                            reconvert = true;
+                        }
+                    },
+                );
+            });
+            let listed: Vec<_> = self
+                .sync
+                .entries
+                .iter()
+                .filter(|entry| entry.status != Standing::Current)
+                .collect();
+            if !listed.is_empty() {
+                ui.add_space(theme::SPACE_2);
+                ScrollArea::vertical()
+                    .id_salt("sync-list")
+                    .max_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for entry in listed {
+                            let (word, colour) = match &entry.status {
+                                Standing::Changed => ("Source changed", p.lantern_text),
+                                Standing::Missing => ("Source missing", p.danger),
+                                _ => ("Cannot check", p.danger),
+                            };
+                            let hover = match &entry.status {
+                                Standing::Unreadable(why) => why.clone(),
+                                _ => display(&entry.source),
+                            };
+                            egui::Sides::new().shrink_left().truncate().show(
+                                ui,
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(file_name(&entry.output))
+                                                .color(p.ink)
+                                                .strong(),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(&hover);
+                                    if !entry.program.is_empty() {
+                                        ui.label(RichText::new(&entry.program).color(p.tide));
+                                    }
+                                },
+                                |ui| {
+                                    ui.label(RichText::new(word).color(colour))
+                                        .on_hover_text(&hover);
+                                },
+                            );
+                        }
+                    });
+            }
+            if self.keep_switch {
+                ui.add_space(theme::SPACE_2);
+                ui.separator();
+                ui.checkbox(&mut keep, "Keep this folder up to date")
+                    .on_hover_text(
+                        "Dutchman Sync converts a design again when its source is saved.",
+                    );
+            }
+        });
+        if refresh {
+            self.sync.wanted = true;
+        }
+        if reconvert {
+            self.reconvert_changed(ctx);
+        }
+        if keep != self.sync.keep {
+            self.sync.keep = keep;
+            self.remember_keep(keep);
+        }
+    }
+
+    /// Writes the switch to the state file the helper reads.
+    fn remember_keep(&mut self, keep: bool) {
+        let (Some(dir), Some(path)) = (self.out_dir.clone(), self.sync_state_path.clone()) else {
+            return;
+        };
+        if let Err(message) = dutchman::sync_state::update(&path, |state| {
+            state.set_enabled(&dir, keep);
+        }) {
+            self.notice = Some(message);
+        }
     }
 
     fn actions_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, summary: Option<&str>) {
@@ -5130,10 +5382,18 @@ mod tests {
     #[test]
     fn designs_header_keeps_the_full_estimate_and_path() {
         use egui_kittest::kittest::Queryable;
-        let folder = PathBuf::from("/synthetic/designs/a-long-folder-for-mechanical-projects/another-long-folder-for-working-copies/current-designs");
+        let folder = PathBuf::from(
+            "/synthetic/designs/a-long-folder-for-mechanical-projects/another-long-folder-for-working-copies/current-designs",
+        );
         for (count, sentence) in [
-            (1, "1 design needs under 0.1 GB of memory at peak and under a minute in total to convert."),
-            (3, "3 designs need under 0.1 GB of memory at peak and under 3 min in total to convert."),
+            (
+                1,
+                "1 design needs under 0.1 GB of memory at peak and under a minute in total to convert.",
+            ),
+            (
+                3,
+                "3 designs need under 0.1 GB of memory at peak and under 3 min in total to convert.",
+            ),
         ] {
             for size in [crate::FIT_SIZE, [900.0, 800.0]] {
                 let mut h = egui_kittest::Harness::builder()
@@ -5143,17 +5403,21 @@ mod tests {
                         app.inputs = vec![folder.clone()];
                         app.size_inputs = Some(app.inputs.clone());
                         app.estimate_key = Some(app.current_estimate_key());
-                        app.estimates = (0..count).map(|index| (
-                            folder.join(format!("synthetic-{index}.f3d")),
-                            Some(Estimate {
-                                peak_bytes: 1,
-                                seconds: 1,
-                                seconds_exact: 1.0,
-                                band: 0.3,
-                                memory_band: 0.3,
-                                time_band: None,
-                            }),
-                        )).collect();
+                        app.estimates = (0..count)
+                            .map(|index| {
+                                (
+                                    folder.join(format!("synthetic-{index}.f3d")),
+                                    Some(Estimate {
+                                        peak_bytes: 1,
+                                        seconds: 1,
+                                        seconds_exact: 1.0,
+                                        band: 0.3,
+                                        memory_band: 0.3,
+                                        time_band: None,
+                                    }),
+                                )
+                            })
+                            .collect();
                         app
                     });
                 h.run_steps(8);
@@ -5170,17 +5434,26 @@ mod tests {
                             assert!(!text.galley.elided);
                             assert!(!text.galley.text().ends_with('…'));
                             assert_eq!(text.galley.job.sections.len(), 2);
-                            for (section, style) in text.galley.job.sections.iter().zip([TextStyle::Body, TextStyle::Small]) {
+                            for (section, style) in text
+                                .galley
+                                .job
+                                .sections
+                                .iter()
+                                .zip([TextStyle::Body, TextStyle::Small])
+                            {
                                 assert_eq!(section.format.font_id, style.resolve(&h.ctx.style()));
                             }
                             found += 1;
                             let last_row = text.galley.rows.last().unwrap();
-                            hover = Some(text.pos + last_row.rect_without_leading_space().center().to_vec2());
+                            hover = Some(
+                                text.pos + last_row.rect_without_leading_space().center().to_vec2(),
+                            );
                         }
                     }
                 }
                 assert_eq!(found, 1);
-                h.ctx.style_mut(|style| style.interaction.tooltip_delay = 0.0);
+                h.ctx
+                    .style_mut(|style| style.interaction.tooltip_delay = 0.0);
                 // Hover painted text; a wrapped paragraph's center may be blank.
                 h.hover_at(hover.unwrap());
                 h.run_steps(8);
