@@ -996,7 +996,10 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
             .unwrap(),
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("2 converted, 1 failed\n"), "{stdout}");
+    assert!(
+        without_notes_hint(&stdout).ends_with("2 converted, 1 failed\n"),
+        "{stdout}"
+    );
     let text = dutchman(&[
         "convert-all",
         "--quiet",
@@ -1007,7 +1010,8 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(
-        stdout.ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
+        without_notes_hint(&stdout)
+            .ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
         "{stdout}"
     );
 }
@@ -2764,6 +2768,15 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
 }
 
 /// Conversion lines without the target line and optional installed-version notice.
+/// The report with its closing "notes are summarised ... --verbose" line removed.
+fn without_notes_hint(stdout: &str) -> String {
+    stdout
+        .lines()
+        .filter(|line| !(line.starts_with("(notes are summarised in plain words")))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
 fn without_target_line(stdout: &str) -> Vec<&str> {
     let (target, rest): (Vec<&str>, Vec<&str>) = stdout
         .lines()
