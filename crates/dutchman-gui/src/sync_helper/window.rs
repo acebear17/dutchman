@@ -109,8 +109,9 @@ impl eframe::App for Window {
                 ui.add_space(theme::SPACE_2);
             }
             ui.horizontal(|ui| {
-                let start = ui.add(egui::Button::new("Start").fill(ui.visuals().selection.bg_fill));
-                if start.clicked() {
+                let start_button =
+                    ui.add(egui::Button::new("Start").fill(ui.visuals().selection.bg_fill));
+                if start_button.clicked() {
                     match check(&self.source, &self.output)
                         .and_then(|(source, output)| start(&self.state_file, source, output))
                     {
