@@ -5334,9 +5334,28 @@ fn report_buttons_screenshots() {
         (ThemePreference::Light, "day"),
         (ThemePreference::Dark, "night"),
     ] {
-        let work = tempfile::tempdir().unwrap();
-        let mut harness = finished_cloud_app(work.path());
+        // Neutral absolute paths: the app shows paths as they are, so none of the machine's.
+        let docs = PathBuf::from("/Users/demo/Documents");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1100.0, 1500.0))
+            .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.46.2"));
+        harness.state_mut().set_out_dir(docs.join("Converted"));
+        harness
+            .state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: docs.join("Bracket.f3d"),
+                output: Some(docs.join("Converted").join("Bracket.sc")),
+                status: Status::Converted,
+                progress: None,
+                report: Some(serde_json::json!({"ok": true,
+                    "input": {"path": docs.join("Bracket.f3d"), "format": "fusion_archive"}})),
+                job: None,
+                size: Some(100),
+            });
+        harness.run_steps(8);
         harness.run_steps(8);
         harness.get_by_label(CLOUD).scroll_to_me();
         harness.run_steps(8);
@@ -5353,6 +5372,11 @@ fn report_buttons_screenshots() {
             .with_size(egui::vec2(1100.0, 1500.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.46.2"));
+        harness
+            .state_mut()
+            .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
         harness
             .state_mut()
             .preview_running_for_test(dutchman_gui::app::Row {
