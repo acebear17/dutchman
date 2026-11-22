@@ -342,9 +342,10 @@ feature finds it; any other such sketch is kept for reference after the timeline
 
 ## Sketches on construction planes
 
-A Fusion sketch starts at the model origin projected onto its plane. A sketch on a construction
-plane offset from an origin plane is written with that origin, not with the plane's own anchor
-point, so a cut sketched on it removes material where Fusion does.
+A Fusion sketch starts at the model origin projected onto its plane. When the decoder gives a
+sketch on a construction plane that plane's own anchor point as its origin, it is written at the
+projected origin instead, so a cut sketched on it removes material where Fusion does. A sketch moved
+in Fusion keeps its own origin.
 
 ## Trimmed and unresolved profile regions
 

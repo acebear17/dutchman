@@ -109,6 +109,7 @@ pub(crate) fn map(
         .find(|row| row.get("id").and_then(Value::as_str) == Some(sketch_id))
         .ok_or("the sketch it binds is missing")?;
     let (plane, frame) = plane(sketch)?;
+    let (plane, frame) = at_projected_origin(plane, frame, ctx);
     let entities: Vec<&Value> = ctx
         .arena("sketch_entities")
         .iter()
@@ -547,20 +548,6 @@ fn plane(sketch: &Value) -> Result<(Value, Frame), String> {
     let origin = v3(frame.get("origin")).ok_or("its plane has no origin")?;
     let normal = unit(v3(frame.get("normal")).ok_or("its plane has no normal")?)
         .ok_or("its plane's normal is zero")?;
-    // A Fusion sketch's coordinates start at the model origin projected onto its plane. The
-    // frame of a sketch on a construction plane can carry the plane's own anchor point instead
-    // (a plane offset from an origin plane whose anchor lies far along the plane), which moves
-    // every profile by the anchor's in-plane part, so a cut through it misses its body.
-    let origin = if sketch
-        .get("id")
-        .and_then(Value::as_str)
-        .is_some_and(|id| id.starts_with("f3d:"))
-    {
-        let height = dot(origin, normal);
-        [normal[0] * height, normal[1] * height, normal[2] * height]
-    } else {
-        origin
-    };
     let x = unit(v3(frame.get("u_axis")).ok_or("its plane has no u axis")?)
         .ok_or("its plane's u axis is zero")?;
     if dot(x, normal).abs() > PARALLEL.sqrt() {
@@ -593,6 +580,50 @@ fn plane(sketch: &Value) -> Result<(Value, Frame), String> {
             y,
         },
     ))
+}
+
+/// A Fusion sketch's coordinates start at the model origin projected onto its plane. The frame
+/// of a sketch on a construction plane can carry the plane's own anchor point instead (a plane
+/// offset from an origin plane whose anchor lies far along it), which moves every profile by the
+/// anchor's in-plane part, so a cut through it misses its body. A frame that is exactly an
+/// earlier datum plane's own anchor is put back at the projected origin; a moved sketch, whose
+/// origin is its own, never matches one.
+fn at_projected_origin(plane: Value, frame: Frame, ctx: &Context) -> (Value, Frame) {
+    let height = dot(frame.origin, frame.normal);
+    let projected = [
+        frame.normal[0] * height,
+        frame.normal[1] * height,
+        frame.normal[2] * height,
+    ];
+    let anchored = frame
+        .origin
+        .iter()
+        .zip(projected)
+        .any(|(origin, projected)| (origin - projected).abs() > COINCIDENT)
+        && ctx.planes.values().any(|datum| {
+            dot(datum.normal, frame.normal).abs() > 1.0 - PARALLEL
+                && datum
+                    .origin
+                    .iter()
+                    .zip(frame.origin)
+                    .all(|(a, b)| (a - b).abs() <= COINCIDENT)
+        });
+    if !anchored {
+        return (plane, frame);
+    }
+    let named = plane.get("type").and_then(Value::as_str) == Some("origin");
+    let plane = if named {
+        plane
+    } else {
+        json!({"type": "custom", "plane": {"origin": projected, "x_dir": frame.x, "y_dir": frame.y}})
+    };
+    (
+        plane,
+        Frame {
+            origin: projected,
+            ..frame
+        },
+    )
 }
 
 /// What a source sketch entity became.
