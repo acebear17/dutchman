@@ -237,6 +237,8 @@ and unresolved extents or face geometry remain reported losses. When the source 
 resolve whether the thread is modeled, the annotation is kept with a Degraded note; helical
 geometry is not reconstructed. Cosmetic annotations do not change the body's geometry.
 
+Fusion may store a cosmetic thread's face at the thread class's diameter (Ø9.85 for an M10 thread) while the sketch that made the cylinder keeps the nominal size (Ø10). A SolidCraft cosmetic thread cannot make that change, so such a thread is reported as not rebuilt and the stored shape is kept; the sketch and extrude keep their history. Only a face within 3 % of the nominal radius, along the axis of a sketch circle of the nominal size, counts.
+
 Modeled threads retain their original helical geometry and stop the editable history.
 The Degraded loss `history/modeled-thread-retained` keeps the source designation when
 available and names the missing construction data. SolidCraft 0.45 can cut a modeled
@@ -531,12 +533,13 @@ is still converted.
 
 ## Partial history
 
-Show **Editable history (partial)** in the browser to keep editing its body, and hide the imported final shape while you work on it.
+Show **Editable history (partial)** in the browser, unsuppress its features in the timeline to keep editing its body, and suppress or hide the imported final shape while you work on it. Until you do, the hidden copy builds no body, so an export or a measure of the design holds each part once.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
-original final shape remains visible as an Import after the kept history. Show the
-hidden component to continue editing it. The report names the blocker and counts
+original final shape remains visible as an Import after the kept history. The hidden
+copy's body-building features are suppressed, so it adds no second body to an export;
+unsuppress them to continue editing it. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are

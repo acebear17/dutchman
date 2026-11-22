@@ -131,6 +131,35 @@ pub(crate) enum Growth {
     Builds,
 }
 
+/// Suppresses every feature of `features` that builds or changes a body, leaving sketches,
+/// datums and the like live. The features still rebuild when the user unsuppresses them;
+/// until then a hidden editable-history copy produces no body of its own, so an export or
+/// a measure of the design sees each part once, as the visible original.
+pub(crate) fn suppress_bodies(features: &mut [Value]) {
+    for feature in features {
+        let kind = feature.get("type").and_then(Value::as_str).unwrap_or("");
+        let leaves_bodies = kind.starts_with("datum")
+            || matches!(
+                kind,
+                "sketch"
+                    | "spatial_sketch"
+                    | "tree_node"
+                    | "reference_image"
+                    | "cosmetic_thread"
+                    | "plane"
+                    | "axis"
+                    | "point"
+            )
+            || kind.ends_with("_plane")
+            || kind.ends_with("_axis");
+        if !leaves_bodies {
+            if let Some(fields) = feature.as_object_mut() {
+                fields.insert("suppressed".to_owned(), Value::Bool(true));
+            }
+        }
+    }
+}
+
 /// What `feature` can do to the extent of the bodies before it.
 fn growth_of(feature: &Value) -> Growth {
     if feature.get("suppressed").and_then(Value::as_bool) == Some(true)
@@ -912,6 +941,24 @@ impl<'a> Context<'a> {
         }
         let name = self.params.get(row.get("id").and_then(Value::as_str)?)?;
         Some(if value(row)? < 0.0 {
+            format!("abs({name})")
+        } else {
+            name.clone()
+        })
+    }
+
+    /// The SolidCraft name of the parameter the source feature names under the
+    /// `source_properties` key `key`, when that parameter holds `magnitude` (mm or radians)
+    /// as its own value. The name is inside `abs()` when the source signs it.
+    fn bound_parameter(&self, feature: &Value, key: &str, magnitude: f64) -> Option<String> {
+        let id = feature.pointer("/source_properties")?.get(key)?.as_str()?;
+        let row = self.row("parameters", id)?;
+        let value = row.pointer("/value/value")?.as_f64()?;
+        if (value.abs() - magnitude).abs() > 1e-6 * magnitude.max(1.0) {
+            return None;
+        }
+        let name = self.params.get(id)?;
+        Some(if value < 0.0 {
             format!("abs({name})")
         } else {
             name.clone()
@@ -2511,7 +2558,10 @@ fn map_feature(
                 Some("thread" | "detailed_thread")
             ) =>
         {
-            Err("threads whose construction is unresolved are not supported yet".to_owned())
+            // The decoder found the thread but admitted none of its record layouts, so the
+            // design carries no designation, nominal size, pitch, faces or modeled flag:
+            // nothing says whether it is a cosmetic annotation or a modeled groove.
+            Err("threads whose construction is unresolved are not supported yet: the source's thread record was not decoded, so its designation, size, faces and whether it is cosmetic or modeled are unknown".to_owned())
         }
         Some("cosmetic_thread") => thread::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("pattern")

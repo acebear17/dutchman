@@ -509,7 +509,7 @@ stops at the call limit, the Results card is titled Stopped (not Failed), says h
 calls were made and about how many more are needed, and offers only Continue fetching; the
 footer reads "0 converted, 1 stopped". Continue fetching asks the same way with that number
 (or says it may use up to 2,000 more calls when it is unknown) and carries on over the
-cached replies (which cost nothing). `--json`
+cached replies (which cost nothing). While it fetches, the Results card counts the calls sent and, once the root Part Studio's feature list is read, the estimated total: one per body-detail state, configuration, variables, sketches, the STEP export (request, one poll, download) and, for a workspace, the final microversion check. Slow export polls and retries can take it past the estimate. `--json`
 returns the same `dutchman.onshape-fetch/1` report as MCP.
 
 Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,
