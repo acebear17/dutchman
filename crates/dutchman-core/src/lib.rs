@@ -28,9 +28,9 @@ mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
+mod source_errors;
 #[cfg(test)]
 mod test_products;
-mod source_errors;
 pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
