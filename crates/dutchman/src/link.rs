@@ -37,7 +37,11 @@ pub struct Source {
 impl Source {
     /// Reads `path`. What cannot be read (or is not one file) is left out of the record.
     pub fn read(path: &Path) -> Self {
-        Self::with_digest(path, watch::hash(path).ok())
+        // A file over the input limit is refused by the conversion; hashing it first would only
+        // make a refusal wait on reading gigabytes.
+        let hashable = std::fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.len() <= dutchman_core::MAX_INPUT_BYTES);
+        Self::with_digest(path, hashable.then(|| watch::hash(path).ok()).flatten())
     }
 
     /// `path` with a digest already taken of its bytes.
@@ -388,6 +392,19 @@ pub(crate) fn rfc3339(time: SystemTime) -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn a_file_over_the_input_limit_is_not_hashed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("huge.step");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(dutchman_core::MAX_INPUT_BYTES + 1)
+            .unwrap();
+        let source = Source::read(&path);
+        assert_eq!(source.sha256, None);
+        assert_eq!(source.size, Some(dutchman_core::MAX_INPUT_BYTES + 1));
+    }
 
     #[test]
     fn timestamps_are_rfc_3339_utc() {
