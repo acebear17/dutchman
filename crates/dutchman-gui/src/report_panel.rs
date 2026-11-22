@@ -35,6 +35,10 @@ pub const DM_DONE: &str = "Copied. Paste it into the DM and say what's wrong.";
 pub const GITHUB_OPENED: &str = "The GitHub form opened in your browser. Never attach the design.";
 /// The folded section with the anonymous summary, the AI prompt and Diagnose.
 pub const MORE: &str = "More";
+/// The secondary button beside the GitHub link: review, then upload to the cloud inbox.
+pub const CLOUD_REPORT_BUTTON: &str = "Review and send report";
+/// Why the cloud button is disabled while the file is still converting.
+pub const CLOUD_REPORT_WAIT: &str = "Available when this file finishes";
 /// Shown once a claim code is copied for updates on a sent report.
 pub const UPDATES_COPIED: &str = "A claim code is copied. Join our Discord server (step 1) if you \
      haven't, then paste the code on its own in Dutchy's DM to get updates on this report.";

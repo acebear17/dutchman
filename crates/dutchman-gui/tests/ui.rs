@@ -265,7 +265,7 @@ fn a_file_that_cannot_convert_says_why() {
     harness.get_by_label(dutchman_gui::report_panel::QUESTION);
     harness.get_by_label("Copy and open DM");
     harness
-        .query_all_by_label("GitHub issue")
+        .query_all_by_label("File a GitHub issue")
         .next()
         .unwrap()
         .click_accesskit();
@@ -314,6 +314,8 @@ fn failed_card(name: &str, bytes: usize, width: f32) -> (Harness<'static, App>, 
 }
 
 /// Opens the report panel's folded "More": the anonymous review, the AI prompt and Diagnose.
+const CLOUD: &str = dutchman_gui::report_panel::CLOUD_REPORT_BUTTON;
+
 fn open_more(harness: &mut Harness<'static, App>) {
     harness
         .get_by_label(dutchman_gui::report_panel::MORE)
@@ -1710,11 +1712,7 @@ mod consent_e2e {
         if capture_walkthrough {
             walkthrough(&mut harness, "01-failed-card");
         }
-        harness
-            .query_all_by_label("Anonymous report")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        harness.get_by_label(CLOUD).click_accesskit();
         harness.run_steps(8);
         harness
             .get_by_label("Send the whole file privately")
@@ -1728,11 +1726,7 @@ mod consent_e2e {
         if capture_walkthrough {
             walkthrough(&mut harness, "02-private-send-card");
         }
-        harness
-            .query_all_by_label("Anonymous report")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        harness.get_by_label(CLOUD).click_accesskit();
         harness.run_steps(8);
         assert!(harness.query_by_label("Send a problem report").is_some());
         assert!(harness.query_by_label(SENT).is_none());
@@ -1836,11 +1830,7 @@ mod consent_e2e {
             });
         harness.run_steps(8);
         open_more(&mut harness);
-        harness
-            .query_all_by_label("Anonymous report")
-            .next()
-            .unwrap()
-            .click_accesskit();
+        harness.get_by_label(CLOUD).click_accesskit();
         harness.run_steps(8);
         harness
             .get_by_label("Anonymous summary only")
@@ -1950,7 +1940,10 @@ mod consent_e2e {
             assert!(harness
                 .query_by_label("Send the whole file privately")
                 .is_some());
-            assert!(harness.query_all_by_label("GitHub issue").next().is_some());
+            assert!(harness
+                .query_all_by_label("File a GitHub issue")
+                .next()
+                .is_some());
         }
         snapshot(&mut harness, &format!("consent-{status}-after"));
         stub.thread.join().unwrap();
@@ -1964,7 +1957,7 @@ mod consent_e2e {
 
     fn walkthrough_extras(harness: &mut Harness<'static, App>, report: &Value) {
         harness
-            .query_all_by_label("GitHub issue")
+            .query_all_by_label("File a GitHub issue")
             .next()
             .unwrap()
             .click_accesskit();
@@ -2212,11 +2205,7 @@ fn run_log_buttons_share_the_batch_log_and_review_names_it() {
     );
     assert!(log.is_file()); // Explicit paths remain exactly as supplied, even result-like names.
     open_more(&mut harness);
-    harness
-        .query_all_by_label("Anonymous report")
-        .next()
-        .unwrap()
-        .click_accesskit();
+    harness.get_by_label(CLOUD).click_accesskit();
     harness.run_steps(8);
     // The review, in the panel, names the same log as the two cards.
     harness.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
@@ -2497,7 +2486,7 @@ fn every_result_has_the_report_panel_and_a_button_for_it() {
         assert!(ask.left() >= 0.0 && ask.right() <= width, "{ask:?}");
         harness.get_by_label(REPORT_THIS_FILE).click_accesskit();
         harness.run_steps(8);
-        for label in ["Copy and open DM", "Anonymous report"] {
+        for label in ["Copy and open DM", CLOUD] {
             let rect = harness.query_all_by_label(label).next().unwrap().rect();
             assert!(
                 rect.left() >= 0.0 && rect.right() <= width,
@@ -2548,18 +2537,18 @@ fn anonymous_report_only_opens_review_and_sends_nothing() {
         format!("http://{}/api/reports", listener.local_addr().unwrap()),
         None,
     );
-    assert!(h.query_by_label("Anonymous report").is_none());
-    assert_eq!(h.query_all_by_label("GitHub issue").count(), 1);
-    let github = h.get_by_label("GitHub issue").rect();
+    assert_eq!(h.query_all_by_label("File a GitHub issue").count(), 1);
+    let github = h.get_by_label("File a GitHub issue").rect();
     let dm = h.get_by_label("Copy and open DM").rect();
     assert!(github.top() > dm.bottom());
-    open_more(&mut h);
-    // The bottom-pinned panel grows upward when More opens; compare the current layout.
-    let github = h.get_by_label("GitHub issue").rect();
-    let anonymous = h.get_by_label("Anonymous report").rect();
-    assert!(anonymous.top() > github.bottom());
+    // The cloud report is the last route: after the GitHub link, on its row or below it.
+    let cloud = h.get_by_label(CLOUD).rect();
+    assert!(
+        github.right() <= cloud.left() || github.bottom() <= cloud.top(),
+        "{github:?} {cloud:?}"
+    );
     assert!(h.query_by_label("No Discord?").is_none());
-    h.get_by_label("Anonymous report").click_accesskit();
+    h.get_by_label(CLOUD).click_accesskit();
     h.run_steps(12);
     h.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
     h.get_by_label("Send");
@@ -5121,3 +5110,89 @@ fn a_single_result_keeps_reporting_close_below_output() {
 #[cfg(feature = "test-support")]
 #[path = "../../dutchman/tests/support/net.rs"]
 mod test_support;
+
+/// A converted row with a report, shown in the panel as it is after a file finishes.
+#[cfg(feature = "test-support")]
+fn finished_cloud_app(dir: &Path) -> Harness<'static, App> {
+    use serde_json::json;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 1500.0))
+        .build_eframe(|cc| test_app(cc));
+    harness.state_mut().set_out_dir(dir.to_path_buf());
+    let input = dir.join("Bracket.f3d");
+    harness
+        .state_mut()
+        .preview_result_for_test(dutchman_gui::app::Row {
+            input: input.clone(),
+            output: Some(dir.join("Bracket.sc")),
+            status: Status::Converted,
+            progress: None,
+            report: Some(json!({"ok": true, "input": {"path": input, "format": "fusion_archive"}})),
+            job: None,
+            size: Some(100),
+        });
+    harness.run_steps(8);
+    harness
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cloud_report_button_is_visible_and_enabled_once_the_file_has_a_report() {
+    use egui_kittest::kittest::NodeT;
+    let dir = tempfile::tempdir().unwrap();
+    let harness = finished_cloud_app(dir.path());
+    // Visible without opening More, next to the GitHub link.
+    let button = harness.get_by_label(CLOUD);
+    assert!(!button.accesskit_node().is_disabled());
+    assert!(harness
+        .query_by_label(dutchman_gui::report_panel::CLOUD_REPORT_WAIT)
+        .is_none());
+    let github = harness.get_by_label("File a GitHub issue").rect();
+    let cloud = button.rect();
+    assert!(github.right() <= cloud.left() || github.bottom() <= cloud.top());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cloud_report_button_is_disabled_while_the_file_is_converting() {
+    use egui_kittest::kittest::NodeT;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 1500.0))
+        .build_eframe(|cc| test_app(cc));
+    harness
+        .state_mut()
+        .preview_running_for_test(dutchman_gui::app::Row {
+            input: PathBuf::from("Assembly.iam"),
+            output: None,
+            status: Status::Converting,
+            report: None,
+            job: None,
+            size: None,
+            progress: None,
+        });
+    harness.run_steps(8);
+    assert!(harness.get_by_label(CLOUD).accesskit_node().is_disabled());
+    harness.get_by_label(dutchman_gui::report_panel::CLOUD_REPORT_WAIT);
+    // Clicking a disabled button opens nothing.
+    harness.get_by_label(CLOUD).click_accesskit();
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label(dutchman_gui::report_consent::REVIEW_TITLE)
+        .is_none());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cloud_report_button_opens_the_review_screen_without_opening_more() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = finished_cloud_app(dir.path());
+    assert!(harness
+        .query_by_label(dutchman_gui::report_consent::REVIEW_TITLE)
+        .is_none());
+    harness.get_by_label(CLOUD).click_accesskit();
+    harness.run_steps(8);
+    harness.get_by_label(dutchman_gui::report_consent::REVIEW_TITLE);
+    harness.get_by_label("Anonymous summary only");
+    // Nothing duplicates the button under More.
+    assert_eq!(harness.query_all_by_label(CLOUD).count(), 1);
+}

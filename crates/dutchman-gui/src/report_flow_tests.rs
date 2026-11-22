@@ -116,7 +116,8 @@ fn report_question_and_actions_stay_inside_the_wide_window() {
         h.run_steps(12);
         let question = h.get_by_label(report_panel::QUESTION).rect();
         assert!(window.contains_rect(question));
-        h.get_by_label("Anonymous report").scroll_to_me();
+        h.get_by_label(report_panel::CLOUD_REPORT_BUTTON)
+            .scroll_to_me();
         h.run_steps(12);
         assert_eq!(h.get_by_label(report_panel::QUESTION).rect(), question);
     }

@@ -3487,9 +3487,30 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
-            if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
-                action = Some(Action::Report(selected.filter(|_| report.is_some())));
-            }
+            ui.horizontal_wrapped(|ui| {
+                if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
+                    action = Some(Action::Report(selected.filter(|_| report.is_some())));
+                }
+                if let Some((index, _)) = row {
+                    let ready = report.is_some() && file.is_some_and(|file| file.can_report);
+                    let button = ui.add_enabled(
+                        ready && !busy,
+                        egui::Button::new(report_panel::CLOUD_REPORT_BUTTON),
+                    );
+                    if !ready || busy {
+                        button.on_disabled_hover_text(report_panel::CLOUD_REPORT_WAIT);
+                        if !ready {
+                            ui.label(
+                                RichText::new(report_panel::CLOUD_REPORT_WAIT)
+                                    .small()
+                                    .color(p.tide),
+                            );
+                        }
+                    } else if button.clicked() {
+                        action = Some(Action::Consent(index));
+                    }
+                }
+            });
             if let Some(text) = done(Step::Github) {
                 ui.label(RichText::new(text).small().strong().color(p.ink));
             }
@@ -3498,13 +3519,6 @@ impl App {
                     egui::CollapsingHeader::new(report_panel::MORE)
                         .id_salt(("report-more", index, &row.input))
                         .show(ui, |ui| {
-                            if file.can_report
-                                && ui
-                                    .add_enabled(!busy, egui::Button::new("Anonymous report"))
-                                    .clicked()
-                            {
-                                action = Some(Action::Consent(index));
-                            }
                             if row.output.is_some() {
                                 if let Some(chosen) =
                                     ask_ai_ui(ui, index, self.ai_prompts.get(&index), reveal_ai)
@@ -4780,18 +4794,16 @@ mod tests {
                     app
                 });
             harness.run_steps(8);
-            // The question and its steps show at once; the anonymous review is under More.
+            // The question, its steps and the cloud button show at once.
             harness.get_by_label(report_panel::QUESTION);
-            assert!(harness.query_by_label("Anonymous report").is_none());
+            harness.get_by_label(report_panel::CLOUD_REPORT_BUTTON);
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
             harness.get_by_label(report_panel::MORE).click_accesskit();
             harness.run_steps(8);
             assert!(harness.query_by_label("Diagnose this file").is_none());
             let review = harness
-                .query_all_by_label("Anonymous report")
-                .last()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .rect();
             // Discord first: the invite's card stands left of the DM's, both above More.
             assert!(join.right() <= dm.left());
@@ -4800,9 +4812,7 @@ mod tests {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
             harness
-                .query_all_by_label("Anonymous report")
-                .next()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .click_accesskit();
             harness.run_steps(8);
             harness.get_by_label("This file converted, but the result is wrong.");
