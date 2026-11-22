@@ -2083,11 +2083,11 @@ fn cut_from_a_construction_plane() -> Model {
     ]);
     let features = m["features"].as_array_mut().unwrap();
     features.extend([
-        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Work plane", "suppressed": false, "dependencies": [], "outputs": [], "source_properties": {}, "source_content": [], "definition": {"kind": "operation", "value": {"kind": "datum_plane", "frame": {
+        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Work plane", "suppressed": false, "dependencies": [], "outputs": [], "source_properties": {}, "source_content": [], "definition": {"kind": "operation", "value": {"kind": "datum_plane", "value": {"frame": {
             "origin": {"x": 0.0, "y": -150.0, "z": 10.0},
             "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
             "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
-        }}}}),
+        }}}}}),
         json!({"id": "f3d:model:feature#5", "ordinal": 3, "name": "Plane sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": PLANE_CUT}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
         json!({"id": "f3d:model:feature#6", "ordinal": 4, "name": "Pocket", "suppressed": false, "dependencies": ["f3d:model:feature#5"], "outputs": [], "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {
             "profile": {"kind": "planar", "value": {"kind": "sketch_profiles", "value": {"sketch": PLANE_CUT, "profiles": [0]}}},
