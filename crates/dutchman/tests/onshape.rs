@@ -2410,3 +2410,33 @@ fn call_counts_group_thousands_from_one_thousand() {
     assert_eq!(calls_text(2500), "2,500");
     assert_eq!(calls_text(1234567), "1,234,567");
 }
+
+#[derive(Default)]
+struct Counted(Vec<(u32, Option<u32>)>);
+impl FetchProgress for Counted {
+    fn calls(&mut self, sent: u32, needed: Option<u32>) {
+        self.0.push((sent, needed));
+    }
+}
+#[test]
+fn progress_counts_each_call_and_estimates_after_the_feature_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let mut counted = Counted::default();
+    let report = fetch_watched(
+        &mut mock,
+        &FetchAuth::ApiKeys(credentials()),
+        &source(PS),
+        &dir.path().join("test.onshape-bundle"),
+        &dir.path().join("cache"),
+        None,
+        Some(&mut counted),
+    )
+    .unwrap();
+    assert_eq!(report.calls, 11);
+    let sent: Vec<u32> = counted.0.iter().map(|(sent, _)| *sent).collect();
+    assert_eq!(sent, (1..=11).collect::<Vec<_>>());
+    // Microversion, document, tabs and features come before the estimate.
+    assert!(counted.0[..4].iter().all(|(_, needed)| needed.is_none()));
+    assert!(counted.0[4..].iter().all(|(_, needed)| *needed == Some(11)));
+}

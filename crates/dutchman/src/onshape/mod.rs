@@ -8,7 +8,7 @@ mod store;
 use auth::Auth;
 pub use auth::{BearerToken, Credentials, FetchAuth};
 use http::Session;
-pub use http::{HttpClient, NetworkClient, Request, Response};
+pub use http::{FetchProgress, HttpClient, NetworkClient, Request, Response};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -219,8 +219,20 @@ fn setup(options: &FetchOptions) -> Result<Setup> {
 /// Fetches, and asks nothing: the MCP tool and scripts get the same stop with the estimate
 /// when the fetch is above [`ASK_ABOVE_CALLS`] and not allowed (see [`fetch_gated`]).
 pub fn run(options: &FetchOptions) -> Value {
+    run_with_progress(options, None)
+}
+
+/// [`run`], telling `progress` after each call.
+pub fn run_with_progress(
+    options: &FetchOptions,
+    mut progress: Option<&mut dyn FetchProgress>,
+) -> Value {
     let result = setup(options).and_then(|setup| {
-        fetch_gated(
+        // Reborrow for this fetch alone; the caller's progress outlives it.
+        let progress = progress
+            .as_mut()
+            .map(|progress| &mut **progress as &mut dyn FetchProgress);
+        fetch_gated_watched(
             &mut NetworkClient::default(),
             &setup.credentials,
             &setup.source,
@@ -228,6 +240,7 @@ pub fn run(options: &FetchOptions) -> Value {
             &setup.cache,
             options.max_calls,
             options.yes,
+            progress,
         )
     });
     crate::json::onshape_fetch(&result)
@@ -333,6 +346,8 @@ pub fn estimate_calls<C: HttpClient>(
         calls: 0,
         max_calls: http::AUTO_CEILING_CALLS,
         auto: false,
+        progress: None,
+        needed: None,
     };
     let (scope, mid) = resolve(&mut session, source, cache)?;
     let content_kind = if source.kind == "v" { "v" } else { "m" };
@@ -418,6 +433,7 @@ pub fn fetch_approved<C: HttpClient>(
         http::AUTO_BASE_CALLS.max(estimate.listing_calls),
         true,
         Some(estimate),
+        None,
     )
 }
 
@@ -457,15 +473,54 @@ pub fn fetch_gated<C: HttpClient>(
     max_calls: Option<u32>,
     yes: bool,
 ) -> Result<FetchReport> {
-    if let Some(max) = max_calls {
-        return fetch_authenticated(client, credentials, source, output, cache, max);
-    }
-    if yes {
-        return fetch_with_document_budget(client, credentials, source, output, cache);
+    fetch_gated_watched(
+        client,
+        credentials,
+        source,
+        output,
+        cache,
+        max_calls,
+        yes,
+        None,
+    )
+}
+
+/// [`fetch_gated`], telling `progress` after each call.
+#[allow(clippy::too_many_arguments)]
+fn fetch_gated_watched<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: &'a FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: Option<u32>,
+    yes: bool,
+    progress: Option<&'a mut dyn FetchProgress>,
+) -> Result<FetchReport> {
+    if max_calls.is_some() || yes {
+        return fetch_watched(
+            client,
+            credentials,
+            source,
+            output,
+            cache,
+            max_calls,
+            progress,
+        );
     }
     let estimate = estimate_calls(client, credentials, source, cache)?;
     approval(&estimate, false, false, |_| false)?;
-    fetch_approved(client, credentials, source, output, cache, &estimate)
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        http::AUTO_BASE_CALLS.max(estimate.listing_calls),
+        true,
+        Some(&estimate),
+        progress,
+    )
 }
 
 /// The name of the account the keys belong to, from one cheap authenticated call. Nothing
@@ -477,6 +532,8 @@ pub fn session_user<C: HttpClient>(client: &mut C, credentials: &Credentials) ->
         calls: 0,
         max_calls: 1,
         auto: false,
+        progress: None,
+        needed: None,
     };
     let response = session
         .request("GET", &format!("{API}/users/sessioninfo"), "", b"")
@@ -570,6 +627,7 @@ pub fn fetch<C: HttpClient>(
         max_calls,
         false,
         None,
+        None,
     )
 }
 
@@ -590,6 +648,7 @@ pub fn fetch_authenticated<C: HttpClient>(
         cache,
         max_calls,
         false,
+        None,
         None,
     )
 }
@@ -614,19 +673,45 @@ pub fn fetch_with_document_budget<C: HttpClient>(
         http::AUTO_BASE_CALLS,
         true,
         None,
+        None,
+    )
+}
+
+/// [`fetch_authenticated`] with `Some(max_calls)`, else [`fetch_with_document_budget`],
+/// telling `progress` after each call.
+pub fn fetch_watched<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: &'a FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: Option<u32>,
+    progress: Option<&'a mut dyn FetchProgress>,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        max_calls.unwrap_or(http::AUTO_BASE_CALLS),
+        max_calls.is_none(),
+        None,
+        progress,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fetch_auth<C: HttpClient>(
-    client: &mut C,
-    credentials: Auth<'_>,
+fn fetch_auth<'a, C: HttpClient>(
+    client: &'a mut C,
+    credentials: Auth<'a>,
     source: &DocumentUrl,
     output: &Path,
     cache: &Path,
     max_calls: u32,
     auto: bool,
     after: Option<&Estimate>,
+    progress: Option<&'a mut dyn FetchProgress>,
 ) -> Result<FetchReport> {
     check_source(&credentials, source)?;
     credentials.check_bytes(output.as_os_str().to_string_lossy().as_bytes())?;
@@ -637,6 +722,8 @@ fn fetch_auth<C: HttpClient>(
         calls: after.map_or(0, |estimate| estimate.listing_calls),
         max_calls,
         auto,
+        progress,
+        needed: None,
     };
     let result = fetch_inner(
         &mut session,
@@ -998,6 +1085,14 @@ fn capture<C: HttpClient>(
                 fetcher
                     .session
                     .allow(u32::try_from(wanted.len()).unwrap_or(u32::MAX));
+                if ancestry.len() == 1 && elements.is_empty() {
+                    fetcher.session.needed = Some(whole_fetch_calls(
+                        fetcher.session.calls,
+                        source,
+                        wanted.len(),
+                        sketch_only(list),
+                    ));
+                }
                 let mut indices = Vec::new();
                 for i in wanted {
                     let file = format!("{prefix}/bodydetails/{i}.json");
@@ -1175,6 +1270,25 @@ fn document_name<C: HttpClient>(
     fetcher.session.credentials.check_bytes(&bytes)?;
     private_write(&document_path, &bytes)?;
     Ok(name)
+}
+
+/// Calls a STEP export usually takes: the request, one poll, and the download.
+const STEP_CALLS: u32 = 3;
+
+/// The total calls a fetch of the root Part Studio needs, from its feature list: one per
+/// body-detail state, configuration, variables and sketches, the STEP export, and the final
+/// microversion check of a workspace. It does not foresee slow polls or retries.
+fn whole_fetch_calls(sent: u32, source: &DocumentUrl, snapshots: usize, sketch_only: bool) -> u32 {
+    let mut rest = u32::try_from(snapshots)
+        .unwrap_or(u32::MAX)
+        .saturating_add(3);
+    if !sketch_only {
+        rest = rest.saturating_add(STEP_CALLS);
+    }
+    if source.kind == "w" {
+        rest = rest.saturating_add(1);
+    }
+    sent.saturating_add(rest)
 }
 
 fn check_microversion(value: &Value, expected: &str) -> Result<()> {
