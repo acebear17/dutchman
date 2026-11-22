@@ -918,6 +918,24 @@ impl<'a> Context<'a> {
         })
     }
 
+    /// The SolidCraft name of the parameter the source feature names under the
+    /// `source_properties` key `key`, when that parameter holds `magnitude` (mm or radians)
+    /// as its own value. The name is inside `abs()` when the source signs it.
+    fn bound_parameter(&self, feature: &Value, key: &str, magnitude: f64) -> Option<String> {
+        let id = feature.pointer("/source_properties")?.get(key)?.as_str()?;
+        let row = self.row("parameters", id)?;
+        let value = row.pointer("/value/value")?.as_f64()?;
+        if (value.abs() - magnitude).abs() > 1e-6 * magnitude.max(1.0) {
+            return None;
+        }
+        let name = self.params.get(id)?;
+        Some(if value < 0.0 {
+            format!("abs({name})")
+        } else {
+            name.clone()
+        })
+    }
+
     fn id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
