@@ -23,10 +23,11 @@ the later of that review and your latest activity.
 
 Claims stay active while an open, ready (non-draft) linked PR waits on maintainers:
 your commit, ready-for-review event, reopening or reply is the last action, including
-after a review. Claims also stay active while the issue or an open linked PR body says `Depends on #N`,
+after a review. Once you have a linked PR, claims also stay active while the issue or an open linked PR body says `Depends on #N`,
 `Depends on owner/repo#N`, or `Stacked on #N` and that dependency is open. A dependency
 returning 404 is treated as not open. Other lookup errors leave that issue alone, log a
-retry message, and allow the sweep to continue with other issues.
+retry message, and allow the sweep to continue with other issues. With no PR yet, an open
+dependency does not extend the 24-hour draft rule.
 
 Owner and maintainer claims (repository write, maintain or admin permission) never
 lapse automatically. Only the repository owner can release the owner's claim. Other

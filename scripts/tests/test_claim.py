@@ -259,8 +259,11 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.decision(1000, actions, has_pr=True, waiting=True), 'keep')
         self.assertFalse(claim.waiting_for_review('contributor', True, actions))
 
-    def test_open_dependency_never_lapses(self):
-        self.assertEqual(self.decision(1000, dependency_open=True), 'keep')
+    def test_open_dependency_never_lapses_with_a_pr(self):
+        self.assertEqual(self.decision(1000, dependency_open=True, has_pr=True), 'keep')
+
+    def test_open_dependency_does_not_excuse_a_missing_draft(self):
+        self.assertEqual(self.decision(25, dependency_open=True), 'release')
 
     def test_requested_changes_get_five_days_grace(self):
         actions = [action(5, 'reviewer', 'CHANGES_REQUESTED')]
@@ -621,11 +624,11 @@ class ApiTests(unittest.TestCase):
         self.api.sweep(2)
         self.assertFalse(self.api.issues[1]['labels'])
 
-    def test_dependency_open_blocks_lapse(self):
+    def test_dependency_open_without_a_pr_still_lapses(self):
         self.api.issue(1, 'contributor', body='Stacked on other/project#2')
         self.api.dependencies['other/project/issues/2'] = {'state': 'open'}
         self.api.sweep(20)
-        self.assertTrue(self.api.issues[1]['labels'])
+        self.assertFalse(self.api.issues[1]['labels'])
 
     def test_sweep_error_isolation(self):
         self.api.issue(1, 'contributor', body='Depends on other/project#2')

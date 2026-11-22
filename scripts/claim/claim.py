@@ -113,7 +113,9 @@ def waiting_for_review(claimant, draft, actions):
 
 def lapse_decision(now, claimed_at, claimant, actions, waiting=False,
                    dependency_open=False, warned=False, has_pr=False):
-    if claimed_at is None or waiting or dependency_open:
+    # An open dependency excuses idleness only once a pull request exists: with no PR at all,
+    # the 24-hour draft rule still applies (Ray, 2026-11-22).
+    if claimed_at is None or waiting or (dependency_open and has_pr):
         return 'keep'
     start = idle_start(claimed_at, claimant, actions) if has_pr else claimed_at
     limit = timedelta(days=IDLE_DAYS) if has_pr else timedelta(hours=DRAFT_HOURS)
