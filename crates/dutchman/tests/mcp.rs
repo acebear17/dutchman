@@ -163,8 +163,13 @@ fn an_mcp_client_converts_through_dutchman() {
         "dutchman.convert/1"
     );
     assert!(output.is_file());
-    // Nothing but the design was written.
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    // Nothing but the design and its link record was written.
+    let mut written: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(written, ["cube.link.json", "cube.solidcraft"]);
 
     let failed = client.call(
         "convert",
