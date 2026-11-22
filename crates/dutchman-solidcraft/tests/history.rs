@@ -16620,15 +16620,18 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
             .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
             .collect()
     };
+    // A length literal in millimetres, whether written as `40mm` or as metres (`0.04m`, with
+    // whatever float noise the decoder leaves).
+    let millimetres = |text: &str| -> f64 {
+        match text.strip_suffix("mm") {
+            Some(number) => number.parse::<f64>().unwrap(),
+            None => text.strip_suffix('m').unwrap().parse::<f64>().unwrap() * 1000.0,
+        }
+    };
     // The user parameters.
-    // Inventor stores lengths in metres, so 40 mm is written as 0.04 m: the same value.
-    for (name, expected) in [
-        ("Width", ["40mm", "0.04m"]),
-        ("Height", ["Width/2", "Width/2"]),
-        ("Hole", ["6mm", "0.006m"]),
-    ] {
+    for (name, expected) in [("Width", 40.0), ("Hole", 6.0)] {
         assert!(
-            expected.contains(&expr(name).as_str()),
+            (millimetres(&expr(name)) - expected).abs() < 1e-6,
             "{name}: {}",
             expr(name)
         );
@@ -16638,26 +16641,29 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
             "{name} is a user parameter"
         );
     }
+    assert_eq!(expr("Height"), "Width/2");
+    assert_eq!(find("Height").unwrap()["model"], false);
     // The model parameters Inventor made for the dimensions keep their expressions.
     for (name, expected) in [
         ("d0", "Width"),
-        ("d1", "Width/2+5mm|Width/2+0.005m"),
         ("d2", "Height"),
         ("d3", "Hole"),
         ("d4", "d3*2"),
         ("d5", "Height*1.5"),
     ] {
-        assert!(
-            expected.split('|').any(|e| e == expr(name)),
-            "{name}: {}",
-            expr(name)
-        );
+        assert_eq!(expr(name), expected, "{name}");
         assert_eq!(
             find(name).unwrap()["model"],
             true,
             "{name} is a model parameter"
         );
     }
+    let d1 = expr("d1");
+    let offset = d1
+        .strip_prefix("Width/2+")
+        .unwrap_or_else(|| panic!("d1: {d1}"));
+    assert!((millimetres(offset) - 5.0).abs() < 1e-6, "d1: {d1}");
+    assert_eq!(find("d1").unwrap()["model"], true);
     // The sketch dimensions are bound to their parameters.
     let driven: Vec<&str> = document["features"]
         .as_array()
