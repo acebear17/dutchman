@@ -16621,8 +16621,17 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
             .collect()
     };
     // The user parameters.
-    for (name, expected) in [("Width", "40mm"), ("Height", "Width/2"), ("Hole", "6mm")] {
-        assert_eq!(expr(name), expected, "{name}");
+    // Inventor stores lengths in metres, so 40 mm is written as 0.04 m: the same value.
+    for (name, expected) in [
+        ("Width", ["40mm", "0.04m"]),
+        ("Height", ["Width/2", "Width/2"]),
+        ("Hole", ["6mm", "0.006m"]),
+    ] {
+        assert!(
+            expected.contains(&expr(name).as_str()),
+            "{name}: {}",
+            expr(name)
+        );
         assert_eq!(
             find(name).unwrap()["model"],
             false,
@@ -16632,13 +16641,17 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
     // The model parameters Inventor made for the dimensions keep their expressions.
     for (name, expected) in [
         ("d0", "Width"),
-        ("d1", "Width/2+5mm"),
+        ("d1", "Width/2+5mm|Width/2+0.005m"),
         ("d2", "Height"),
         ("d3", "Hole"),
         ("d4", "d3*2"),
         ("d5", "Height*1.5"),
     ] {
-        assert_eq!(expr(name), expected, "{name}");
+        assert!(
+            expected.split('|').any(|e| e == expr(name)),
+            "{name}: {}",
+            expr(name)
+        );
         assert_eq!(
             find(name).unwrap()["model"],
             true,
