@@ -174,8 +174,9 @@ Older targets keep the previous point-only representation.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
-original final shape remains visible as an Import after the kept history. Show the
-hidden component to continue editing it. The report names the blocker and counts
+original final shape remains visible as an Import after the kept history. The hidden
+copy's body-building features are suppressed, so it adds no second body to an export;
+unsuppress them to continue editing it. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
 remain unverified. Later sketches with unresolved planes or external geometry are
@@ -500,9 +501,9 @@ A bend without its mapped attached plate remains blocked.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
   0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
-  (currently 0.45), even with CLI `--no-verify` or MCP `verify: false`.
+  (currently 0.46), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
-  0.40–0.45); older targets get simplified features with a named reason.
+  0.40–0.46); older targets get simplified features with a named reason.
 - `preset: "fast"` when the user wants only the shape. `history: false` (also
   `import_only: true`) removes history while keeping the preset's reference sketches and
   joints. Leave `verify` at its default.
@@ -935,7 +936,7 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](../../docs/json.md).
 
 SolidCraft names and report targets use minors: `solidcraft.target` and
-`solidcraft.known_newest` are `x.y` strings such as `"0.45"`. `solidcraft.found`
+`solidcraft.known_newest` are `x.y` strings such as `"0.46"`. `solidcraft.found`
 retains the full installed version. All patches of the newest minor count as current;
 writer gates still use full versions internally. Explicit target inputs remain `x.y.z`.
 
