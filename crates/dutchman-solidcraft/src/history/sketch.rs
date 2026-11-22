@@ -547,6 +547,20 @@ fn plane(sketch: &Value) -> Result<(Value, Frame), String> {
     let origin = v3(frame.get("origin")).ok_or("its plane has no origin")?;
     let normal = unit(v3(frame.get("normal")).ok_or("its plane has no normal")?)
         .ok_or("its plane's normal is zero")?;
+    // A Fusion sketch's coordinates start at the model origin projected onto its plane. The
+    // frame of a sketch on a construction plane can carry the plane's own anchor point instead
+    // (a plane offset from an origin plane whose anchor lies far along the plane), which moves
+    // every profile by the anchor's in-plane part, so a cut through it misses its body.
+    let origin = if sketch
+        .get("id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id.starts_with("f3d:"))
+    {
+        let height = dot(origin, normal);
+        [normal[0] * height, normal[1] * height, normal[2] * height]
+    } else {
+        origin
+    };
     let x = unit(v3(frame.get("u_axis")).ok_or("its plane has no u axis")?)
         .ok_or("its plane's u axis is zero")?;
     if dot(x, normal).abs() > PARALLEL.sqrt() {

@@ -340,6 +340,12 @@ Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lis
 alone. A feature whose profile uses such a sketch gets it written just before itself, so the
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
 
+## Sketches on construction planes
+
+A Fusion sketch starts at the model origin projected onto its plane. A sketch on a construction
+plane offset from an origin plane is written with that origin, not with the plane's own anchor
+point, so a cut sketched on it removes material where Fusion does.
+
 ## Trimmed and unresolved profile regions
 
 One stored sketch loop does not prove a native profile selection when other solid
