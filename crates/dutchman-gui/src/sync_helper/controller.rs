@@ -184,8 +184,14 @@ mod tests {
         sender.send(Msg::ShowWindow).unwrap();
         sender.send(Msg::OpenApp).unwrap();
         // Resuming starts the folder again.
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(sync_state::read_from(&file).paused);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !sync_state::read_from(&file).paused {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pause never reached the state file"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
         sender.send(Msg::TogglePause).unwrap();
         assert_eq!(
             calls.recv_timeout(Duration::from_secs(5)).unwrap(),

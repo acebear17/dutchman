@@ -26,12 +26,10 @@ pub fn mark_rgba(size: u32) -> Option<Vec<u8>> {
 
 /// RGBA pixels as the StatusNotifierItem wants them: ARGB, one pixel after another.
 pub fn argb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
-        .filter_map(|pixel| match pixel {
-            [r, g, b, a] => Some([*a, *r, *g, *b]),
-            _ => None,
-        })
-        .flatten()
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|[r, g, b, a]| [*a, *r, *g, *b])
         .collect()
 }
 
@@ -43,7 +41,7 @@ mod tests {
     fn the_mark_draws_and_argb_moves_alpha_first() {
         let rgba = mark_rgba(32).unwrap();
         assert_eq!(rgba.len(), 32 * 32 * 4);
-        assert!(rgba.chunks_exact(4).any(|p| p[3] > 0));
+        assert!(rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
         assert_eq!(argb(&[1, 2, 3, 4]), [4, 1, 2, 3]);
     }
 }
