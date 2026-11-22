@@ -5196,3 +5196,60 @@ fn cloud_report_button_opens_the_review_screen_without_opening_more() {
     // Nothing duplicates the button under More.
     assert_eq!(harness.query_all_by_label(CLOUD).count(), 1);
 }
+
+/// The report panel's two buttons, finished and mid-run, in Day and Night.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the report buttons; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn report_buttons_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let work = tempfile::tempdir().unwrap();
+        let mut harness = finished_cloud_app(work.path());
+        harness.ctx.set_theme(theme);
+        harness.run_steps(8);
+        harness.get_by_label(CLOUD).scroll_to_me();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "report-buttons-finished",
+            name,
+            "Finished file: File a GitHub issue first, Review and send report last.",
+        );
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1100.0, 1500.0))
+            .build_eframe(|cc| test_app(cc));
+        harness.ctx.set_theme(theme);
+        harness
+            .state_mut()
+            .preview_running_for_test(dutchman_gui::app::Row {
+                input: PathBuf::from("Assembly.iam"),
+                output: None,
+                status: Status::Converting,
+                report: None,
+                job: None,
+                size: None,
+                progress: None,
+            });
+        harness.run_steps(8);
+        harness.get_by_label(CLOUD).scroll_to_me();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "report-buttons-running",
+            name,
+            "Mid-run: the review button disabled with its hint.",
+        );
+    }
+    std::fs::write(dir.join("report-buttons.md"), index).unwrap();
+}
