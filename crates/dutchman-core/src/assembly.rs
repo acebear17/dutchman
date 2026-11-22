@@ -1203,15 +1203,9 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
         else {
             continue;
         };
-        // An explicit current pose places the inserted occurrence itself. Its
-        // contained records do not independently pose the children; their own
-        // current poses, if present, were collected above.
-        if reference
-            .get("current_pose")
-            .is_some_and(|pose| !pose.is_null())
-        {
-            continue;
-        }
+        // The reference's own current pose does not stop its contained poses from naming
+        // children: cadmpeg places each of them from its contained pose, so a joint must not
+        // solve it again.
         // A component-path pose applies only in the owner chain it names, from
         // the innermost owner outwards. Missing owner indices mean every instance.
         let mut owners = Vec::new();
@@ -6888,8 +6882,8 @@ mod tests {
         ));
         assert!(!assembly.joints[1].suppressed);
 
-        // A reference's own current pose holds the reference, while its children
-        // still need their joints unless they carry current poses of their own.
+        // A reference's own current pose holds the reference, and its contained poses still
+        // hold the children they name, while an unposed sibling still needs its joint.
         wire["native"]["f3d"]["xref_references"][0]["current_pose"] =
             json!({"carrier_record_index": 21, "transform": at([10.0, 0.0, 0.0], 0.0)});
         let own_pose = Model {
@@ -6897,12 +6891,9 @@ mod tests {
             ..model
         };
         let (assembly, notes) = local_components(&own_pose).unwrap().unwrap();
-        assert!(near(
-            &world_at(&assembly, &[0, 0]).unwrap(),
-            &at([120.0, 0.0, 0.0], 0.0)
-        ));
-        assert!(!assembly.joints[0].suppressed);
-        assert!(notes.is_empty(), "{notes:?}");
+        assert!(assembly.joints[0].suppressed);
+        assert!(!assembly.joints[1].suppressed);
+        assert_eq!(notes.len(), 1, "{notes:?}");
     }
 
     #[test]
