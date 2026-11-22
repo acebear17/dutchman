@@ -93,6 +93,7 @@ impl State {
     }
 
     /// The entry for `output`, added switched off when there is none.
+    #[allow(clippy::indexing_slicing)] // the index is of an entry found or pushed just above
     pub fn folder_mut(&mut self, output: &Path) -> &mut Folder {
         let index = self
             .folders
