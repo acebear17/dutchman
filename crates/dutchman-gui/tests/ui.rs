@@ -5121,3 +5121,120 @@ fn a_single_result_keeps_reporting_close_below_output() {
 #[cfg(feature = "test-support")]
 #[path = "../../dutchman/tests/support/net.rs"]
 mod test_support;
+
+/// The notes of a small Inventor part as issue 926 quotes them: one that matters, three that
+/// change nothing the person sees (internal records, a statistic of nothing), and a closing line.
+#[cfg(feature = "test-support")]
+fn developer_notes_report() -> serde_json::Value {
+    serde_json::json!({"ok": true, "mode": "import", "losses": [
+        {"level": "Degraded", "code": "inventor/source.kernel-history-unclosed",
+         "subject": "inventor/source.kernel-history-unclosed", "stage": "decode",
+         "message": "The kernel carrier's delta_state chain does not frame or close; features have no history states."},
+        {"level": "Degraded", "code": "inventor/rse.segment-pair-untyped",
+         "subject": "inventor/rse.segment-pair-untyped", "stage": "decode",
+         "message": "Retained 1 structurally paired RSe segment(s) without record semantics."},
+        {"level": "Info", "code": null, "subject": "part positions", "stage": "map",
+         "message": "0 parts placed as last shown in the original program (0 directly bound, 0 holders derived from displayed children), 0 at current poses, 0 as first placed (smart); first-placement reasons: 0 without a current pose, 0 ambiguous, 0 unsupported, 0 joint checks, 0 bounds checks, 0 inserted-design checks; 0 holder conflicts"},
+        {"level": "Info", "code": "step/attribute.source-record-not-written",
+         "subject": "step/attribute.source-record-not-written", "stage": "write",
+         "message": "7 source attribute record(s) were not written to STEP"},
+        {"level": "Info", "code": "step/native.source-record-omitted",
+         "subject": "step/native.source-record-omitted", "stage": "write",
+         "message": "67 source-native record(s) were not represented in STEP"},
+        {"level": "Info", "code": null, "subject": "history", "stage": "map",
+         "message": "flattened: the design carries no feature history"}
+    ]})
+}
+
+#[cfg(feature = "test-support")]
+fn developer_notes_row() -> dutchman_gui::app::Row {
+    dutchman_gui::app::Row {
+        input: PathBuf::from("synthetic_cube.ipt"),
+        output: Some(PathBuf::from("converted/synthetic_cube.sc")),
+        status: Status::Converted,
+        progress: None,
+        job: None,
+        size: None,
+        report: Some(developer_notes_report()),
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn notes_lead_with_a_plain_sentence_and_the_raw_codes_sit_behind_details() {
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .preview_result_for_test(developer_notes_row());
+    harness.run_steps(8);
+    harness.get_by_label_contains("Losses:").click_accesskit();
+    harness.run_steps(8);
+    // The note that matters leads with a plain sentence; the raw words are not on the card.
+    assert!(harness
+        .query_by_label_contains("feature history couldn't be read")
+        .is_some());
+    assert!(harness.query_by_label_contains("delta_state").is_none());
+    // Notes that change nothing are not listed, and are not counted.
+    assert!(harness
+        .query_by_label_contains("source-native record")
+        .is_none());
+    assert!(harness.query_by_label_contains("0 parts placed").is_none());
+    assert!(harness
+        .query_by_label("Losses: 1 Info, 1 Degraded")
+        .is_some());
+    // Details holds every note, raw.
+    harness.get_by_label("Details").click_accesskit();
+    harness.run_steps(8);
+    assert!(harness.query_by_label_contains("delta_state").is_some());
+    assert!(harness
+        .query_by_label_contains("step/native.source-record-omitted")
+        .is_some());
+    assert!(harness.query_by_label_contains("0 parts placed").is_some());
+}
+
+/// Before/after evidence of the Results card with these notes. Needs a GPU renderer:
+/// `DUTCHMAN_GUI_SCREENSHOTS=<dir> DUTCHMAN_SHOT_PREFIX=after cargo test -p dutchman-gui
+/// --features test-support --test ui -- --ignored notes_card_screenshots`.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_SHOT_PREFIX"]
+fn notes_card_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let prefix = std::env::var("DUTCHMAN_SHOT_PREFIX").unwrap_or_else(|_| "after".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.set_size(egui::vec2(760.0, 760.0));
+        harness
+            .state_mut()
+            .preview_result_for_test(developer_notes_row());
+        harness.run_steps(8);
+        harness.get_by_label_contains("Losses:").click_accesskit();
+        harness.run_steps(8);
+        let mut index = String::new();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            &format!("{prefix}-notes"),
+            name,
+            "",
+        );
+        // Only the new card has a Details toggle.
+        if harness.query_by_label("Details").is_some() {
+            harness.get_by_label("Details").click_accesskit();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("{prefix}-notes-details"),
+                name,
+                "",
+            );
+        }
+    }
+}

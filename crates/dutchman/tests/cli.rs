@@ -1029,16 +1029,9 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         )
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(
-            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
-        ),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
-        "{stderr}"
-    );
+    // Records STEP has no place for change nothing the person sees: they wait for --verbose.
+    assert!(!stderr.contains("step/native."), "{stderr}");
+    assert!(!stderr.contains("source-native record(s)"), "{stderr}");
     assert!(
         stderr.contains("so no declared identity was verified. …\n"),
         "{stderr}"
@@ -1059,6 +1052,16 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Agreement is consistency, not a declaration."),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
         "{stderr}"
     );
     assert!(!stderr.contains("--verbose prints"), "{stderr}");

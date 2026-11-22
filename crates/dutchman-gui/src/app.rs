@@ -3813,6 +3813,9 @@ fn row_ui(
         .on_hover_text(output);
         let (outcome, history) = outcome_and_history(&view.outcome, row.report.as_ref());
         ui.label(RichText::new(outcome).color(p.ink));
+        if let Some(meaning) = view.unverified_note {
+            ui.label(RichText::new(meaning).small().color(p.tide));
+        }
         for loss in history {
             ui.label(RichText::new(loss).color(p.tide));
         }
@@ -3856,8 +3859,19 @@ fn row_ui(
                     }
                 });
         }
+        if !view.details.is_empty() {
+            // The raw subject, code and message of every note, for a bug report. The notes
+            // above lead with a plain sentence and leave out those that change nothing.
+            egui::CollapsingHeader::new(RichText::new("Details").color(p.tide))
+                .id_salt(("details", index))
+                .show(ui, |ui| {
+                    for loss in &view.details {
+                        loss_line(ui, p, loss);
+                    }
+                });
+        }
         theme::control_row(ui, |ui| {
-            if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
+            if !view.details.is_empty() && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
             // Every finished file has the way to report it, whatever the card says: Dutchman

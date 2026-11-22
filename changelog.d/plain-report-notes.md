@@ -1,0 +1,4 @@
+### Reports
+
+- Import notes lead with one plain sentence about what is missing or different and what to do, in the desktop app, the command line and the SolidCraft plugin's report. Notes that change nothing you see (records STEP has no place for, a placement statistic of nothing) are left out of the default view; the raw codes and messages stay under **Details** in the app, behind `--verbose` on the command line, and in the JSON report, which also gains a `summary` sentence and `shown_by_default` on each note.
+- An editable history that was not checked now says what "unverified" means next to the word: SolidCraft did not replay it and compare the result with the original shape, which is not a warning that it is wrong. It also says how to check it: turn on **Check feature history in SolidCraft** and add a STEP export of the same design.
