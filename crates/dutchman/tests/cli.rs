@@ -956,7 +956,11 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     assert_eq!(text.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
+    // The notes are in plain words, so the report ends by saying `--verbose` prints them in full.
+    assert!(
+        stdout.ends_with("1 converted, 0 failed\n(notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
+        "{stdout}"
+    );
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
     // SolidCraft version it targets.
     let lines = without_target_line(&stdout);
@@ -965,13 +969,13 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(lines[0], "Fusion .f3d: reads geometry");
     assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
-        lines[2..lines.len() - 1]
+        lines[2..lines.len() - 2]
             .iter()
             .all(|line| line.starts_with("           ") && line.contains(": ")),
         "{stdout}"
     );
     assert!(
-        stdout.contains("Degraded: f3d/material.not-transferred"),
+        stdout.contains("Degraded: The design's materials and appearances weren't carried over"),
         "{stdout}"
     );
 

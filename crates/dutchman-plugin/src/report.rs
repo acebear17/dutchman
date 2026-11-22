@@ -169,10 +169,12 @@ fn verification(check: &Check) -> Value {
         Check::Flattened(s) => ("Original shape kept without editable history", Some(s)),
         Check::NotApplicable(s) => ("No editable history to check", Some(s)),
     };
+    let meaning =
+        matches!(check, Check::Unverified(_) | Check::Partial(_)).then_some(UNVERIFIED_MEANING);
     let mut shape_check =
         json!({"result": result, "reason": reason.map(|s| crate::notice::plain(s))});
-    if matches!(check, Check::Unverified(_) | Check::Partial(_)) {
-        shape_check["meaning"] = json!(UNVERIFIED_MEANING);
+    if let (Some(meaning), Some(object)) = (meaning, shape_check.as_object_mut()) {
+        object.insert("meaning".to_string(), json!(meaning));
     }
     shape_check
 }
