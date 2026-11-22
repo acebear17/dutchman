@@ -415,7 +415,10 @@ fn a_published_design_gets_a_link_record_naming_its_inbox_file() {
     assert_eq!(record["source"]["path"], "../../in/nested/cube.f3d");
     assert_eq!(record["output"]["file"], "cube.sc");
     let state = std::fs::read_to_string(out.join(".dutchman-watch.json")).unwrap();
-    assert!(state.contains("nested/cube.link.json"), "{state}");
+    // The watch state keeps native paths (backslashes on Windows, escaped in JSON).
+    let owned = std::path::Path::new("nested").join("cube.link.json");
+    let owned = serde_json::to_string(&owned.to_string_lossy()).unwrap();
+    assert!(state.contains(owned.trim_matches('"')), "{state}");
     // Nothing from the staging folder is left behind.
     let names: Vec<_> = std::fs::read_dir(&out)
         .unwrap()
