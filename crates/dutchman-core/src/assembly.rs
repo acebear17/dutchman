@@ -2509,10 +2509,13 @@ fn side_path(
             let object = operand.get("object").and_then(Value::as_str).unwrap_or("");
             let prefix = id.strip_suffix(object).filter(|_| !object.is_empty());
             let mut named = id;
-            for key in listed(container.get("occurrence_path"))
+            let mut framed = id;
+            let path_keys = listed(container.get("occurrence_path")).len();
+            for (at, key) in listed(container.get("occurrence_path"))
                 .iter()
                 .chain(listed(operand.get("subelements")))
-                .filter_map(Value::as_str)
+                .enumerate()
+                .filter_map(|(at, key)| Some((at, key.as_str()?)))
             {
                 let below = paths.get(named).map(|located| located.own.as_slice());
                 let within = |located: &Located| {
@@ -2537,15 +2540,19 @@ fn side_path(
                 };
                 if let Some(nested) = nested {
                     named = nested;
+                    if at < path_keys {
+                        framed = nested;
+                    }
                 }
             }
             let located = paths
                 .get(named)
                 .ok_or("it joins a component the design does not place")?;
             let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
-            // The connector's frame is in the deepest occurrence the operand names, not in the
-            // occurrence that holds the path to it.
-            Ok((located.clone(), world(named), world(named)))
+            // A connector reached through the container's occurrence path has its frame in the
+            // deepest occurrence that path names; one reached through subelements, in the
+            // container itself.
+            Ok((located.clone(), world(framed), world(named)))
         }
         Some("external") => {
             // A component inside a design inserted into this one, whose contents the file
