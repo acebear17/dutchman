@@ -235,7 +235,7 @@ fn report_and_failure_offer_discord_before_github_without_archive_paths() {
         report["details"]["help"].as_str().unwrap().to_owned(),
     ] {
         assert!(text.contains(crate::notice::QUESTION));
-        assert!(text.find("Join our Discord server").unwrap() < text.find("DM Dutchy").unwrap());
+        assert!(text.find("Join our Discord").unwrap() < text.find("DM Dutchy").unwrap());
         assert!(text.find("DM Dutchy").unwrap() < text.find("GitHub issue").unwrap());
         assert!(text.contains("https://discord.gg/yTcseBEdeu"));
         assert!(text.contains("https://discord.com/users/1563591265810129088"));
@@ -330,4 +330,23 @@ fn failures_keep_a_readable_part_name_without_its_folders() {
     assert!(text.contains("bracket.ipt"));
     assert!(text.contains("Fillet1"));
     assert!(!text.contains("Parts/"));
+}
+
+#[test]
+fn folder_refusal_names_the_grant_and_its_purpose() {
+    assert!(crate::notice::needs_part_folder("Frame.IAM"));
+    assert!(crate::notice::needs_part_folder("rig.sldasm"));
+    assert!(!crate::notice::needs_part_folder("bracket.ipt"));
+    assert!(!crate::notice::needs_part_folder("arm.f3z"));
+    let text = crate::notice::folder_access("rig.sldasm", "Input folder only");
+    for needle in [
+        "rig.sldasm",
+        "part files",
+        "read access to the input folder",
+        "never writes",
+        "Preferences > Plugins",
+        "Input folder only",
+    ] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
 }

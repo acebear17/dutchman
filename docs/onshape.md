@@ -306,8 +306,12 @@ Use a URL of the form `https://cad.onshape.com/documents/<document>/w/<workspace
 or `/v/<version>` instead of `/w/<workspace>`. IDs have 24 hexadecimal characters.
 `--version` takes an immutable Onshape version ID and overrides the URL's workspace
 or version. Query parameters and fragments are not supported yet; one default
-configuration is fetched. The default output is `<element-id>.onshape-bundle` in
-the current folder. An existing output is replaced only after a successful fetch.
+configuration is fetched. The default output is `<document name> - <tab name>.onshape-bundle`
+in the current folder, from the names the fetch already reads (no extra API call), or
+`<element-id>.onshape-bundle` when no name is known. A bundle of the same document and tab
+already there is replaced; when another file has the name, the new bundle gets ` (2)`, ` (3)`
+and so on. An explicit `--out` is used exactly as given, and an existing
+output is replaced only after a successful fetch.
 
 ### Connect your Onshape account
 
@@ -442,7 +446,7 @@ account metadata files are included. Dutchman follows assembly references within
 and refuses assembly references to a different microversion of that document. Derived
 references are captured separately at their immutable versions, including other documents. It fetches at
 most 1,000 elements and 10,000 files. Responses are limited to 64 MiB; the complete
-bundle's uncompressed payload and provisional workspace cache each have a 512 MiB cap.
+bundle's uncompressed payload has a 512 MiB cap.
 
 ### Consistency
 
@@ -453,15 +457,29 @@ Versions are immutable, so no final head check is needed.
 For a workspace URL, Dutchman reads the current microversion at the start. Endpoints
 that support microversions use `/m/<microversion>`; STEP export and variables use
 `/w/<workspace>`, as required by Onshape's API. After fetching everything, Dutchman
-reads the workspace microversion again. If it changed, it discards that attempt's
+reads the workspace microversion again. If it changed, it deletes that microversion's
 workspace-only responses and refetches once from the newly observed microversion.
 If the second attempt also changes, it stops without replacing the output:
 
 > the document changed while fetching; try again, or use a version link
 
 The call budget covers both attempts and every consistency check. A fetch that
-cannot afford its final check writes no bundle. Workspace-only responses become
-reusable cache entries only after a successful final head check.
+cannot afford its final check writes no bundle.
+
+### Continue a stopped fetch
+
+Every reply is saved to the cache as it arrives. A fetch that stops before it finishes,
+at the call limit, on a network failure, or when the app or computer restarts, keeps
+what it fetched. Run the same link again, the same day or later, and Dutchman sends only
+the calls it is missing: a fetch stopped one call short finishes with one call. Stop in
+the app ends a running fetch before its next call and keeps what it fetched; Continue
+fetching then sends only the missing calls.
+
+A stopped workspace fetch continues at the microversion it started from, so it does not
+read the current microversion again. Its final check proves that the workspace has not
+changed since that start, and only then are its saved workspace replies used. If the
+workspace changed in the meantime, the check finds the new microversion, the saved
+workspace replies are deleted, and the fetch starts over from the new state, as above.
 
 Successful manifests contain `consistent: true` and `file_sources`, a map from
 archive file path to `{ "path_kind": "m|v|w", "microversion": "..." }`. Every
@@ -477,11 +495,39 @@ All endpoints use API v17.
 
 ### Calls and cache
 
-`--max-calls` defaults to 50 and counts every HTTP attempt, including metadata,
-consistency checks, export creation, polling, download, retries, and a refetch.
-Dutchman stops **before** attempt 51 and prints the count on success or failure.
-This conservative local budget differs from Onshape's yearly billing, which may
-exclude unsuccessful requests. `--max-calls 0` permits cache reads only. `--json`
+Onshape's Free and Standard plans allow 2,500 API calls a year, so Dutchman tells you
+what a fetch will cost before it spends it. First it lists the document, which costs at
+most three calls (microversion, name, tab list) and is cached. From that listing it
+estimates the whole fetch: 30 calls for each Part Studio or assembly it will read (an
+assembly may use every Part Studio of the document; a Part Studio is read alone), plus the
+listing calls already made. Replies already in the cache cost no call and are not counted,
+in the estimate or in any limit.
+
+- **Up to 50 estimated calls:** it prints the estimate and fetches.
+- **Above 50:** it asks first. On a terminal the command line prints the estimate and asks
+  `y/N`. Off a terminal (a script, a pipe, `--json`) it stops before fetching and says to
+  pass `--yes`; nothing beyond the listing is spent. `--yes` allows the fetch.
+- **`--max-calls N`** is a hard ceiling that nothing goes past, and it is also your go: with
+  it the fetch runs without an estimate or a question and stops before call N+1.
+  `--max-calls 0` permits cache reads only.
+- **Without `--max-calls`** (after the go) the limit starts at 50 and grows as Dutchman
+  finds work: 30 more for each Part Studio or assembly and one more for each body-detail
+  request, up to an automatic ceiling of 2000 calls that no document can raise.
+
+Calls count every HTTP attempt, including metadata, consistency checks, export creation,
+polling, download, retries, and a refetch; the calls that listed the document count against
+the same limit. Dutchman stops **before** the attempt over the limit and prints the count on
+success or failure. This conservative local limit differs from Onshape's yearly billing,
+which may exclude unsuccessful requests. The MCP tool never prompts: above 50 estimated
+calls it returns error `onshape/approval` with `estimated_calls`, and the calling agent asks
+its user and calls again with an explicit `max_calls`. In the desktop app, a fetch above 50
+estimated calls asks "This document needs about N of your yearly Onshape API calls (2,500 on
+Free plans). Continue?" with Continue and Cancel before it fetches anything. If a fetch
+stops at the call limit, the Results card is titled Stopped (not Failed), says how many
+calls were made and about how many more are needed, and offers only Continue fetching; the
+footer reads "0 converted, 1 stopped". Continue fetching asks the same way with that number
+(or says it may use up to 2,000 more calls when it is unknown) and carries on over the
+cached replies (which cost nothing). While it fetches, the Results card counts the calls sent and, once the root Part Studio's feature list is read, the estimated total: one per body-detail state, configuration, variables, sketches, the STEP export (request, one poll, download) and, for a workspace, the final microversion check. Slow export polls and retries can take it past the estimate. `--json`
 returns the same `dutchman.onshape-fetch/1` report as MCP.
 
 Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,
@@ -489,9 +535,10 @@ scoped by a digest of the access key, document ID, microversion, and complete re
 path/query. Export cache keys also include the export options. No key is written
 there. Re-fetching an immutable version can cost zero calls. A fully cached
 workspace fetch costs two head checks, even when its microversion has not changed.
-Unverified workspace-only responses are discarded when an attempt changes or fails;
+Workspace-only responses are deleted when a check finds the workspace changed;
 immutable responses remain cached. Optional 404s become absence markers for that
-microversion. Immutable-version exports can resume a pending job after interruption.
+microversion. An export job interrupted after it started resumes polling instead of
+starting again.
 Keep the cache private; removing it spends calls again.
 
 STEP exports are polled at increasing intervals (one second, doubling to at most
