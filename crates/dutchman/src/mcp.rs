@@ -243,6 +243,10 @@ fn option_properties() -> Map<String, Value> {
             "type": "boolean",
             "description": "Replace an existing .sc file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
         },
+        "link_record": {
+            "type": "boolean",
+            "description": "Write <output stem>.link.json beside the design: which source file, and which of its bytes, it was converted from (default true).",
+        },
         "solidcraft_version": {
             "type": "string",
             "description": "Target SolidCraft release (x.y.z, at least 0.18.2). Defaults to the found CLI version, else the newest known at build time, even when verification is off."
@@ -637,7 +641,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 21] = [
+const OPTIONS: [&str; 22] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -657,6 +661,7 @@ const OPTIONS: [&str; 21] = [
     "stand_up",
     "no_stand_up",
     "overwrite",
+    "link_record",
     "project",
     "search",
 ];
@@ -769,6 +774,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_memory_check: flag(arguments, "no_memory_check", false)?,
         no_verify: !flag(arguments, "verify", true)?,
         write_replay: false,
+        no_link_record: !flag(arguments, "link_record", true)?,
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
         solidcraft_version,

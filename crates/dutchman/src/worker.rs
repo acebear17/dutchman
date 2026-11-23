@@ -405,6 +405,7 @@ impl ConvertOptions {
             (self.no_joints, "--no-joints"),
             (self.no_memory_check, "--no-memory-check"),
             (self.write_replay, "--write-replay"),
+            (self.no_link_record, "--no-link-record"),
         ] {
             if enabled {
                 args.push(flag.into());
@@ -545,6 +546,7 @@ fn convert_isolated_inner(
         ..limits.clone()
     };
     let limits = &set_limits;
+    let source = crate::link::snapshot(&job.input, options);
     #[cfg(debug_assertions)]
     let test_limits;
     #[cfg(debug_assertions)]
@@ -596,6 +598,15 @@ fn convert_isolated_inner(
     }
     if !left_out.is_empty() {
         mark_left_out(&mut report, &job.input, &left_out, limits);
+    }
+    if !options.no_link_record {
+        crate::link::write_for_report(
+            &job.input,
+            &job.output,
+            options,
+            source.as_ref(),
+            &mut report,
+        );
     }
     drop(copies);
     report
@@ -779,6 +790,9 @@ fn convert_once(
 ) -> (Value, Option<Option<String>>) {
     let mut options = options.clone();
     options.no_clobber = !job.replace;
+    // This process writes the link record, naming the file the job was asked to convert and not
+    // a private copy with a stuck design left out.
+    options.no_link_record = true;
     let mut command = Command::new(program);
     #[cfg(unix)]
     if shutdown.is_some() {

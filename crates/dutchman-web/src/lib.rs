@@ -449,7 +449,12 @@ async fn convert_in(
             .await
             .map_err(|err| server_error(&err))?;
     }
-    let mut options = ConvertOptions::default();
+    // An upload's source path is a scratch folder on this server, and the download holds only
+    // the designs, so no record is written.
+    let mut options = ConvertOptions {
+        no_link_record: true,
+        ..ConvertOptions::default()
+    };
     let mut files = 0usize;
     let mut total = 0u64;
     let mut zip_budget = app.config.zip;
