@@ -99,6 +99,13 @@ pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
     "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
 
+/// The third card's note for a Fusion tool library.
+pub const SEND_TOOLS_STEP_NOTE: &str =
+    "The other export of the same library lets us check every tool's sizes.";
+
+/// The panel's intro for a Fusion tool library.
+pub const SEND_TOOLS_INTRO: &str = "If tools are missing or their sizes are wrong, help us fix it:";
+
 pub const REPORT_HELP: &str = "Opens a prefilled GitHub issue under your GitHub username.";
 pub const MISSING_HELP: &str =
     "Choose the folder that holds them, or one of them, to convert this file again \
@@ -164,6 +171,10 @@ pub struct SendSteps {
     pub drag: bool,
     /// Whether to ask for a STEP export too.
     pub step_card: bool,
+    /// The third card's title and note: a STEP export of the design, or for a Fusion tool library
+    /// the same library exported the other way.
+    pub step_title: String,
+    pub step_note: Option<&'static str>,
 }
 
 impl SendSteps {
@@ -177,6 +188,10 @@ impl SendSteps {
         let dm_text = match (drag, surface) {
             (true, Surface::Desktop) => "Drag the file in (its folder is open).".to_owned(),
             (true, Surface::Web) => "Drag the file in (the file you picked).".to_owned(),
+            (false, _) if crate::tool_library::is_report(report) => format!(
+                "Paste the message. Dutchy replies with a private upload link for the tool library ({} hours).",
+                policy.private_link.hours
+            ),
             (false, _) => format!(
                 "Paste the message. Dutchy replies with a private upload link (up to {}).",
                 policy.link_limits()
@@ -184,13 +199,21 @@ impl SendSteps {
         };
         Self {
             dm_text,
-            intro: if report.get("ok").and_then(Value::as_bool) == Some(true) {
+            intro: if crate::tool_library::is_report(report) {
+                SEND_TOOLS_INTRO
+            } else if report.get("ok").and_then(Value::as_bool) == Some(true) {
                 SEND_CONVERTED_INTRO
             } else {
                 SEND_INTRO
             },
             drag,
             step_card: !source_is_step(report),
+            step_title: if crate::tool_library::is_report(report) {
+                crate::tool_library::other_export_title(report)
+            } else {
+                SEND_STEP_TITLE.to_owned()
+            },
+            step_note: crate::tool_library::is_report(report).then_some(SEND_TOOLS_STEP_NOTE),
         }
     }
 }
@@ -301,6 +324,19 @@ impl FileView {
             Status::Failed => ("Failed", 0),
             Status::Incomplete => ("Incomplete", 0),
             Status::Flattened => ("Converted, no history", 1),
+            Status::Converted | Status::ConvertedWithLosses
+                if report.is_some_and(crate::tool_library::is_report) =>
+            {
+                let left = report
+                    .and_then(|r| r.pointer("/tools/not_written"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                if left == 0 {
+                    ("Converted", 2)
+                } else {
+                    ("Converted, some tools left out", 1)
+                }
+            }
             Status::Converted | Status::ConvertedWithLosses => {
                 let word = match report.and_then(|r| r.get("mode")).and_then(Value::as_str) {
                     Some("partial_history") => "Partly converted",
@@ -580,6 +616,9 @@ pub fn missing_summary(missing: &[String]) -> String {
 
 /// What was written, in a sentence.
 pub fn outcome(report: &Value) -> String {
+    if crate::tool_library::is_report(report) {
+        return crate::tool_library::outcome(report);
+    }
     let mut text = outcome_without_memory_note(report);
     if let Some(message) = json::unplaced_message(report) {
         text.push_str(&format!(" {message}"));

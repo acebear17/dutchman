@@ -71,6 +71,19 @@ fn running_file_line(rows: &[Row]) -> Option<String> {
     ))
 }
 
+/// Whether `path` is a file Dutchman converts by itself: a design in a known format, or a Fusion
+/// tool library (written as CamCraft's `.camtools`).
+fn is_known_file(path: &Path) -> bool {
+    dutchman_core::Format::from_path(path).is_some() || dutchman::tool_library::is_library(path)
+}
+
+/// The reader's status line for `path`, whichever kind of file it is.
+fn status_line(path: &Path) -> Option<String> {
+    dutchman_core::Format::from_path(path)
+        .map(|format| format.status_for(path))
+        .or_else(|| dutchman::tool_library::status(path))
+}
+
 /// The "last shown" Part positions choice, naming the program when every queued design comes from one.
 fn last_shown_label(inputs: &[PathBuf]) -> String {
     let mut families = inputs
@@ -94,8 +107,7 @@ impl Row {
             self.report.as_ref(),
         );
         if view.capability.is_none() {
-            view.capability = dutchman_core::Format::from_path(&self.input)
-                .map(|format| format.status_for(&self.input));
+            view.capability = status_line(&self.input);
         }
         view
     }
@@ -1019,6 +1031,14 @@ impl App {
         self.estimate_key = None;
     }
 
+    /// Shows `text` as the Designs summary and drops any plan still being made, for screenshots
+    /// of files that do not exist on this machine.
+    #[cfg(feature = "test-support")]
+    pub fn set_project_summary_for_test(&mut self, text: &str) {
+        self.estimate_generation += 1;
+        self.project_summary = text.to_owned();
+    }
+
     #[cfg(feature = "test-support")]
     pub fn set_checker_for_test(&mut self, found: bool) {
         self.checker = if found {
@@ -1609,7 +1629,7 @@ impl App {
             && self
                 .inputs
                 .first()
-                .is_some_and(|input| dutchman_core::Format::from_path(input).is_some());
+                .is_some_and(|input| is_known_file(input));
         let text = if single_file {
             sentences.first()?.clone()
         } else {
@@ -2523,21 +2543,14 @@ impl App {
                                 ui,
                                 |ui| {
                                     ui.vertical(|ui| {
-                                        let folder =
-                                            if dutchman_core::Format::from_path(input).is_some() {
-                                                input.parent().filter(|parent| {
-                                                    !parent.as_os_str().is_empty()
-                                                        && *parent != Path::new(".")
-                                                })
-                                            } else {
-                                                Some(input.as_path())
-                                            };
-                                        // Keep real folders and their estimates in one paragraph.
+                                        // Each entry shows its name, not its path; the full path is
+                                        // in the tooltip. A folder or link has no separate name
+                                        // line, so its name leads the paragraph with the estimate.
+                                        let known = is_known_file(input);
                                         let mut line = egui::text::LayoutJob::default();
-                                        let mut tooltip = String::new();
-                                        if let Some(folder) = folder {
-                                            tooltip = display(folder);
-                                            RichText::new(&tooltip).append_to(
+                                        let mut tooltip = display(input);
+                                        if !known {
+                                            RichText::new(file_name(input)).append_to(
                                                 &mut line,
                                                 ui.style(),
                                                 egui::FontSelection::Default,
@@ -2547,8 +2560,7 @@ impl App {
                                         if let Some((text, hover, large)) =
                                             estimate.as_ref().filter(|_| index == 0)
                                         {
-                                            let prefix =
-                                                if folder.is_some() { " — " } else { "" };
+                                            let prefix = if known { "" } else { " — " };
                                             RichText::new(format!("{prefix}{text}"))
                                                 .small()
                                                 .color(if *large { p.lantern_text } else { p.tide })
@@ -2558,26 +2570,19 @@ impl App {
                                                     egui::FontSelection::Default,
                                                     Align::Center,
                                                 );
-                                            if !tooltip.is_empty() {
-                                                tooltip.push('\n');
-                                            }
+                                            tooltip.push('\n');
                                             tooltip.push_str(hover);
                                         }
                                         if !line.text.is_empty() {
                                             ui.add(egui::Label::new(line).wrap())
-                                                .on_hover_text(tooltip);
+                                                .on_hover_text(tooltip.clone());
                                         }
-                                        if dutchman_core::Format::from_path(input).is_some()
-                                            && (self.inputs.len() > 1 || estimate.is_none())
-                                        {
-                                            ui.add(egui::Label::new(file_name(input)).wrap());
+                                        if known && (self.inputs.len() > 1 || estimate.is_none()) {
+                                            ui.add(egui::Label::new(file_name(input)).wrap())
+                                                .on_hover_text(display(input));
                                         }
-                                        if let Some(format) =
-                                            dutchman_core::Format::from_path(input)
-                                        {
-                                            ui.add(
-                                                egui::Label::new(format.status_for(input)).wrap(),
-                                            );
+                                        if let Some(status) = status_line(input) {
+                                            ui.add(egui::Label::new(status).wrap());
                                         }
                                     });
                                 },
@@ -3097,6 +3102,10 @@ impl App {
                         }
                     });
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Fusion tool library (.tools, .json)");
+                    ui.label(dutchman::tool_library::WORDS);
+                });
             });
         });
         if self.running() && self.diagnostic_stopped {
@@ -3464,9 +3473,14 @@ impl App {
             ];
             if step_card {
                 cards.push(report_panel::Card {
-                    title: present::SEND_STEP_TITLE,
+                    title: steps
+                        .as_ref()
+                        .map_or(present::SEND_STEP_TITLE, |steps| steps.step_title.as_str()),
                     button: None,
-                    hint: report_panel::STEP_TEXT,
+                    hint: steps
+                        .as_ref()
+                        .and_then(|steps| steps.step_note)
+                        .unwrap_or(report_panel::STEP_TEXT),
                     done: None,
                 });
             }
@@ -3626,12 +3640,13 @@ enum Action {
 
 /// Completed designs with missing history or degraded content need review.
 fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::Color32 {
-    let needs_review = report
-        .is_some_and(|report| report.get("mode").and_then(Value::as_str) != Some("history"))
-        || view
-            .losses
-            .iter()
-            .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
+    let needs_review = report.is_some_and(|report| {
+        !dutchman::tool_library::is_report(report)
+            && report.get("mode").and_then(Value::as_str) != Some("history")
+    }) || view
+        .losses
+        .iter()
+        .any(|group| matches!(group.level.as_str(), "Degraded" | "Dropped"))
         || view
             .components
             .iter()
@@ -3681,19 +3696,26 @@ fn row_ui(
             .on_hover_text(display(&row.input));
     });
     let stopped = row.status == Status::Stopped;
-    let step_button = !running && row.report.is_some() && !stopped;
+    let tool_library = row
+        .report
+        .as_ref()
+        .is_some_and(dutchman::tool_library::is_report);
+    // A tool library has no design to open and no STEP to match.
+    let step_button = !running && row.report.is_some() && !stopped && !tool_library;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
         // One row of buttons under it.
         theme::control_row(ui, |ui| {
             if let Some(output) = output {
-                if is_macro {
+                if is_macro || tool_library {
                     if ui.button("Show in folder").clicked() {
                         action = Some(Action::Reveal(output.clone()));
                     }
-                    ui.label("Run macro in FreeCAD")
-                        .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                    if is_macro {
+                        ui.label("Run macro in FreeCAD")
+                            .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                    }
                 } else {
                     let open = ui.button("Open in SolidCraft");
                     let open = if has_app {
@@ -4356,7 +4378,8 @@ mod tests {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
             {
-                assert!(harness.query_by_label(&display(parent)).is_some());
+                // Entries show their name; the folder is only in the tooltip.
+                assert!(harness.query_by_label(&display(parent)).is_none());
             }
         }
     }
@@ -5302,7 +5325,8 @@ mod tests {
                         app
                     });
                 h.run_steps(8);
-                let paragraph = format!("{} — {sentence}", display(&folder));
+                // The entry shows its name, with the full path in the tooltip.
+                let paragraph = format!("{} — {sentence}", file_name(&folder));
                 let text_rect = h.get_by_label(&paragraph).rect();
                 let remove = h.get_by_label("Remove").rect();
                 assert!(text_rect.right() < remove.left());

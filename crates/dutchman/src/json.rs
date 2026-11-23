@@ -67,6 +67,9 @@ pub(crate) fn repro_anonymous(
 
 /// The input file as the reports describe it.
 pub fn input(path: &Path) -> Value {
+    if crate::tool_library::is_library(path) {
+        return crate::tool_library::input(path);
+    }
     let format = Format::from_path(path);
     json!({
         "path": path.display().to_string(),
@@ -81,6 +84,11 @@ pub fn input(path: &Path) -> Value {
 /// A conversion's input capability, before its result.
 pub fn status_line(report: &Value) -> Option<String> {
     let input = report.get("input")?;
+    if crate::tool_library::is_report(report) {
+        return Some(crate::tool_library::status_text(
+            input.get("extension")?.as_str()?,
+        ));
+    }
     Some(format!(
         "{} .{}: {}",
         input.get("program")?.as_str()?,
