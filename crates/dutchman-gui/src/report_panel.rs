@@ -194,13 +194,6 @@ pub fn link(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
     ui.add(egui::Button::new(RichText::new(label).color(p.spectre).underline()).frame(false))
 }
 
-/// A small backup link below the primary reporting steps.
-pub fn backup_link(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(label).small().color(p.spectre).underline()).frame(false),
-    )
-}
-
 /// The message copied for Dutchy's DM about a finished file: what happened, the details line
 /// Dutchy reads (in the policy's fixed wording, so automatic upload links keep working) and a
 /// last line for the person's own words, where the cursor lands after pasting.

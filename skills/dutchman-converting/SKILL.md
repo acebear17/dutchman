@@ -1081,7 +1081,7 @@ form without private names or paths. The desktop offers these actions in its alw
 **Is there a problem? Is something missing?** panel, pinned below output controls in wide
 windows. In narrow windows, **Report a problem…** (or **Report this design…** with a result
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
-Discord comes first; **File a GitHub issue** is a small backup link. **Review and send report**
+Discord comes first; **File a GitHub issue ↗** is a backup button. **Review and send report**
 sits beside it; **More** has AI help and diagnosis. **Report this file…** selects the file
 in the same panel.
 Partial history says **Partly converted**; geometry-only or flattened results say
@@ -1095,7 +1095,7 @@ roles and sizes. Never show or transmit bundle contents through an assistant. Ca
 report, its bundle/summary choice and separate public-test permission. The public-test
 box defaults false. Whole-file sending uses the private Discord steps. On delivery failure
 keep the local report; retry later only when the user asks. **Review and send report** opens
-the review for a direct cloud-inbox upload; opening it sends nothing. **File a GitHub issue**
+the review for a direct cloud-inbox upload; opening it sends nothing. **File a GitHub issue ↗**
 opens the public issue form under the user’s GitHub name. Share only the report contents
 there, never a geometry bundle. The desktop app selects summary when no bundle is available;
 Send becomes Retry only after delivery fails. Optional Discord claims are copied locally and pasted by the user.

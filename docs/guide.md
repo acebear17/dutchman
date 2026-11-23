@@ -904,7 +904,7 @@ selected) stays above **Convert** and scrolls to the full numbered cards in the 
 See [reporting a problem](desktop.md#reporting-a-problem).
 
 Report consent is per report. In the desktop app, Discord is the first route, with a small
-**File a GitHub issue** backup link below the three steps. **Review and send report** is a button beside it
+**File a GitHub issue ↗** backup button below the three steps. **Review and send report** is a button beside it
 (greyed out until the file finishes); **More** holds AI help and diagnosis. It opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
@@ -917,7 +917,7 @@ Nothing is sent before clicking Send. A report is sent only when a matching rece
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-**Review and send report** sends to the cloud inbox after review. **File a GitHub issue** opens the
+**Review and send report** sends to the cloud inbox after review. **File a GitHub issue ↗** opens the
 prefilled public issue form under your GitHub username. Never attach a geometry bundle
 there. For a converted result the form asks what differs from the original, without claiming conversion failed.
 

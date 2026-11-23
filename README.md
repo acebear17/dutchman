@@ -155,7 +155,7 @@ or please send a file that converts wrong, with a STEP export of the exact same 
 
 The desktop app always shows **Is there a problem? Is something missing?** at the bottom left:
 join the Discord server, then DM Dutchy. The secondary buttons
-**File a GitHub issue** and, last, **Review and send report** sit directly below the three steps. The
+**File a GitHub issue ↗** and, last, **Review and send report** sit directly below the three steps. The
 anonymous report review shows
 exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
 The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support

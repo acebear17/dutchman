@@ -1833,7 +1833,7 @@ No report fields or schema versions change.
 The desktop report panel stays visible below output controls in wide windows. Narrow
 windows pin **Report a problem…** (or **Report this design…** with a result selected) above
 **Convert**; it scrolls to the full numbered cards in the page. Discord comes first, with
-a small **File a GitHub issue** backup link (a public issue under the user's GitHub name).
+a **File a GitHub issue ↗** backup button (a public issue under the user's GitHub name).
 **Review and send report**, beside it, opens review before direct cloud upload.
 Partial history says **Partly converted**; geometry-only or flattened results say
 **Converted, no history**, in amber. Full history keeps **Converted** in green unless
@@ -1918,7 +1918,7 @@ that scope. Neither assignment is applied to the shared component definition.
 No report fields or schema versions change.
 
 The desktop secondary buttons are **Review and send report** (review before direct cloud upload)
-and **File a GitHub issue** (a public issue under the user’s GitHub name).
+and **File a GitHub issue ↗** (a public issue under the user’s GitHub name).
 
 Meeting 3D curve endpoints do not create relations without a decoded source relation.
 

@@ -130,7 +130,7 @@ pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
 }
 
 /// The secondary way to report a failed file: nothing of the file, no names.
-pub const REPORT_BUTTON: &str = "File a GitHub issue";
+pub const REPORT_BUTTON: &str = "File a GitHub issue ↗";
 /// The folded section of a failed card that holds the other ways to send the file.
 pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =

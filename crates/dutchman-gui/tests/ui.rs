@@ -265,7 +265,7 @@ fn a_file_that_cannot_convert_says_why() {
     harness.get_by_label(dutchman_gui::report_panel::QUESTION);
     harness.get_by_label("Copy and open DM");
     harness
-        .query_all_by_label("File a GitHub issue")
+        .query_all_by_label("File a GitHub issue ↗")
         .next()
         .unwrap()
         .click_accesskit();
@@ -1941,7 +1941,7 @@ mod consent_e2e {
                 .query_by_label("Send the whole file privately")
                 .is_some());
             assert!(harness
-                .query_all_by_label("File a GitHub issue")
+                .query_all_by_label("File a GitHub issue ↗")
                 .next()
                 .is_some());
         }
@@ -1957,7 +1957,7 @@ mod consent_e2e {
 
     fn walkthrough_extras(harness: &mut Harness<'static, App>, report: &Value) {
         harness
-            .query_all_by_label("File a GitHub issue")
+            .query_all_by_label("File a GitHub issue ↗")
             .next()
             .unwrap()
             .click_accesskit();
@@ -2537,8 +2537,8 @@ fn anonymous_report_only_opens_review_and_sends_nothing() {
         format!("http://{}/api/reports", listener.local_addr().unwrap()),
         None,
     );
-    assert_eq!(h.query_all_by_label("File a GitHub issue").count(), 1);
-    let github = h.get_by_label("File a GitHub issue").rect();
+    assert_eq!(h.query_all_by_label("File a GitHub issue ↗").count(), 1);
+    let github = h.get_by_label("File a GitHub issue ↗").rect();
     let dm = h.get_by_label("Copy and open DM").rect();
     assert!(github.top() > dm.bottom());
     // The cloud report is the last route: after the GitHub link, on its row or below it.
@@ -5272,7 +5272,7 @@ fn cloud_report_button_is_visible_and_enabled_once_the_file_has_a_report() {
     assert!(harness
         .query_by_label(dutchman_gui::report_panel::CLOUD_REPORT_WAIT)
         .is_none());
-    let github = harness.get_by_label("File a GitHub issue").rect();
+    let github = harness.get_by_label("File a GitHub issue ↗").rect();
     let cloud = button.rect();
     assert!(github.right() <= cloud.left() || github.bottom() <= cloud.top());
 }
@@ -5365,7 +5365,7 @@ fn report_buttons_screenshots() {
             &mut index,
             "report-buttons-finished",
             name,
-            "Finished file: File a GitHub issue first, Review and send report last.",
+            "Finished file: File a GitHub issue ↗ first, Review and send report last.",
         );
 
         let mut harness = Harness::builder()

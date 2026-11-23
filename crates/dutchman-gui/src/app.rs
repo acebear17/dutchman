@@ -3496,7 +3496,11 @@ impl App {
                 Some(Step::Github) | None => {}
             }
             ui.horizontal_wrapped(|ui| {
-                if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
+                if ui
+                    .button(present::REPORT_BUTTON)
+                    .on_hover_text(present::REPORT_HELP)
+                    .clicked()
+                {
                     action = Some(Action::Report(selected.filter(|_| report.is_some())));
                 }
                 if let Some((index, _)) = row {
