@@ -446,3 +446,84 @@ fn solidworks_assembly_resolves_parts_and_keeps_reader_losses() {
         );
     }
 }
+
+/// FreeCAD saves a feature that failed its last recompute as `Invalid="1"` with its message
+/// on the object. The fixture's Fillet (labelled "Edge rounding") has that; its Body is only
+/// touched, which is not an error.
+#[cfg(feature = "freecad")]
+#[test]
+fn errors_a_freecad_file_already_had_are_reported_apart_from_losses() {
+    let mut report = Report::default();
+    read(
+        Format::FreeCadDocument,
+        &fixture("freecad_preexisting_error.FCStd"),
+        &mut report,
+    )
+    .unwrap();
+    let errors = report.source_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].name, "Fillet");
+    assert_eq!(errors[0].label, "Edge rounding");
+    assert_eq!(
+        errors[0].message.as_deref(),
+        Some("BRep_API: command not done")
+    );
+    assert_eq!(
+        report.source_errors_message().unwrap(),
+        "This file already had errors in FreeCAD before converting: Edge rounding (fix them in \
+         FreeCAD for a full conversion)."
+    );
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| !loss.detail.contains("already had errors")),
+        "{report:?}"
+    );
+
+    // A file with no failed feature says nothing.
+    let mut clean = Report::default();
+    read(
+        Format::FreeCadDocument,
+        &fixture("design_history.FCStd"),
+        &mut clean,
+    )
+    .unwrap();
+    assert!(clean.source_errors().is_empty());
+    assert_eq!(clean.source_errors_message(), None);
+}
+
+#[test]
+fn a_step_file_with_a_product_and_no_shapes_says_it_is_an_empty_export() {
+    let err = read(
+        Format::Step,
+        &fixture("empty_export.step"),
+        &mut Report::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::EmptyExport(_)), "{err}");
+    assert_eq!(err.kind(), "decode");
+    assert_eq!(err.cause(), Some("empty_export"));
+    assert_eq!(
+        err.to_string(),
+        "This STEP file contains no shapes: it has a product but no solids, surfaces or curves, so the program that wrote it exported an empty design. Check the design has bodies, then export it again."
+    );
+    assert!(err
+        .to_string()
+        .starts_with("This STEP file contains no shapes"));
+}
+
+#[test]
+fn a_step_file_with_only_a_curve_reads_and_is_not_an_empty_export() {
+    let text = std::fs::read_to_string(fixture("empty_export.step"))
+        .unwrap()
+        .replace(
+            "#25 = COLOUR_RGB",
+            "#26 = CARTESIAN_POINT('',(0.,0.,0.));\n#27 = DIRECTION('',(1.,0.,0.));\n#28 = VECTOR('',#27,1.);\n#29 = LINE('',#26,#28);\n#25 = COLOUR_RGB",
+        );
+    let path = scratch("with_curve.step", text.as_bytes());
+    // A curve is geometry, so the file is read; it is never reported as an empty export.
+    if let Err(err) = read(Format::Step, &path, &mut Report::default()) {
+        panic!("a STEP file holding a curve must read, got: {err}");
+    }
+}

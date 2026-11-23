@@ -210,7 +210,7 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.45), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.46), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.40.0) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
@@ -340,7 +340,8 @@ arc carriers prove the profile lies on one side of it. SolidCraft 0.18.2 and 0.2
 sweep toward the sketch normal for a positive angle, independently of the axis direction;
 the writer signs the angle to preserve the source's right-hand sweep. Unproven sides and
 unequal partial two-sided revolves remain blockers;
-lofts through two to fifty profile or terminal point sections,
+lofts through two to fifty profile or terminal point sections (a section may be one face of
+the model as it was earlier, rebuilt as a sketch of its boundary and proven on the replay),
 open, smooth (or ruled through two sections without rails), solid or surface (a surface loft
 becomes a new surface body, without point ends), guided by up to two rails of sketch curves or
 one-curve whole sketches (sections can select separate regions of one sketch; resolved point and

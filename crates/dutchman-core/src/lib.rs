@@ -29,6 +29,7 @@ mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
+mod source_errors;
 #[cfg(test)]
 mod test_products;
 pub mod time;
@@ -161,7 +162,7 @@ impl Model {
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
-    PartHistory, Report, Severity, Stage,
+    PartHistory, Report, Severity, SourceError, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
@@ -171,6 +172,13 @@ pub fn is_native_binder(kind: &str) -> bool {
         kind,
         "PartDesign::SubShapeBinder" | "PartDesign::ShapeBinder"
     )
+}
+
+/// Whether a source-native CADIR operation is a coordinate frame the source keeps only as
+/// construction references and expressions (a Fusion Coordinate System whose solved frame
+/// cadmpeg does not state). It builds no geometry; like a binder it is a helper.
+pub fn is_native_coordinate_system(kind: &str) -> bool {
+    kind == "CoordinateSystem"
 }
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
