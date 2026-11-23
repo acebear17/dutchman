@@ -12,7 +12,11 @@ use super::json::{kind, literal, midpoint, number, payload, vector, xyz};
 use super::ops::{refuse_stated, Built, Note};
 use super::CODE_REFERENCE_FACES;
 
+/// The operand keys of a fillet or chamfer that the projection reads or ignores by design.
+const BLEND_KEYS: &[&str] = &["sets", "controls", "native_options", "source_settings"];
+
 pub(super) fn fillet(feature: &str, operation: &Value) -> Result<Built, String> {
+    refuse_stated(operation, BLEND_KEYS, &[])?;
     default_controls(operation)?;
     let sets = sets(operation)?;
     let mut built = Built::new(json!(null), Vec::new());
@@ -25,7 +29,16 @@ pub(super) fn fillet(feature: &str, operation: &Value) -> Result<Built, String> 
                 kind(set).unwrap_or("something malformed")
             ));
         }
-        refuse_stated(set, &[("spine", "a spine")])?;
+        refuse_stated(
+            set,
+            &["kind", "edges", "section", "hold"],
+            &[("spine", "a spine")],
+        )?;
+        refuse_stated(
+            set.get("section").unwrap_or(&Value::Null),
+            &["size", "profile", "weight"],
+            &[],
+        )?;
         if set
             .get("hold")
             .and_then(Value::as_array)
@@ -76,6 +89,7 @@ pub(super) fn fillet(feature: &str, operation: &Value) -> Result<Built, String> 
 }
 
 pub(super) fn chamfer(feature: &str, operation: &Value) -> Result<Built, String> {
+    refuse_stated(operation, BLEND_KEYS, &[])?;
     default_controls(operation)?;
     let sets = sets(operation)?;
     let mut built = Built::new(json!(null), Vec::new());
@@ -84,7 +98,11 @@ pub(super) fn chamfer(feature: &str, operation: &Value) -> Result<Built, String>
     let mut flipped = None;
     let mut reference_unread = false;
     for set in sets {
-        refuse_stated(set, &[("measure", "a measure")])?;
+        refuse_stated(
+            set,
+            &["edges", "size", "reference", "flip"],
+            &[("measure", "a measure")],
+        )?;
         if let Some(reference) = set.get("reference") {
             // The mapper infers the setback faces of an unequal chamfer from the final body.
             if reference.pointer("/picks/kind").and_then(Value::as_str) != Some("unread") {

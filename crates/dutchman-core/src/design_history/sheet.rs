@@ -3,7 +3,7 @@
 use serde_json::{json, Map, Value};
 
 use super::json::{kind, number, payload};
-use super::ops::{profile, Built, Note};
+use super::ops::{profile, refuse_stated, Built, Note};
 use super::sketch::Sketches;
 use super::{Plan, CODE_SHEET_RULE};
 
@@ -13,6 +13,11 @@ pub(super) fn project(
     plan: &Plan,
     sketches: &Sketches<'_>,
 ) -> Result<Built, String> {
+    refuse_stated(
+        operation,
+        &["kind", "native_options", "source_settings"],
+        &[],
+    )?;
     let wall = operation.get("kind").unwrap_or(&Value::Null);
     if kind(wall) != Some("wall") {
         return Err(format!(
@@ -21,6 +26,7 @@ pub(super) fn project(
         ));
     }
     let wall = payload(wall);
+    refuse_stated(wall, &["kind", "profile", "thickness", "side", "rule"], &[])?;
     let (sketch, carrier) = profile(wall.get("profile"), plan, sketches)?;
     let mut row = Map::new();
     // A base flange names its profile without the planar wrapper an extrude puts around it.

@@ -11,6 +11,17 @@ const MAX_INSTANCES: u32 = 10_000;
 
 /// The pattern operation as the model-history `pattern` row.
 pub(super) fn project(operation: &Value, plan: &Plan) -> Result<Built, String> {
+    refuse_stated(
+        operation,
+        &[
+            "seeds",
+            "layout",
+            "instances",
+            "native_options",
+            "source_settings",
+        ],
+        &[],
+    )?;
     let instances = operation.get("instances").unwrap_or(&Value::Null);
     if kind(instances) != Some("implicit")
         || payload(instances)
@@ -125,7 +136,11 @@ struct Run {
 }
 
 fn run(run: &Value, what: &str) -> Result<Run, String> {
-    refuse_stated(run, &[("seed", "a seed instance other than the first")])?;
+    refuse_stated(
+        run,
+        &["spacing", "sides", "increments"],
+        &[("seed", "a seed instance other than the first")],
+    )?;
     if run
         .get("increments")
         .and_then(Value::as_array)
@@ -186,6 +201,7 @@ fn layout(layout: &Value) -> Result<Value, String> {
     let body = payload(layout);
     match kind(layout) {
         Some("linear") => {
+            refuse_stated(body, &["kind", "first", "second", "seed_only"], &[])?;
             if let Some(only) = body.get("seed_only") {
                 if literal(only).and_then(Value::as_bool) != Some(false) {
                     return Err("it keeps only the seed, which is not projected yet".to_owned());
@@ -219,6 +235,7 @@ fn layout(layout: &Value) -> Result<Value, String> {
         Some("circular") => {
             refuse_stated(
                 body,
+                &["kind", "axis", "angular"],
                 &[
                     ("radial", "a radial run"),
                     ("orientation", "an instance orientation"),
@@ -246,7 +263,11 @@ fn layout(layout: &Value) -> Result<Value, String> {
             }))
         }
         Some("mirror") => {
-            refuse_stated(body, &[("stitch_tolerance", "a stitch tolerance")])?;
+            refuse_stated(
+                body,
+                &["kind", "plane"],
+                &[("stitch_tolerance", "a stitch tolerance")],
+            )?;
             let plane = body.get("plane").and_then(|plane| plane.get("resolved"));
             let origin = plane.and_then(|plane| plane.get("origin"));
             let normal = plane.and_then(|plane| plane.get("normal"));

@@ -5,6 +5,7 @@
 use cadmpeg_ir::CadIr;
 use serde_json::{json, Value};
 
+use super::ops::{refuse_stated, EXTRUDE_KEYS, REVOLVE_KEYS};
 use super::{
     project, CODE_CONSTRUCTION, CODE_DECLINED, CODE_FEATURE, CODE_PROJECTED, CODE_ROLLED_BACK,
 };
@@ -476,6 +477,63 @@ fn an_operand_not_projected_yet_is_refused_not_guessed() {
         wire["sketches"][0]["placement"],
         json!({"kind": "unresolved"})
     );
+}
+
+/// Projects a one-feature history whose operation carries one extra operand, and returns the
+/// detail of the refusal.
+fn refusal_with(mut operation: Value, key: &str, value: Value) -> String {
+    operation["value"][key] = value;
+    let mut ir = design_only(
+        vec![feature(1, "Feature", operation)],
+        vec![square_sketch(1, 1)],
+        None,
+    );
+    let mut report = Report::default();
+    let written = project(&mut ir, &mut report).unwrap();
+    assert_eq!(written.unprojected, 1);
+    assert_eq!(operation_kind(&ir), "native");
+    report
+        .losses()
+        .iter()
+        .find(|loss| loss.code.as_deref() == Some(CODE_FEATURE))
+        .map(|loss| loss.detail.clone())
+        .expect("the refusal is reported")
+}
+
+fn operation_kind(ir: &CadIr) -> String {
+    operation(&rows(ir)[1])["kind"].as_str().unwrap().to_owned()
+}
+
+#[test]
+fn stated_loops_refuse_the_feature_by_name() {
+    let nesting = json!("one_level");
+    let detail = refusal_with(
+        extrude(1, Some(blind(5.0)), new_body()),
+        "loops",
+        nesting.clone(),
+    );
+    assert!(detail.contains("loop"), "{detail}");
+    let detail = refusal_with(revolve(1, blind(1.0)), "loops", nesting);
+    assert!(detail.contains("loop"), "{detail}");
+}
+
+#[test]
+fn an_operand_outside_the_allowlist_is_refused_naming_the_key() {
+    // The typed CADIR rejects an unknown field, so the allowlist is exercised on the wire value.
+    let operation = json!({"profile": {}, "span": {}, "native_options": {}, "source_settings": {},
+        "taper_angle": {"kind": "literal", "value": 1.0}});
+    let refusal = refuse_stated(&operation, EXTRUDE_KEYS, &[]).unwrap_err();
+    assert!(refusal.contains("taper_angle"), "{refusal}");
+    let operation = json!({"profile": {}, "twist": true});
+    let refusal = refuse_stated(&operation, REVOLVE_KEYS, &[]).unwrap_err();
+    assert!(refusal.contains("twist"), "{refusal}");
+    // Unstated extras (null or empty) and the known keys do not refuse.
+    let operation = json!({"profile": {}, "axis": {}, "twist": null, "tags": [], "note": ""});
+    assert!(refuse_stated(&operation, REVOLVE_KEYS, &[]).is_ok());
+    // A named operand keeps its own description.
+    let operation = json!({"profile": {}, "draft": {"angle": 1.0}});
+    let refusal = refuse_stated(&operation, EXTRUDE_KEYS, &[("draft", "a draft")]).unwrap_err();
+    assert!(refusal.contains("a draft"), "{refusal}");
 }
 
 #[test]

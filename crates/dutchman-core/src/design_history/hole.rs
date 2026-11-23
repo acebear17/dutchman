@@ -14,6 +14,16 @@ pub(super) fn project(operation: &Value) -> Result<Built, String> {
     refuse_stated(
         operation,
         &[
+            "positions",
+            "direction",
+            "shape",
+            "extent",
+            "thread",
+            "series",
+            "native_options",
+            "source_settings",
+        ],
+        &[
             ("start", "a start face"),
             ("standard", "a standard size"),
             ("targets", "target bodies"),
@@ -35,6 +45,7 @@ pub(super) fn project(operation: &Value) -> Result<Built, String> {
     }
     refuse_stated(
         shape,
+        &["kind", "diameter", "head", "bottom"],
         &[
             ("taper", "a taper"),
             ("near_chamfer", "an entry chamfer"),

@@ -849,3 +849,69 @@ fn every_projected_row_of_every_kind_says_where_it_came_from() {
         assert_eq!(row["source_properties"]["projected_from"], "design");
     }
 }
+
+fn empty_plan() -> crate::design_history::Plan {
+    crate::design_history::Plan {
+        order: crate::design_history::timeline::Order {
+            members: Vec::new(),
+            rolled_back: std::collections::BTreeSet::new(),
+        },
+        features: std::collections::BTreeMap::new(),
+        sketch_features: std::collections::BTreeMap::new(),
+        owned: std::collections::BTreeMap::new(),
+    }
+}
+
+/// The typed CADIR rejects an unknown field, so the allowlists are exercised on wire values:
+/// an operand outside the known set refuses the feature by name, whichever operation reads it.
+#[test]
+fn an_operand_outside_an_operations_allowlist_is_refused_naming_the_key() {
+    let extra = |mut value: Value, key: &str| {
+        value[key] = json!({"kind": "literal", "value": 1});
+        value
+    };
+    let plan = empty_plan();
+    let sketches_design = json!({});
+    let sketches = crate::design_history::sketch::Sketches::new(&sketches_design);
+    let refusals = [
+        (
+            "hole_twist",
+            crate::design_history::hole::project(&extra(
+                hole(json!({"kind": "plain"}), Some(amount(5.0)))["value"].clone(),
+                "hole_twist",
+            ))
+            .err(),
+        ),
+        ("bore_twist", {
+            let mut value = hole(json!({"kind": "plain"}), Some(amount(5.0)))["value"].clone();
+            value["shape"] = extra(value["shape"].clone(), "bore_twist");
+            crate::design_history::hole::project(&value).err()
+        }),
+        (
+            "pattern_twist",
+            crate::design_history::pattern::project(&extra(json!({}), "pattern_twist"), &plan)
+                .err(),
+        ),
+        (
+            "sheet_twist",
+            crate::design_history::sheet::project(
+                &extra(json!({}), "sheet_twist"),
+                &plan,
+                &sketches,
+            )
+            .err(),
+        ),
+        (
+            "fillet_twist",
+            crate::design_history::blend::fillet("f", &extra(json!({}), "fillet_twist")).err(),
+        ),
+        (
+            "chamfer_twist",
+            crate::design_history::blend::chamfer("f", &extra(json!({}), "chamfer_twist")).err(),
+        ),
+    ];
+    for (key, refusal) in refusals {
+        let refusal = refusal.unwrap_or_else(|| panic!("{key} was not refused"));
+        assert!(refusal.contains(key), "{refusal}");
+    }
+}
