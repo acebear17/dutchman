@@ -467,6 +467,7 @@ fn decode_unguarded(
     }
     drop_removed_bodies(&mut ir, report);
     drop_inactive_configuration_bodies(&mut ir, report);
+    crate::design_history::project(&mut ir, report);
 
     let model = Model {
         ir,
