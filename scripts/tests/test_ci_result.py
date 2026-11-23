@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class CiResultTests(unittest.TestCase):
     def check_results(self, event, release=False, failed=None, results=None, docs=False, platform=False, floor=False,
-                      placements=False):
+                      placements=False, lockfile=False):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         script = workflow.split('echo "$RESULTS" | python3 -c \'\n', 1)[1]
         script = textwrap.dedent(script.rsplit("\n          '", 1)[0])
@@ -34,6 +34,10 @@ class CiResultTests(unittest.TestCase):
             needs["placements"]["result"] = "success"
             needs["solidcraft-roundtrip"]["result"] = "success"
         needs["changes"]["outputs"].update(platform=str(platform).lower(), floor=str(floor).lower())
+        if lockfile:
+            needs["changes"]["outputs"]["lockfile"] = "true"
+            active.add("msrv")
+            needs["msrv"]["result"] = "success"
         if event == "pull_request" and placements:
             needs["changes"]["outputs"]["placements"] = "true"
             active.add("placements")
@@ -102,6 +106,14 @@ class CiResultTests(unittest.TestCase):
         result = self.check_results("pull_request", results={"placements": "success"})
         self.assertNotEqual(result.returncode, 0)
 
+    def test_a_cargo_lock_change_requires_the_msrv_build(self):
+        for event in ("pull_request", "merge_group"):
+            with self.subTest(event=event):
+                result = self.check_results(event, lockfile=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.check_results(event, lockfile=True, failed="msrv")
+                self.assertNotEqual(result.returncode, 0)
+
     def test_queue_requires_the_solidcraft_replay(self):
         result = self.check_results("merge_group", failed="solidcraft-roundtrip")
         self.assertNotEqual(result.returncode, 0)
@@ -138,6 +150,7 @@ class CiResultTests(unittest.TestCase):
                       "needs.changes.outputs.full": "false", "needs.changes.outputs.code": "true",
                       "needs.changes.outputs.rust": "true", "needs.changes.outputs.docker": "true",
                       "needs.changes.outputs.platform": "true", "needs.changes.outputs.floor": "true",
+                      "needs.changes.outputs.lockfile": "false",
                       "needs.placements.result": "success", "needs.test-arm.result": "failure"}
             for key, value in values.items():
                 condition = condition.replace(key, repr(value))
