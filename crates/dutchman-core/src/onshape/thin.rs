@@ -412,7 +412,7 @@ pub(super) fn install_scope(
     )?;
     push(
         &mut ir.design.scopes,
-        json!({"definition":definition,"roots":[container],"active_arrangements":[],"occurrences":{},
+        json!({"definition":definition,"roots":[container],"active_arrangements":[],"occurrences":{},"unproduced":[],
         "current":[{"at":{"kind":"after","value":{"kind":"feature","value":last}},"bodies":bodies,"poses":[],"status":"current"}]}),
     )?;
     Ok(())
