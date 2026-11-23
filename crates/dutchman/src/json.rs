@@ -499,9 +499,14 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
         .completeness()
         .and_then(Completeness::unplaced_message)
     {
+        // Designs missing from the file are the larger cause: say so first.
+        let reason = match report.missing_links_message() {
+            Some(why) => format!("{why} {message}"),
+            None => message,
+        };
         out.insert(
             "verification".to_owned(),
-            json!({"status": "partial", "reason": message}),
+            json!({"status": "partial", "reason": reason}),
         );
     }
     if !report.joints().is_empty() {
@@ -543,6 +548,18 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
         "placements": completeness.placements(),
         "left_out": left_out,
     })
+}
+
+/// The sentence saying a Fusion `.f3d` places components inserted from designs it doesn't
+/// contain, when its completeness records them as left out.
+pub fn inserted_designs_message(report: &Value) -> Option<String> {
+    report
+        .pointer("/completeness/left_out")?
+        .as_array()?
+        .iter()
+        .filter_map(|cause| cause.get("reason")?.as_str())
+        .find(|reason| reason.contains(" from other Fusion designs that this .f3d doesn't contain"))
+        .map(str::to_owned)
 }
 
 /// Plain explanation shared by CLI and app results.
@@ -1735,6 +1752,35 @@ mod tests {
         );
         assert!(fixtures_pitch([&iges]).is_none());
         assert_eq!(fixtures_pitch([&iges, &creo]), fixtures_pitch([&creo]));
+    }
+
+    #[test]
+    fn missing_inserted_designs_lead_the_report_and_every_summary() {
+        let mut source = Report::default();
+        source.set_completeness(Completeness {
+            placed: 1,
+            unplaced: [("Panel".into(), 1)].into(),
+            ..Completeness::default()
+        });
+        source.record_missing_inserted_designs(&["Washer".into(), "Nut".into()]);
+        let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3d"}), &source));
+        let sentence = "2 inserted components come from other Fusion designs that this .f3d \
+                        doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
+                        bring them along.";
+        assert!(report["verification"]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with(sentence));
+        assert_eq!(report["completeness"]["left_out"][0]["reason"], sentence);
+        assert!(completeness_lines(&report)
+            .iter()
+            .any(|line| line.contains(sentence)));
+        assert!(crate::present::incomplete(&report));
+        let view = crate::present::FileView::from_report(&report);
+        assert_eq!(view.status_word, "Incomplete");
+        assert!(view
+            .outcome
+            .contains("export the assembly as a Fusion Archive (.f3z)"));
     }
 
     #[test]

@@ -1033,6 +1033,11 @@ impl Report {
         }
     }
 
+    /// The sentence saying linked or inserted components are missing from the file, when some are.
+    pub fn missing_links_message(&self) -> Option<&str> {
+        self.missing_links.as_ref().map(|(_, why)| why.as_str())
+    }
+
     /// What the writer made of the design, when it said.
     pub fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
