@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiResultTests(unittest.TestCase):
-    def check_results(self, event, release=False, failed=None, results=None, docs=False, platform=False, floor=False):
+    def check_results(self, event, release=False, failed=None, results=None, docs=False, platform=False, floor=False,
+                      placements=False):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         script = workflow.split('echo "$RESULTS" | python3 -c \'\n', 1)[1]
         script = textwrap.dedent(script.rsplit("\n          '", 1)[0])
@@ -33,6 +34,10 @@ class CiResultTests(unittest.TestCase):
             needs["placements"]["result"] = "success"
             needs["solidcraft-roundtrip"]["result"] = "success"
         needs["changes"]["outputs"].update(platform=str(platform).lower(), floor=str(floor).lower())
+        if event == "pull_request" and placements:
+            needs["changes"]["outputs"]["placements"] = "true"
+            active.add("placements")
+            needs["placements"]["result"] = "success"
         if event == "pull_request":
             if platform:
                 needs["test-macos"]["result"] = "success"
@@ -87,6 +92,15 @@ class CiResultTests(unittest.TestCase):
             with self.subTest(job=job):
                 result = self.check_results("merge_group", results={job: "success"})
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_a_pin_or_assembly_pr_requires_the_placement_sets(self):
+        result = self.check_results("pull_request", placements=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.check_results("pull_request", placements=True, failed="placements")
+        self.assertNotEqual(result.returncode, 0)
+        # Without the filter a pull request does not run them, and a run would be unexpected.
+        result = self.check_results("pull_request", results={"placements": "success"})
+        self.assertNotEqual(result.returncode, 0)
 
     def test_queue_requires_the_solidcraft_replay(self):
         result = self.check_results("merge_group", failed="solidcraft-roundtrip")

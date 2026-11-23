@@ -48,6 +48,9 @@ jobs:
       rust: ${{ steps.diff.outputs.rust }}
       code: ${{ steps.diff.outputs.code }}
       docker: ${{ steps.diff.outputs.docker }}
+      # A pull request that moves the cadmpeg pin or changes assembly code also runs the two
+      # small placement sets, so a part that moves shows on the pull request, not first in the queue.
+      placements: ${{ steps.diff.outputs.placements }}
       platform: ${{ steps.platform.outputs.platform }}
       floor: ${{ steps.platform.outputs.floor }}
       # Self-hosted 'flyer' runners: the merge queue and pushes to main only. Every pull request
@@ -66,13 +69,21 @@ jobs:
             echo "rust=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "docker=true" >> "$GITHUB_OUTPUT"
+            echo "placements=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "docker=true" >> "$GITHUB_OUTPUT"
+            echo "placements=true" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '^crates/dutchman-(core|solidcraft)/src/assembly' \
+            || git diff "$BASE" HEAD -- Cargo.toml Cargo.lock | grep -qE '^[-+][^-+].*cadmpeg'; then
+            echo "placements=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "placements=false" >> "$GITHUB_OUTPUT"
           fi
           # Anything besides Markdown, docs/, assets/, images, changelog fragments and the GitHub issue and PR forms
           # (text people fill in) is code.
@@ -613,10 +624,10 @@ jobs:
   # Share the Linux tools; queue groups run only the small placement smoke checks.
   placements:
     needs: changes
-    if: needs.changes.outputs.full == 'true' || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true')
+    if: needs.changes.outputs.full == 'true' || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.placements == 'true')
     uses: ./.github/workflows/placements.yml
     with:
-      smoke-only: ${{ github.event_name == 'merge_group' }}
+      smoke-only: ${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}
 
   release-build:
     # Tags build directly in release-build.yml; main has the nightly builds. Queue groups
@@ -657,7 +668,7 @@ jobs:
               "wasm": native, "msrv": native,
               "solidcraft-roundtrip": native or (event == "merge_group" and code) or (event == "pull_request" and outputs.get("floor") == "true"),
               "test-macos": (full and outputs.get("rust") == "true") or (event == "pull_request" and outputs.get("platform") == "true"),
-              "placements": full or (event == "merge_group" and code),
+              "placements": full or (event == "merge_group" and code) or (event == "pull_request" and outputs.get("placements") == "true"),
               "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",
           }
           bad = {}
