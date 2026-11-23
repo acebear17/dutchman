@@ -27,8 +27,8 @@ fi
 plugin_core="$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/dutchman_plugin.wasm"
 wc -c "$plugin_core"
 # The build makes a core module; SolidCraft loads a component with no WASI adapter.
-if command -v "${WASM_TOOLS:-wasm-tools}" >/dev/null; then
+if command -v "${WASM_TOOLS:-wasm-tools}" >/dev/null && command -v "${WASM_OPT:-wasm-opt}" >/dev/null; then
     scripts/package-plugin.sh "$plugin_core" "$(pwd)/target/dutchman-plugin"
 else
-    printf 'Install wasm-tools, then: scripts/package-plugin.sh %s <folder>\n' "$plugin_core"
+    printf 'Install wasm-tools and wasm-opt (binaryen version_123), then: scripts/package-plugin.sh %s <folder>\n' "$plugin_core"
 fi

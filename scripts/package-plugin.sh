@@ -10,6 +10,11 @@
 # functions (randomness for archive extraction and encryption, which Dutchman never calls).
 # Each such import is bound to a stub that traps, and the script fails unless the finished
 # component imports craft:plugin interfaces only.
+#
+# The core module is shrunk with binaryen's wasm-opt first (PLUGIN_WASM_OPT_ARGS), because
+# SolidCraft reads and hashes the whole component when it lists plugins. Release builds pin
+# binaryen version_123 (docs/plugin.md). WASM_OPT=<path> names another binary;
+# PLUGIN_SKIP_WASM_OPT=1 skips the step (then also raise PLUGIN_WASM_MAX_BYTES).
 set -euo pipefail
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
     echo "usage: $0 <dutchman_plugin.wasm> <output folder> [<version>]" >&2
@@ -19,10 +24,24 @@ core=$1
 out=$2
 version=${3:-}
 wasm_tools=${WASM_TOOLS:-wasm-tools}
+wasm_opt=${WASM_OPT:-wasm-opt}
 root=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$out"
 stubs=$(mktemp -d "$out/.stubs.XXXXXX")
-trap 'rm -rf "$stubs"' EXIT
+trap 'rm -rf "$stubs" "${optimized:-}"' EXIT
+if [ "${PLUGIN_SKIP_WASM_OPT:-}" != 1 ]; then
+    if ! command -v "$wasm_opt" >/dev/null 2>&1; then
+        echo "wasm-opt (binaryen version_123) is needed to shrink the plugin; set WASM_OPT, or PLUGIN_SKIP_WASM_OPT=1 to skip" >&2
+        exit 2
+    fi
+    optimized=$(mktemp "$out/.core.XXXXXX")
+    # Only the features rustc emits for wasm32-unknown-unknown; --all would add GC types that
+    # the host may not accept.
+    "$wasm_opt" -Oz --enable-bulk-memory --enable-bulk-memory-opt --enable-sign-ext \
+        --enable-nontrapping-float-to-int --enable-mutable-globals --enable-multivalue \
+        --enable-reference-types --strip-debug --strip-producers "$core" -o "$optimized"
+    core=$optimized
+fi
 
 # Imports come before the first function body; stop printing there.
 "$wasm_tools" print "$core" | awk '/^  \(func /{exit} /^  \(import "__wbindgen/{print}' >"$stubs/imports.txt" || true
@@ -45,9 +64,10 @@ if echo "$imports" | grep -qv '^craft:plugin/'; then
     echo "The component imports something besides craft:plugin interfaces" >&2
     exit 1
 fi
-# SolidCraft compiles this module on a file's first open, so its size is a budget: 0.3.0 was
-# 55.7 MB, and this limit is 1.2x that. Raise PLUGIN_WASM_MAX_BYTES only on purpose.
-max_bytes=${PLUGIN_WASM_MAX_BYTES:-67000000}
+# SolidCraft reads and hashes this module when it lists plugins and compiles it on a file's
+# first open, so its size is a budget: 0.3.0 was 55.7 MB, and with wasm-opt it is 45.3 MB; this
+# limit is about 1.1x that. Raise PLUGIN_WASM_MAX_BYTES only on purpose.
+max_bytes=${PLUGIN_WASM_MAX_BYTES:-50000000}
 size=$(wc -c <"$out/dutchman.wasm")
 if [ "$size" -gt "$max_bytes" ]; then
     echo "dutchman.wasm is $size bytes, over the $max_bytes byte budget (PLUGIN_WASM_MAX_BYTES); SolidCraft compiles it on a file's first open" >&2

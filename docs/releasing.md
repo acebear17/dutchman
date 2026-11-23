@@ -146,7 +146,7 @@ tool, change the version and both checksums for each architecture together. The 
 
 The SolidCraft plugin is built by `release.yml`'s `plugin` job, from the release tag's
 commit: `dutchman-plugin` for `wasm32-unknown-unknown` with the size settings in
-`.cargo/config.toml`, wrapped by `scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip`
+`.cargo/config.toml`, shrunk with binaryen `version_123` (pinned by checksum in the job) and wrapped by `scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip`
 (the manifest stamped with the version, and the component) with its `.sha256`. The release
 checks that checksum, attaches the zip and adds the version-less `dutchman-plugin.zip`. The
 candidate builds (`release-build.yml`) don't build the plugin yet. A change to

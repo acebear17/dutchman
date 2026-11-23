@@ -33,13 +33,24 @@ class PluginPackage(unittest.TestCase):
                 "else: sys.exit(2)\n"
             )
             tool.chmod(0o700)
+            # A stand-in wasm-opt that copies its input, and records that it was run.
+            optimizer = folder / "wasm-opt"
+            optimizer.write_text(
+                "#!/usr/bin/env python3\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "args = sys.argv[1:]\n"
+                "assert '-Oz' in args and '--strip-debug' in args\n"
+                "Path(args[args.index('-o') + 1]).write_bytes(Path(args[-3]).read_bytes())\n"
+            )
+            optimizer.chmod(0o700)
             for version in (None, "0.3.1"):
                 with self.subTest(version=version):
                     out = folder / (version or "unversioned")
                     args = ["bash", str(ROOT / "scripts/package-plugin.sh"), str(core), str(out)]
                     if version:
                         args.append(version)
-                    subprocess.run(args, env={**os.environ, "WASM_TOOLS": str(tool)},
+                    subprocess.run(args, env={**os.environ, "WASM_TOOLS": str(tool), "WASM_OPT": str(optimizer)},
                                    check=True, capture_output=True, text=True)
                     name = f"dutchman-plugin-{version}.zip" if version else "dutchman-plugin.zip"
                     archive = out / name

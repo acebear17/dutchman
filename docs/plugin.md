@@ -125,18 +125,28 @@ names another binary). Release builds pin that exact version; update it delibera
 check the `wasm-tools print` import parsing in `scripts/package-plugin.sh` when upgrading.
 The script writes `dutchman.wasm` (the manifest's `runtime.module`),
 `plugin.json` and `dutchman-plugin.zip` with both files at its top, and fails unless the
-component imports `craft:plugin` interfaces only, or if `dutchman.wasm` is over 67,000,000
-bytes (`PLUGIN_WASM_MAX_BYTES`; 1.2x the 55.7 MB of 0.3.0). SolidCraft compiles the module
-when a file is first opened, so it must not grow unnoticed.
+component imports `craft:plugin` interfaces only, or if `dutchman.wasm` is over 50,000,000
+bytes (`PLUGIN_WASM_MAX_BYTES`; about 1.1x the 45.3 MB measured with the step below). SolidCraft
+reads and hashes the whole component when it lists plugins and compiles it when a file is
+first opened, so it must not grow unnoticed.
 
-Where the bytes are (0.3.0 core module, 55.8 MB: 54.0 MB code in 78,950 functions, 1.7 MB
+Before wrapping, the script runs binaryen's `wasm-opt -Oz --strip-debug --strip-producers`
+on the core module (`WASM_OPT` names another binary; `PLUGIN_SKIP_WASM_OPT=1` skips the step,
+and then `PLUGIN_WASM_MAX_BYTES` needs raising). It enables only the features rustc emits,
+since `--all` adds GC types the host may not accept. Release builds pin binaryen
+`version_123` (x86_64 Linux tarball, SHA-256
+`e959f2170af4c20c552e9de3a0253704d6a9d2766e8fdb88e4d6ac4bae9388fe`, checked in
+`release.yml`). Measured on the same core module of 52,201,169 bytes: plain `-Oz` gives
+45,256,200 bytes in 2 minutes; adding `--converge --gufa --merge-similar-functions` gives
+45,226,160 bytes after 37 minutes and 20 GB of memory, so the plain form is used. The
+build already uses opt-level `z`, fat LTO, one codegen unit, stripped symbols and wasm's
+default `panic=abort` (`.cargo/config.toml`).
+
+Where the bytes were (0.3.0 core module, 55.8 MB: 54.0 MB code in 78,950 functions, 1.7 MB
 data, no debug or name sections): cadmpeg_ir 19.2 MB (serde `Deserialize` code over
 `serde_json`), cadmpeg_codec_f3d 7.3 MB, `core` 6.2 MB, serde_json 4.3 MB, the SolidWorks
-codec 3.3 MB, Inventor 2.7 MB, serde 2.7 MB. `wasm-opt -Oz` (binaryen, installable with
-`cargo install wasm-opt`; limited to the features rustc emits, since `-all` adds GC types
-the host may not accept) takes it to 48.4 MB, but first open stayed within noise
-(46.2 s to 44.6 s, 5.0 to 6.2 GB peak), so release builds do not run it. A real cut needs less
-code in cadmpeg_ir's serde impls.
+codec 3.3 MB, Inventor 2.7 MB, serde 2.7 MB. A further real cut needs less code in
+cadmpeg_ir's serde impls.
 
 `zip` turns on getrandom's JavaScript backend for every wasm32 target, so the core module
 also imports a few wasm-bindgen functions: randomness for archive extraction and
@@ -332,7 +342,7 @@ One-run observations on a shared builder.
 
 | Measurement | Result |
 |---|---|
-| Component (`dutchman.wasm`) | 51,622,915 bytes (49.23 MiB); SolidCraft accepts importers up to 64 MiB |
+| Component (`dutchman.wasm`) | 45,262,204 bytes (43.2 MiB; 52,207,173 bytes without `wasm-opt`); SolidCraft accepts importers up to 64 MiB |
 | Release build through buildq, three jobs, shared compiler cache | 13m 51s (25m 31s on the first build in a worktree); largest process 14.6 GiB |
 | Wasmtime first compilation | 17.3 s on the shared builder under load |
 | Harness process peak RSS after first compilation | 4,804,720 KiB (4.58 GiB) |

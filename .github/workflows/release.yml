@@ -139,6 +139,13 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Install wasm-tools
         run: cargo install --locked wasm-tools --version 1.263.0
+      - name: Install binaryen
+        run: |
+          set -euo pipefail
+          curl -fsSL -o binaryen.tar.gz https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz
+          echo "e959f2170af4c20c552e9de3a0253704d6a9d2766e8fdb88e4d6ac4bae9388fe  binaryen.tar.gz" | sha256sum --check --strict
+          tar -xzf binaryen.tar.gz
+          echo "$PWD/binaryen-version_123/bin" >> "$GITHUB_PATH"
       - name: Build and package the plugin
         run: |
           set -euo pipefail
