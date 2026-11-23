@@ -18005,7 +18005,7 @@ fn a_cut_before_any_feature_builds_a_body_is_refused_when_mapping() {
 }
 
 #[test]
-fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
+fn an_unprojected_design_only_history_is_refused_instead_of_silently_mapping_nothing() {
     let mut model = primitive_history(sphere());
     model.ir.model.features.clear();
     model.ir.design.features.push(
@@ -18024,13 +18024,491 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
     );
     assert_eq!(document["features"][0]["type"], "import");
     assert!(
-        history_line(&report).contains("design-only history is not mapped yet"),
+        history_line(&report).contains("design-only history is not mapped"),
         "{report:?}"
     );
     assert!(
-        history_line(&report).contains("ordered selections and evaluation states"),
+        history_line(&report).contains("was not projected into model history"),
         "{report:?}"
     );
+}
+
+/// The example cube with a history stated only in `design`, as the Solid Edge codec states
+/// it: `features` in timeline order, each sketch owned by the feature that uses it. `rollback`
+/// names the feature the history is rolled back before.
+fn design_cube(features: Vec<Value>, sketches: &[(u32, u32)], rollback: Option<u32>) -> Model {
+    let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let mut wire = serde_json::to_value(&ir).unwrap();
+    let id = |n: u32| format!("se:design:feature#{n}");
+    let sketch = |n: u32| format!("se:design:sketch#{n}");
+    let members: Vec<Value> = features
+        .iter()
+        .map(|f| json!({"kind": "feature", "value": f["id"]}))
+        .collect();
+    let mut rows = Vec::new();
+    let mut entities = Vec::new();
+    for &(n, owner) in sketches {
+        rows.push(
+            json!({"id": sketch(n), "owner": id(owner), "name": format!("Sketch {n}"),
+            "plane": {"kind": "placed", "inputs": [], "after": [], "resolved_in": {},
+                "resolved": {"origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "x_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+                    "y_axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+                    "z_axis": {"x": 0.0, "y": 0.0, "z": 1.0}}},
+            "solve": {"status": "current"}, "native_options": {}, "source_settings": {}}),
+        );
+        let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        for k in 0..4 {
+            let (a, b) = (corners[k], corners[(k + 1) % 4]);
+            entities.push(
+                json!({"id": format!("se:design:sketch-entity#{n}{k}"), "sketch": sketch(n),
+                "definition": {"kind": "free", "value": {"kind": "line", "value": {
+                    "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}}},
+                "roles": [], "native_options": {}, "source_settings": {}}),
+            );
+        }
+    }
+    let rollback = rollback.map_or_else(
+        || json!({"kind": "end"}),
+        |n| json!({"kind": "before", "value": {"kind": "feature", "value": id(n)}}),
+    );
+    let design = &mut wire["design"];
+    design["scopes"] = json!([{"definition": "se:design:product-definition#1",
+        "roots": ["se:design:container#1"], "active_arrangements": [], "occurrences": {},
+        "current": [], "unproduced": []}]);
+    design["containers"] = json!([{"kind": "ordered", "value": {"id": "se:design:container#1",
+        "kind": "timeline", "members": members, "folders": [], "rollback": rollback}}]);
+    design["features"] = Value::Array(features);
+    design["sketches"] = Value::Array(rows);
+    design["sketch_entities"] = Value::Array(entities);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "cube".to_owned(),
+        source_file: Some("cube.par".to_owned()),
+        source_step: None,
+        assembly: None,
+    }
+}
+
+fn design_feature(n: u32, name: &str, operation: Value) -> Value {
+    json!({"id": format!("se:design:feature#{n}"), "name": name,
+        "definition": {"operation": operation}})
+}
+
+fn design_extrude(sketch: u32, span: Value, boolean: Value) -> Value {
+    json!({"kind": "extrude", "value": {
+        "profile": {"at": {"kind": "input"}, "picks": {"kind": "named", "value": [
+            {"target": {"kind": "sketch", "value": format!("se:design:sketch#{sketch}")}}]}},
+        "direction": {"kind": "profile_normal"}, "origin": {"kind": "profile_plane"},
+        "span": span, "output": {"body": {"kind": "solid"}, "boolean": boolean},
+        "native_options": {}, "source_settings": {}}})
+}
+
+fn design_revolve(sketch: u32, angle: f64) -> Value {
+    json!({"kind": "revolve", "value": {
+        "profile": {"at": {"kind": "input"}, "picks": {"kind": "named", "value": [
+            {"target": {"kind": "sketch", "value": format!("se:design:sketch#{sketch}")}}]}},
+        "axis": {"inputs": [], "after": [], "resolved_in": {}, "resolved": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "direction": {"x": 0.0, "y": 1.0, "z": 0.0}}},
+        "span": {"kind": "between", "start": {"kind": "at_origin"},
+            "end": {"kind": "amount", "value": {"kind": "literal", "value": angle}}},
+        "output": {"body": {"kind": "solid"}, "boolean": {"kind": "new_body"}},
+        "native_options": {}, "source_settings": {}}})
+}
+
+fn design_span(start: Value, end: Value) -> Value {
+    json!({"kind": "between", "start": start, "end": end})
+}
+
+fn design_amount(length: f64) -> Value {
+    json!({"kind": "amount", "value": {"kind": "literal", "value": length}})
+}
+
+/// Projects the design into model history, as a decode does, then writes the history.
+fn projected(mut model: Model) -> (Value, Report) {
+    let mut report = Report::default();
+    dutchman_core::design_history::project(&mut model.ir, &mut report);
+    let (document, written) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    for loss in written.losses() {
+        report.push(loss.severity, loss.subject.clone(), loss.detail.clone());
+    }
+    (document, report)
+}
+
+fn design_block(span: Value) -> Model {
+    design_cube(
+        vec![design_feature(
+            1,
+            "Block",
+            design_extrude(1, span, json!({"kind": "new_body"})),
+        )],
+        &[(1, 1)],
+        None,
+    )
+}
+
+#[test]
+fn a_design_only_sketch_and_blind_extrude_are_mapped() {
+    let span = design_span(json!({"kind": "at_origin"}), design_amount(10.0));
+    let (document, report) = projected(design_block(span));
+    // The sketch and the extrude are rebuilt; the source's final body stays as a suppressed
+    // import beside them.
+    assert_eq!(
+        types(&document)[..2],
+        [("sketch".to_owned(), false), ("extrude".to_owned(), false)]
+    );
+    assert_eq!(document["features"][1]["name"], "Block");
+    assert_eq!(document["features"][1]["extent"]["distance"], "10 mm");
+    assert_eq!(document["features"][1]["extent"]["direction"], "positive");
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("read from the design layer")));
+}
+
+#[test]
+fn a_design_only_extrude_maps_like_the_same_extrude_stated_as_model_rows() {
+    let legacy = cube_with_history(10.0, first_profile(), None);
+    let (expected, _) = convert(
+        &legacy,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let span = design_span(json!({"kind": "at_origin"}), design_amount(10.0));
+    let (document, _) = projected(design_block(span));
+    for key in ["type", "extent", "operation"] {
+        let (want, got) = (&expected["features"][1][key], &document["features"][1][key]);
+        // The model-row cube links its distance to a parameter; the design states none.
+        if key == "extent" {
+            assert_eq!(want["direction"], got["direction"]);
+        } else {
+            assert_eq!(want, got, "{key}");
+        }
+    }
+    assert_eq!(
+        expected["features"][0]["type"],
+        document["features"][0]["type"]
+    );
+}
+
+#[test]
+fn design_only_extents_follow_what_the_design_states() {
+    let at = json!({"kind": "at_origin"});
+    let cases = [
+        (
+            json!({"kind": "symmetric", "amount": {"kind": "literal", "value": 10.0}, "measure": "total"}),
+            ("symmetric", Some("10 mm"), None),
+        ),
+        (
+            design_span(design_amount(4.0), design_amount(6.0)),
+            ("positive", Some("6 mm"), Some("4 mm")),
+        ),
+        (
+            design_span(design_amount(10.0), at),
+            ("negative", Some("10 mm"), None),
+        ),
+    ];
+    for (span, (direction, distance, second)) in cases {
+        let (document, _) = projected(design_block(span.clone()));
+        let extent = &document["features"][1]["extent"];
+        assert_eq!(extent["direction"], direction, "{span}");
+        assert_eq!(extent["distance"].as_str(), distance, "{span}");
+        assert_eq!(extent["distance2"].as_str(), second, "{span}");
+    }
+}
+
+#[test]
+fn a_design_only_cut_follows_the_body_it_cuts() {
+    let model = design_cube(
+        vec![
+            design_feature(
+                1,
+                "Block",
+                design_extrude(
+                    1,
+                    design_span(json!({"kind": "at_origin"}), design_amount(10.0)),
+                    json!({"kind": "new_body"}),
+                ),
+            ),
+            design_feature(
+                2,
+                "Pocket",
+                design_extrude(
+                    2,
+                    design_span(json!({"kind": "at_origin"}), design_amount(2.0)),
+                    json!({"kind": "apply", "op": {"kind": "cut"}}),
+                ),
+            ),
+        ],
+        &[(1, 1), (2, 2)],
+        None,
+    );
+    let (document, _) = projected(model);
+    let kinds: Vec<&str> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds[..4], ["sketch", "extrude", "sketch", "extrude"]);
+    assert_eq!(document["features"][3]["operation"], "cut");
+}
+
+#[test]
+fn a_design_cut_with_no_body_before_it_is_refused_by_the_mapper() {
+    let model = design_cube(
+        vec![design_feature(
+            1,
+            "Pocket",
+            design_extrude(
+                1,
+                design_span(json!({"kind": "at_origin"}), design_amount(2.0)),
+                json!({"kind": "apply", "op": {"kind": "cut"}}),
+            ),
+        )],
+        &[(1, 1)],
+        None,
+    );
+    let (_, report) = projected(model);
+    assert!(
+        history_line(&report).contains("no earlier feature in the history builds one"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn design_only_revolves_state_a_full_and_a_partial_turn() {
+    for (angle, expected) in [
+        (std::f64::consts::TAU, 360.0_f64),
+        (std::f64::consts::FRAC_PI_3, 60.0_f64),
+    ] {
+        let model = design_cube(
+            vec![design_feature(1, "Ring", design_revolve(1, angle))],
+            &[(1, 1)],
+            None,
+        );
+        let (document, report) = projected(model);
+        assert_eq!(document["features"][1]["type"], "revolve", "{angle}");
+        // The mapper proves which way the profile turns, so the sign is its own.
+        let angle = document["features"][1]["angle"].as_str().unwrap();
+        let degrees: f64 = angle.trim_end_matches(" deg").parse().unwrap();
+        assert!((degrees.abs() - expected).abs() < 1e-6, "{angle}");
+        assert!(
+            history_line(&report).starts_with("2 of 2 features"),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn a_suppressed_design_feature_is_left_out_not_mapped() {
+    let mut block = design_feature(
+        1,
+        "Block",
+        design_extrude(
+            1,
+            design_span(json!({"kind": "at_origin"}), design_amount(10.0)),
+            json!({"kind": "new_body"}),
+        ),
+    );
+    block["suppressed"] = json!({"kind": "literal", "value": true});
+    let (_, report) = projected(design_cube(vec![block], &[(1, 1)], None));
+    assert!(
+        history_line(&report).contains("no feature in the history builds geometry"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn design_features_map_in_timeline_order() {
+    let span = |l: f64| design_span(json!({"kind": "at_origin"}), design_amount(l));
+    let first = design_feature(
+        1,
+        "First",
+        design_extrude(1, span(10.0), json!({"kind": "new_body"})),
+    );
+    let second = design_feature(
+        2,
+        "Second",
+        design_extrude(
+            2,
+            span(2.0),
+            json!({"kind": "apply", "op": {"kind": "join"}}),
+        ),
+    );
+    let model = design_cube(vec![first, second], &[(1, 1), (2, 2)], None);
+    // The arena holds the later feature first; the timeline orders them.
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"]["features"].as_array_mut().unwrap().reverse();
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, _) = projected(model);
+    let names: Vec<&str> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "extrude")
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["First", "Second"]);
+}
+
+#[test]
+fn a_design_history_stops_at_a_first_feature_that_is_not_projected() {
+    let native = design_feature(
+        1,
+        "Vendor step",
+        json!({"kind": "native", "value": {"kind": "vendor", "native_options": {}, "source_settings": {}}}),
+    );
+    let block = design_feature(
+        2,
+        "Block",
+        design_extrude(
+            1,
+            design_span(json!({"kind": "at_origin"}), design_amount(10.0)),
+            json!({"kind": "new_body"}),
+        ),
+    );
+    let (document, report) = projected(design_cube(vec![native, block], &[(1, 2)], None));
+    let history = history_line(&report);
+    assert!(history.contains("Vendor step"), "{history}");
+    assert!(history.contains("not mapped yet"), "{history}");
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "Vendor step"
+                && loss
+                    .detail
+                    .contains("not projected from the design layer yet")),
+        "{report:?}"
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["name"] != "Block" || f["type"] == "import"));
+}
+
+/// A design-silent line across the square of sketch 1 splits its profile region in two when
+/// it is read as geometry.
+fn dividing_line() -> Model {
+    let mut model = design_block(design_span(
+        json!({"kind": "at_origin"}),
+        design_amount(10.0),
+    ));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            json!({"id": "se:design:sketch-entity#15", "sketch": "se:design:sketch#1",
+            "definition": {"kind": "free", "value": {"kind": "line", "value": {
+                "start": {"u": 0.0, "v": 5.0}, "end": {"u": 10.0, "v": 5.0}}}},
+            "roles": [], "native_options": {}, "source_settings": {}}),
+        );
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+/// A projected row takes no shortcut: with the design-silent line read as geometry the
+/// profile region may be wrong, so the extrude is unconfirmed without a source body check
+/// and refused when the check finds the replay differs.
+#[test]
+fn a_projected_sketch_goes_through_the_same_region_check_as_model_rows() {
+    let mut model = dividing_line();
+    dutchman_core::design_history::project(&mut model.ir, &mut Report::default());
+    let (_, unchecked) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&unchecked).contains("unverified: verification turned off"),
+        "{}",
+        history_line(&unchecked)
+    );
+    let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator {
+        different_history: true,
+        ..RecordedEvaluator::default()
+    }));
+    let (document, report) = convert(&model, &writer);
+    assert_eq!(types(&document)[0], ("import".to_owned(), false));
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(extrude.kind, "extrude");
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(extrude.profile_unverified);
+    assert!(
+        extrude
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("replay differs"),
+        "{:?}",
+        extrude.reason
+    );
+}
+
+#[test]
+fn a_design_extent_the_design_leaves_unstated_is_refused_not_guessed() {
+    let mut model = design_block(design_span(
+        json!({"kind": "at_origin"}),
+        design_amount(10.0),
+    ));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"]["features"][0]["definition"]["operation"]["value"]
+        .as_object_mut()
+        .unwrap()
+        .remove("span");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = projected(model);
+    assert!(
+        history_line(&report).contains("native is not mapped yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn projection_leaves_a_document_with_model_history_alone() {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let before = serde_json::to_value(&model.ir.model).unwrap();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"] = serde_json::to_value(
+        design_cube(
+            vec![design_feature(
+                9,
+                "Ignored",
+                design_extrude(
+                    1,
+                    design_span(json!({"kind": "at_origin"}), design_amount(3.0)),
+                    json!({"kind": "new_body"}),
+                ),
+            )],
+            &[(1, 9)],
+            None,
+        )
+        .ir,
+    )
+    .unwrap()["design"]
+        .clone();
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut report = Report::default();
+    dutchman_core::design_history::project(&mut model.ir, &mut report);
+    assert_eq!(serde_json::to_value(&model.ir.model).unwrap(), before);
+    assert!(report.losses().is_empty());
 }
 
 #[test]

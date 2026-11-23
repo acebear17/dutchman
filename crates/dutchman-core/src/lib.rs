@@ -9,6 +9,7 @@ mod assembly;
 mod companion;
 pub mod contents;
 mod decode;
+pub mod design_history;
 mod error;
 pub mod estimate;
 mod format;
