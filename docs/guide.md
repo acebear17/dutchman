@@ -218,7 +218,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.40–0.45.
+converted history. The supported SolidCraft window is currently 0.40–0.46.
 
 ## Your first conversion
 
@@ -679,10 +679,10 @@ evaluations; late results keep the refusal.
 
 Closed circular input edges can become editable fillets and equal-setback chamfers when
 targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
-stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
-only that body supplies replay candidates, even when another body has a coincident rim.
-Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
-refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+circle that the feature's input topology stores beside the edge, with centre, axis, radius and a
+full-turn parameter range. Its input topology must hold a single body that is one earlier named
+body; only that body supplies replay candidates, even when another body has a coincident rim.
+A missing carrier or owner, and ellipses, remain refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
 and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
 Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
 A missing source carrier reports `its closed input edge has no resolved historical curve carrier, which is not supported yet`.
@@ -910,9 +910,10 @@ In narrow desktop windows, **Report a problem…** (or **Report this design…**
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
 See [reporting a problem](desktop.md#reporting-a-problem).
 
-Report consent is per report. In the desktop app, Discord is the first route, with a small
-**GitHub issue** backup link below the three steps. **Anonymous report** is under **More**,
-with AI help and diagnosis. It opens a review for the chosen file
+Report consent is per report. In the desktop app, Discord is the first route, with a row
+below the three steps that starts with the small label **Not on Discord?**, then the
+**File a GitHub issue ↗** backup button and **Review and send report**
+(greyed out until the file finishes); **More** holds AI help and diagnosis. It opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
@@ -924,7 +925,7 @@ Nothing is sent before clicking Send. A report is sent only when a matching rece
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-**Anonymous report** sends to the cloud inbox after review. **GitHub issue** opens the
+**Review and send report** sends to the cloud inbox after review. **File a GitHub issue ↗** opens the
 prefilled public issue form under your GitHub username. Never attach a geometry bundle
 there. For a converted result the form asks what differs from the original, without claiming conversion failed.
 
@@ -1036,9 +1037,9 @@ losses for meshes it could not decode.
 
 ## Fetch your own Onshape document
 
-`dutchman onshape fetch <document-url> --out snapshot.onshape-bundle --max-calls 50`
+`dutchman onshape fetch <document-url> --out snapshot.onshape-bundle`
 uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
-attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
+attempt count. It first estimates the calls the fetch needs and prints the estimate; above 50 (Onshape's Free plan allows 2,500 a year) it asks `y/N` on a terminal, and elsewhere stops unless you pass `--yes` or an explicit `--max-calls N`, which is a hard ceiling. In the app, a fetch above 50 estimated calls asks Continue or Cancel first. `--version VERSION_ID` selects an immutable version; `--json` prints
 `dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
 To use OAuth instead, pass `--bearer-token-file PATH` (a private UTF-8 file, mode 600 on
 Unix), or set `DUTCHMAN_ONSHAPE_BEARER_TOKEN` in the process environment. The file wins
@@ -1229,12 +1230,7 @@ resolved non-construction profile curves; this is not supported yet". The decode
 supply the actual profile curves. An empty profile table can still use the complete bound
 sketch when its non-construction curves are decoded; no loop or contour is guessed.
 
-## Claim work before starting
+## Before starting
 
-Comment `/claim` on the issue first: claim, then a draft pull request within 24 hours,
-even rough. Comment `/unclaim` to release it. After a linked pull request exists, claims
-lapse after 5 days without activity from you. The bot reminds you at 12 hours without a
-pull request, and a day before an idle claim lapses. A ready pull request waiting on a
-maintainer or an open dependency keeps the claim active; maintainer claims never lapse.
-On lapse, pull requests stay open for others to continue with the original author credited
-in a `Co-authored-by:` trailer. See [claiming an issue](claiming.md) for the full rules.
+Open a pull request when you're ready; for a bigger change, a short comment on the issue first
+helps avoid duplicate work (it isn't a reservation).

@@ -141,7 +141,7 @@ FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimensi
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.45; 0.45 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.46; 0.46 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
@@ -154,9 +154,9 @@ or please send a file that converts wrong, with a STEP export of the exact same 
 [Discord](https://discord.gg/yTcseBEdeu). Send only designs you have the right to send; we keep them private and use them only to fix the converter.
 
 The desktop app always shows **Is there a problem? Is something missing?** at the bottom left:
-join the Discord server, then DM Dutchy. The secondary pills
-**Anonymous report** and **GitHub issue** sit directly below the three steps, and also appear
-under **More**. The anonymous report review shows
+join the Discord server, then DM Dutchy. The secondary buttons
+**File a GitHub issue ↗** and, last, **Review and send report** sit directly below the three steps. The
+anonymous report review shows
 exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
 The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support
 converted-file summaries. See [Reporting a problem](docs/guide.md#report-consent).

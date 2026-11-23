@@ -644,10 +644,28 @@ impl App {
     pub fn set_link_transport_for_test(
         &mut self,
         transport: std::sync::Arc<dyn crate::paste::Transport>,
-        fetch: fn(String, &Path) -> Result<PathBuf, String>,
+        fetch: crate::paste::Fetch,
     ) {
         self.intake.transport = transport;
         self.intake.fetch = fetch;
+        self.intake.continue_fetch = fetch;
+        // No estimate, so no question: the fetch runs as before.
+        self.intake.estimate = |_, _| Ok(0);
+    }
+
+    /// Replaces the call estimate for headless UI tests.
+    #[doc(hidden)]
+    pub fn set_estimate_for_test(
+        &mut self,
+        estimate: fn(String, Option<PathBuf>) -> Result<u32, String>,
+    ) {
+        self.intake.estimate = estimate;
+    }
+
+    /// The message a fetch that stopped at the request limit ends with, for UI tests.
+    #[doc(hidden)]
+    pub fn budget_stop_message_for_test() -> String {
+        crate::onshape::budget_stop_text(50, Some(1500))
     }
 
     fn accept_paste(&mut self, files: Vec<PathBuf>, text: &str, ctx: &egui::Context) {
@@ -688,6 +706,7 @@ impl App {
     fn next_link(&mut self, ctx: &egui::Context) {
         if self.running()
             || self.intake.prompt.is_some()
+            || self.intake.approval.is_some()
             || self.intake.choosing_output.is_some()
             || self.updater.blocks_conversions()
         {
@@ -777,6 +796,20 @@ impl App {
                         Err(why) => self.notice = Some(why),
                     }
                 }
+                Message::Calls(sent, needed) => {
+                    self.set_transfer_caption(match needed {
+                        Some(needed) if needed >= sent => {
+                            format!("Fetching from Onshape: {sent} of about {needed} API calls…")
+                        }
+                        _ => format!("Fetching from Onshape: {sent} API calls…"),
+                    });
+                }
+                Message::Named(title) => {
+                    // The running row goes by the design's name instead of the link's id.
+                    if let Some(row) = self.intake.row.and_then(|index| self.rows.get_mut(index)) {
+                        row.input = PathBuf::from(format!("{title}.onshape-bundle"));
+                    }
+                }
                 Message::Progress(bytes, size) => {
                     self.intake.progress = Some((bytes, size));
                     let total = size.map_or_else(
@@ -787,6 +820,17 @@ impl App {
                         "Downloading: {:.1} MB of {total}",
                         bytes as f64 / 1_000_000.0
                     ));
+                }
+                Message::NeedsApproval(link, calls) => {
+                    // Nothing was fetched: take the placeholder row back and ask first.
+                    self.intake.active = false;
+                    self.intake.row = None;
+                    self.rows.clear();
+                    self.intake.approval = Some(crate::paste::Approval {
+                        link,
+                        estimate: Some(calls),
+                        resume: false,
+                    });
                 }
                 Message::Finished(result) => {
                     self.intake.active = false;
@@ -800,19 +844,86 @@ impl App {
                             self.start(ctx);
                         }
                         Err(why) => {
-                            if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
-                                row.status = Status::Failed;
-                                row.progress = None;
-                                row.report = Some(serde_json::json!({ "ok": false,
-                                    "error": { "code": "desktop/download", "message": why } }));
+                            // A stop at the request limit can be continued, so it is not a
+                            // failure: no red, no problem report, no notice line.
+                            let stop = crate::onshape::parse_budget_stop(&why);
+                            if let Some((_, remaining)) = stop {
+                                self.intake.resumable = self.intake.last_onshape.clone();
+                                self.intake.stop_remaining = remaining;
                             }
-                            self.notice = Some(why);
+                            if let Some(row) = row.and_then(|index| self.rows.get_mut(index)) {
+                                row.status = if stop.is_some() {
+                                    Status::Stopped
+                                } else {
+                                    Status::Failed
+                                };
+                                row.progress = None;
+                                let code = if stop.is_some() {
+                                    "onshape/budget"
+                                } else {
+                                    "desktop/download"
+                                };
+                                row.report = Some(serde_json::json!({ "ok": false,
+                                    "error": { "code": code, "message": why } }));
+                            }
+                            if stop.is_none() {
+                                self.notice = Some(why);
+                            }
                         }
                     }
                 }
             }
         }
         self.next_link(ctx);
+    }
+
+    /// Asks before a fetch spends a share of the account's yearly Onshape API calls.
+    fn approval_window(&mut self, ctx: &egui::Context) {
+        let Some(approval) = self.intake.approval.clone() else {
+            return;
+        };
+        let mut go = false;
+        let mut cancel = false;
+        // Centred on the app window and fixed there, like a dialog.
+        egui::Window::new("Onshape API calls")
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .movable(false)
+            .show(ctx, |ui| {
+                let (before, number, after) =
+                    crate::onshape::approval_parts(approval.estimate, approval.resume);
+                let mut text = egui::text::LayoutJob::default();
+                let plain = egui::TextStyle::Body.resolve(ui.style());
+                let bold =
+                    egui::FontId::new(plain.size, egui::FontFamily::Name(theme::SEMIBOLD.into()));
+                let colour = ui.visuals().text_color();
+                for (part, font) in [(before, &plain), (number, &bold), (after, &plain)] {
+                    text.append(&part, 0.0, egui::TextFormat::simple(font.clone(), colour));
+                }
+                ui.label(text);
+                ui.horizontal(|ui| {
+                    go = ui.button("Continue").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if cancel {
+            self.intake.approval = None;
+            if !approval.resume {
+                self.notice =
+                    Some("Fetch cancelled. No more Onshape API calls were used.".to_owned());
+            }
+        }
+        if go {
+            self.intake.approval = None;
+            if !approval.resume {
+                self.intake.approved = true;
+            } else {
+                self.intake.resumable = None;
+                self.intake.continuing = true;
+            }
+            self.open_source(crate::paste::Source::Onshape(approval.link), ctx);
+        }
     }
 
     fn download_window(&mut self, ctx: &egui::Context) {
@@ -2055,6 +2166,7 @@ impl App {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
         self.download_window(ctx);
+        self.approval_window(ctx);
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
         self.updater.windows(ctx, can_restart, self.header_bottom);
@@ -2106,7 +2218,7 @@ impl App {
         self.page_scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
     }
 
-    /// A wide window: choices scroll above a pinned report panel; results scroll separately.
+    /// A wide window: choices and the report panel scroll as one column; results scroll separately.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
@@ -2116,54 +2228,20 @@ impl App {
             egui::pos2(rect.min.x + left_width + gap, rect.min.y),
             rect.max,
         );
-        let height_id = ui.id().with("report-panel-height");
-        let measured = ui
-            .data(|data| data.get_temp::<f32>(height_id))
-            .unwrap_or(360.0);
-        // Bound long reviews and More so the input and output controls remain reachable.
-        let report_height = measured.min(left.height() * 0.7);
-        let pinned_top = left.bottom() - report_height;
-        let mut report_top = pinned_top;
-        let choices = egui::Rect::from_min_max(
-            left.min,
-            egui::pos2(left.right(), report_top - theme::SPACE_4),
-        );
-        ui.scope_builder(egui::UiBuilder::new().max_rect(choices), |ui| {
-            let area = ScrollArea::vertical()
+        // One scroll area for the whole left column: Designs, Output folder, then the report
+        // panel, each at its natural height, so no card is squeezed or clipped.
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            ScrollArea::vertical()
                 .id_salt("main-left")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
+                    ui.add_space(theme::SPACE_8);
+                    self.report_panel(ui, view);
                 });
-            // Use spare room below compact controls, while retaining the pinned
-            // boundary when Advanced or a long input list needs its own scroll area.
-            if !self.rows.is_empty() {
-                report_top = (choices.top() + area.content_size.y + theme::SPACE_4).min(pinned_top);
-            }
-        });
-        let report = egui::Rect::from_min_max(egui::pos2(left.left(), report_top), left.max);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(report), |ui| {
-            let top = ui.cursor().top();
-            let reveal = self.reveal_report;
-            self.report_heading(ui);
-            let heading_height = ui.cursor().top() - top;
-            // Keep the body width fixed while its measured height grows. A disappearing
-            // scrollbar would reflow the cards and change button IDs during a click.
-            let mut scroll = ScrollArea::vertical()
-                .id_salt("report-panel-body")
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                .auto_shrink([false, false]);
-            if reveal {
-                scroll = scroll.vertical_scroll_offset(0.0);
-            }
-            let area = scroll.show(ui, |ui| self.report_panel_body(ui, view));
-            let height = heading_height + area.content_size.y;
-            if (height - measured).abs() > 0.5 {
-                ui.data_mut(|data| data.insert_temp(height_id, height));
-                ui.ctx().request_repaint();
-            }
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
             self.unfinished_notice(ui);
@@ -2948,19 +3026,27 @@ impl App {
         let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
-                let stopping = self.diagnostic_stopped;
+                let fetching = self.run.is_none() && self.intake.active && self.intake.stop_onshape;
+                let fetch_stopping = self.intake.stop.load(std::sync::atomic::Ordering::SeqCst);
+                let stopping = self.diagnostic_stopped || (fetching && fetch_stopping);
                 let label = if stopping {
                     report_panel::STOPPING_BUTTON
                 } else {
                     "Stop"
                 };
                 if ui
-                    .add_enabled(self.run.is_some() && !stopping, egui::Button::new(label))
+                    .add_enabled(
+                        (self.run.is_some() || fetching) && !stopping,
+                        egui::Button::new(label),
+                    )
                     .clicked()
                 {
                     if let Some(run) = &self.run {
                         run.stop();
                         self.diagnostic_stopped = true;
+                    } else if fetching {
+                        // The fetch ends before its next call and keeps what it fetched.
+                        self.intake.stop.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
             } else {
@@ -3080,6 +3166,14 @@ impl App {
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
+                    if index == 0
+                        && !running
+                        && self.intake.resumable.is_some()
+                        && self.intake.approval.is_none()
+                        && ui.button("Continue fetching").clicked()
+                    {
+                        action = Some(Action::ContinueFetch);
+                    }
                 });
                 if first == Some(index) {
                     shown.scroll_to_me(Some(Align::Min));
@@ -3138,6 +3232,17 @@ impl App {
             }
             Action::Notice(message) => {
                 self.notice = Some(message);
+                Ok(())
+            }
+            Action::ContinueFetch => {
+                // Ask first: it may spend a large share of the yearly calls.
+                if let Some(link) = self.intake.resumable.clone() {
+                    self.intake.approval = Some(crate::paste::Approval {
+                        link,
+                        estimate: self.intake.stop_remaining,
+                        resume: true,
+                    });
+                }
                 Ok(())
             }
             Action::Pick(pick) => {
@@ -3232,9 +3337,15 @@ impl App {
 
     /// The row the report panel is about: the one chosen, else the first that needs attention.
     fn report_index(&self, view: &present::RunView) -> Option<usize> {
+        // A stop at the request limit is resumable, not a problem to report.
+        let reportable = |index: &usize| {
+            self.rows
+                .get(*index)
+                .is_some_and(|row| row.status != Status::Stopped)
+        };
         self.report_row
-            .filter(|index| *index < self.rows.len())
-            .or_else(|| (!self.rows.is_empty()).then_some(view.first_to_show))
+            .filter(reportable)
+            .or_else(|| Some(view.first_to_show).filter(reportable))
     }
 
     /// The full report panel in the narrow page, reached by scrolling or the pinned bar.
@@ -3364,8 +3475,44 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
-            if report_panel::backup_link(ui, &p, present::REPORT_BUTTON).clicked() {
-                action = Some(Action::Report(selected.filter(|_| report.is_some())));
+            let mut show_wait_hint = false;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(report_panel::NOT_ON_DISCORD)
+                        .small()
+                        .color(p.tide),
+                );
+                if ui
+                    .button(present::REPORT_BUTTON)
+                    .on_hover_text(present::REPORT_HELP)
+                    .clicked()
+                {
+                    action = Some(Action::Report(selected.filter(|_| report.is_some())));
+                }
+                if let Some((index, _)) = row {
+                    let ready = report.is_some() && file.is_some_and(|file| file.can_report);
+                    let button = ui.add_enabled(
+                        ready && !busy,
+                        egui::Button::new(report_panel::CLOUD_REPORT_BUTTON),
+                    );
+                    if !ready || busy {
+                        button.on_disabled_hover_text(report_panel::CLOUD_REPORT_WAIT);
+                        show_wait_hint = !ready;
+                    } else if button.clicked() {
+                        action = Some(Action::Consent(index));
+                    }
+                }
+            });
+            if show_wait_hint {
+                // Its own line under the buttons, so it never wraps beside them.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(report_panel::CLOUD_REPORT_WAIT)
+                            .small()
+                            .color(p.tide),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Extend),
+                );
             }
             if let Some(text) = done(Step::Github) {
                 ui.label(RichText::new(text).small().strong().color(p.ink));
@@ -3375,13 +3522,6 @@ impl App {
                     egui::CollapsingHeader::new(report_panel::MORE)
                         .id_salt(("report-more", index, &row.input))
                         .show(ui, |ui| {
-                            if file.can_report
-                                && ui
-                                    .add_enabled(!busy, egui::Button::new("Anonymous report"))
-                                    .clicked()
-                            {
-                                action = Some(Action::Consent(index));
-                            }
                             if row.output.is_some() {
                                 if let Some(chosen) =
                                     ask_ai_ui(ui, index, self.ai_prompts.get(&index), reveal_ai)
@@ -3480,6 +3620,8 @@ enum Action {
     OpenReport(usize),
     /// Choose the row's file in the report panel.
     SelectReport(usize),
+    /// Carry on an Onshape fetch that stopped at the request limit.
+    ContinueFetch,
 }
 
 /// Completed designs with missing history or degraded content need review.
@@ -3500,6 +3642,7 @@ fn result_colour(p: &Palette, report: Option<&Value>, view: &FileView) -> egui::
             p.lantern_text
         }
         present::Status::Converted | present::Status::ConvertedWithLosses => p.spectre,
+        present::Status::Stopped => p.lantern_text,
         present::Status::Failed => p.danger,
         _ => p.tide,
     }
@@ -3537,7 +3680,8 @@ fn row_ui(
         ui.add(egui::Label::new(RichText::new(&view.name).heading()).wrap())
             .on_hover_text(display(&row.input));
     });
-    let step_button = !running && row.report.is_some();
+    let stopped = row.status == Status::Stopped;
+    let step_button = !running && row.report.is_some() && !stopped;
     let bundle =
         crate::onshape::is_bundle(&row.input) && row.input.is_file() && row.report.is_some();
     if output.is_some() || step_button || bundle {
@@ -3650,6 +3794,11 @@ fn row_ui(
                 }
             });
         });
+    }
+    if let Some(message) = view.error.as_ref().filter(|_| stopped) {
+        // Resumable, so only the plain explanation: no log, no problem report.
+        text_with_links(ui, message, p.lantern_text);
+        return action;
     }
     if let Some(message) = &view.error {
         text_with_links(ui, message, p.danger);
@@ -4418,7 +4567,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
             let mut app = App::new(cc);
             app.options.no_verify = true;
-            app.found_version = Some("0.45.2".into());
+            app.found_version = Some("0.46.2".into());
             app.rows.push(Row {
                 input: PathBuf::from("synthetic.f3d"),
                 output: Some(PathBuf::from("synthetic.sc")),
@@ -4648,18 +4797,16 @@ mod tests {
                     app
                 });
             harness.run_steps(8);
-            // The question and its steps show at once; the anonymous review is under More.
+            // The question, its steps and the cloud button show at once.
             harness.get_by_label(report_panel::QUESTION);
-            assert!(harness.query_by_label("Anonymous report").is_none());
+            harness.get_by_label(report_panel::CLOUD_REPORT_BUTTON);
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
             harness.get_by_label(report_panel::MORE).click_accesskit();
             harness.run_steps(8);
             assert!(harness.query_by_label("Diagnose this file").is_none());
             let review = harness
-                .query_all_by_label("Anonymous report")
-                .last()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .rect();
             // Discord first: the invite's card stands left of the DM's, both above More.
             assert!(join.right() <= dm.left());
@@ -4668,9 +4815,7 @@ mod tests {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
             harness
-                .query_all_by_label("Anonymous report")
-                .next()
-                .unwrap()
+                .get_by_label(report_panel::CLOUD_REPORT_BUTTON)
                 .click_accesskit();
             harness.run_steps(8);
             harness.get_by_label("This file converted, but the result is wrong.");
