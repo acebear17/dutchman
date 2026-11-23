@@ -1112,6 +1112,11 @@ impl SolidCraftWriter {
                     }
                 } else {
                     let removed = history.features.remove(at);
+                    if let Some(marker) = history.marker.as_mut() {
+                        if at < *marker {
+                            *marker -= 1;
+                        }
+                    }
                     mapping
                         .references
                         .features
