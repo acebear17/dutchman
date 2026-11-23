@@ -108,20 +108,68 @@ fn solid(output: &Value) -> Result<Option<bool>, String> {
     }
 }
 
-/// Refuses an operand that changes the result and is not projected yet.
-fn refuse_stated(operation: &Value, keys: &[(&str, &str)]) -> Result<(), String> {
-    for (key, what) in keys {
-        if operation.get(key).is_some() {
+/// Whether the design states a value: present, and not null or empty.
+fn stated(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        _ => true,
+    }
+}
+
+/// Refuses every stated operand outside `known`, the operand keys the projection understands
+/// for the operation. A key in `named` is refused with its own description; any other stated
+/// key is refused by name, so an operand added to the design later is refused, not ignored.
+pub(super) fn refuse_stated(
+    operation: &Value,
+    known: &[&str],
+    named: &[(&str, &str)],
+) -> Result<(), String> {
+    let Some(fields) = operation.as_object() else {
+        return Err("its operation is malformed".to_owned());
+    };
+    for (key, what) in named {
+        if fields.get(*key).is_some_and(stated) {
             return Err(format!("it states {what}, which is not projected yet"));
+        }
+    }
+    for (key, value) in fields {
+        if !known.contains(&key.as_str()) && stated(value) {
+            return Err(format!("it states {key}, which is not projected yet"));
         }
     }
     Ok(())
 }
 
+/// The operand keys of an extrusion that the projection reads or ignores by design.
+pub(super) const EXTRUDE_KEYS: &[&str] = &[
+    "profile",
+    "direction",
+    "origin",
+    "span",
+    "output",
+    "native_options",
+    "source_settings",
+];
+
+/// The operand keys of a revolution that the projection reads or ignores by design.
+pub(super) const REVOLVE_KEYS: &[&str] = &[
+    "profile",
+    "axis",
+    "span",
+    "output",
+    "native_options",
+    "source_settings",
+];
+
 fn extrude(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -> Projection {
     refuse_stated(
         operation,
+        EXTRUDE_KEYS,
         &[
+            ("loops", "a loop nesting"),
             ("draft", "a draft"),
             ("fit", "a profile fit"),
             ("outside", "an outside setting"),
@@ -215,7 +263,11 @@ fn extrude(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -> Projectio
 }
 
 fn revolve(operation: &Value, plan: &Plan, sketches: &Sketches<'_>) -> Projection {
-    refuse_stated(operation, &[("fit", "a profile fit")])?;
+    refuse_stated(
+        operation,
+        REVOLVE_KEYS,
+        &[("loops", "a loop nesting"), ("fit", "a profile fit")],
+    )?;
     let (sketch, carrier) = profile(operation.get("profile"), plan, sketches)?;
     let output = operation.get("output").unwrap_or(&Value::Null);
     let mut construction = Map::new();
