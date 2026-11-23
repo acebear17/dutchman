@@ -1074,10 +1074,15 @@ fn run_cli() -> ExitCode {
                 }
                 return exit(&report);
             }
+            let library = dutchman::tool_library::is_library(&input);
             let output = explicit.unwrap_or_else(|| {
                 dutchman_core::Format::part_revision(&default_input)
                     .map_or_else(|| default_input.clone(), |(part, _)| part)
-                    .with_extension(options.output_extension())
+                    .with_extension(if library {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        options.output_extension()
+                    })
             });
             if derived {
                 if input == output
@@ -1814,7 +1819,9 @@ fn inspect(
         match (&inspection.conversion, &outcome.mode, &outcome.check) {
             (Err(reason), _, _) => println!("would write: nothing; converting it fails: {reason}"),
             (Ok(()), Mode::PartialHistory, _) => {
-                println!("would write: partial editable history and the imported final shape")
+                println!(
+                    "would write: partial editable history, then the rest as one imported body"
+                )
             }
             (Ok(()), Mode::History, _) => println!("would write: editable history"),
             (Ok(()), Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {

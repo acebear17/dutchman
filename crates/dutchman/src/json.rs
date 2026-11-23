@@ -67,6 +67,9 @@ pub(crate) fn repro_anonymous(
 
 /// The input file as the reports describe it.
 pub fn input(path: &Path) -> Value {
+    if crate::tool_library::is_library(path) {
+        return crate::tool_library::input(path);
+    }
     let format = Format::from_path(path);
     json!({
         "path": path.display().to_string(),
@@ -81,6 +84,11 @@ pub fn input(path: &Path) -> Value {
 /// A conversion's input capability, before its result.
 pub fn status_line(report: &Value) -> Option<String> {
     let input = report.get("input")?;
+    if crate::tool_library::is_report(report) {
+        return Some(crate::tool_library::status_text(
+            input.get("extension")?.as_str()?,
+        ));
+    }
     Some(format!(
         "{} .{}: {}",
         input.get("program")?.as_str()?,
@@ -895,11 +903,17 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         "verification".to_owned(),
         json!({"status": status, "reason": reason}),
     );
-    out.insert(
-        "history".to_owned(),
-        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing,
-            "reapplied": reapplied, "features": features}),
-    );
+    let mut history = json!({"mapped": mapped, "total": total, "rebuilt": rebuilt,
+        "needing": needing, "reapplied": reapplied, "features": features});
+    // The first feature not converted: from it on, the design is one imported body.
+    if let (Mode::PartialHistory, Some(rest), Some(fields)) = (
+        outcome.mode,
+        dutchman_core::RestImported::of(&outcome.features),
+        history.as_object_mut(),
+    ) {
+        fields.insert("rest_imported_from".to_owned(), json!(rest.from));
+    }
+    out.insert("history".to_owned(), history);
     out
 }
 
@@ -1981,6 +1995,29 @@ mod tests {
             final_body: false,
             inferred: None,
         }
+    }
+
+    #[test]
+    fn a_partial_history_names_the_first_feature_not_converted() {
+        let mut blocked = feature("hole", FeatureStatus::Blocked);
+        blocked.name = Some("Hole 1".to_owned());
+        let rows = vec![feature("sketch", FeatureStatus::Mapped), blocked];
+        let history = |mode| {
+            let fields = outcome_fields(&Outcome {
+                mode,
+                check: Check::Partial("x".to_owned()),
+                features: rows.clone(),
+            });
+            Value::Object(fields)
+        };
+        assert_eq!(
+            history(Mode::PartialHistory).pointer("/history/rest_imported_from"),
+            Some(&json!("Hole 1"))
+        );
+        assert_eq!(
+            history(Mode::History).pointer("/history/rest_imported_from"),
+            None
+        );
     }
 
     #[test]

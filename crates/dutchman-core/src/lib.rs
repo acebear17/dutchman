@@ -6,6 +6,7 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
@@ -161,7 +162,7 @@ pub use plain_notes::{plain_view, row_for, PlainNote, PlainView, Shown, PLAIN_NO
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
-    PartHistory, Report, Severity, SourceError, Stage,
+    PartHistory, Report, RestImported, Severity, SourceError, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
