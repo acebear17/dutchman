@@ -12,7 +12,9 @@ pub(super) struct Sketches<'a> {
     entities: BTreeMap<&'a str, Vec<&'a Value>>,
 }
 
-type Built = (Value, Vec<Value>);
+/// The sketch row, its entity rows, and whether the design left construction unstated for
+/// any entity.
+type Built = (Value, Vec<Value>, bool);
 
 impl<'a> Sketches<'a> {
     pub(super) fn new(design: &'a Value) -> Self {
@@ -40,14 +42,19 @@ impl<'a> Sketches<'a> {
             .get(sketch)
             .ok_or_else(|| format!("the sketch {sketch} is not stated"))?;
         let mut rows = Vec::new();
+        let mut unstated = false;
         for entity in self.entities.get(sketch).into_iter().flatten() {
+            unstated |= entity
+                .get("construction")
+                .and_then(Value::as_bool)
+                .is_none();
             rows.push(entity_row(entity, sketch)?);
         }
         let mut row = json!({"id": sketch, "placement": placement(record), "profiles": []});
         if let (Some(name), Some(object)) = (text(record, "name"), row.as_object_mut()) {
             object.insert("name".to_owned(), json!(name));
         }
-        Ok((row, rows))
+        Ok((row, rows, unstated))
     }
 }
 

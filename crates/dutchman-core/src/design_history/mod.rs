@@ -43,6 +43,8 @@ pub const CODE_FEATURE: &str = "design-history/feature-not-projected";
 pub const CODE_DECLINED: &str = "design-history/not-projected";
 /// The loss code of features the source rolled back.
 pub const CODE_ROLLED_BACK: &str = "design-history/rolled-back";
+/// The loss code of a sketch whose entities the design does not state as construction or not.
+pub const CODE_CONSTRUCTION: &str = "design-history/construction-unstated";
 
 /// What the projection wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,9 +163,9 @@ impl Plan {
                 .cloned()
                 .unwrap_or_default();
             let label = sketches.name(sketch).unwrap_or(&name).to_owned();
-            let built = sketches
-                .build(sketch)
-                .map(|(row, entities)| (sketch_operation(sketch), row, entities));
+            let built = sketches.build(sketch).map(|(row, entities, unstated)| {
+                (sketch_operation(sketch), row, entities, unstated)
+            });
             out.sketch_feature(
                 Header {
                     id: row_id,
@@ -193,9 +195,9 @@ impl Plan {
         if let Some(sketch) = sketch_of(feature) {
             let built = match refusal {
                 Some(reason) => Err(reason),
-                None => sketches
-                    .build(sketch)
-                    .map(|(row, entities)| (sketch_operation(sketch), row, entities)),
+                None => sketches.build(sketch).map(|(row, entities, unstated)| {
+                    (sketch_operation(sketch), row, entities, unstated)
+                }),
             };
             out.sketch_feature(header, built, report);
             return;
@@ -269,7 +271,7 @@ struct Header {
     native_ref: Option<String>,
 }
 
-type BuiltSketch = Result<(Value, Value, Vec<Value>), String>;
+type BuiltSketch = Result<(Value, Value, Vec<Value>, bool), String>;
 type BuiltOperation = Result<(Value, Vec<String>), String>;
 
 impl Rows {
@@ -302,9 +304,31 @@ impl Rows {
     fn sketch_feature(&mut self, header: Header, built: BuiltSketch, report: &mut Report) {
         let mut row = self.row(&header);
         let reason = match built {
-            Ok((operation, sketch, entities)) => {
+            Ok((operation, sketch, entities, unstated)) => {
                 set_operation(&mut row, operation);
+                if unstated {
+                    if let Some(properties) = row
+                        .get_mut("source_properties")
+                        .and_then(Value::as_object_mut)
+                    {
+                        properties.insert("construction_stated".to_owned(), json!("false"));
+                    }
+                }
                 if admits_sketch(&row, &sketch, &entities) {
+                    if unstated {
+                        let subject = sketch
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .or_else(|| sketch.get("id").and_then(Value::as_str))
+                            .unwrap_or(&header.name)
+                            .to_owned();
+                        report.push_coded(
+                            Severity::Info,
+                            subject,
+                            CODE_CONSTRUCTION,
+                            "the source did not state which sketch entities are construction geometry; they were read as profile geometry",
+                        );
+                    }
                     self.rolled_back += usize::from(header.rolled_back);
                     self.features.push(row);
                     self.sketches.push(sketch);

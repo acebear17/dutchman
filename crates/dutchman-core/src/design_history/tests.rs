@@ -5,7 +5,9 @@
 use cadmpeg_ir::CadIr;
 use serde_json::{json, Value};
 
-use super::{project, CODE_DECLINED, CODE_FEATURE, CODE_PROJECTED, CODE_ROLLED_BACK};
+use super::{
+    project, CODE_CONSTRUCTION, CODE_DECLINED, CODE_FEATURE, CODE_PROJECTED, CODE_ROLLED_BACK,
+};
 use crate::Report;
 
 const SCOPE: &str = "test:design:product-definition#1";
@@ -212,8 +214,8 @@ fn a_sketch_and_a_blind_extrude_become_two_rows_in_order() {
         wire["sketches"][0]["placement"]["frame"]["u_axis"]["x"],
         1.0
     );
-    assert_eq!(codes(&report), [CODE_PROJECTED]);
-    assert!(report.losses()[0].detail.contains("design layer"));
+    assert_eq!(codes(&report), [CODE_CONSTRUCTION, CODE_PROJECTED]);
+    assert!(report.losses()[1].detail.contains("design layer"));
 }
 
 #[test]
@@ -505,4 +507,48 @@ fn several_scopes_are_declined_by_name() {
     assert!(project(&mut ir, &mut report).is_none());
     assert!(ir.model.features.is_empty());
     assert_eq!(codes(&report), [CODE_DECLINED]);
+}
+
+#[test]
+fn a_sketch_whose_construction_is_silent_is_reported_once_and_marked() {
+    let mut ir = block(Some(blind(5.0)));
+    let mut report = Report::default();
+    project(&mut ir, &mut report).unwrap();
+    let rows = rows(&ir);
+    assert_eq!(rows[0]["source_properties"]["construction_stated"], "false");
+    assert!(rows[1]["source_properties"]
+        .get("construction_stated")
+        .is_none());
+    let notes: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.code.as_deref() == Some(CODE_CONSTRUCTION))
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].subject, "Sketch 1");
+    assert_eq!(notes[0].severity, crate::Severity::Info);
+    assert!(notes[0].detail.contains("construction geometry"));
+}
+
+#[test]
+fn a_sketch_that_states_construction_for_every_entity_is_not_reported() {
+    let (sketch, mut entities) = square_sketch(1, 1);
+    for entity in &mut entities {
+        entity["construction"] = json!(false);
+    }
+    let mut ir = design_only(
+        vec![feature(
+            1,
+            "Block",
+            extrude(1, Some(blind(5.0)), new_body()),
+        )],
+        vec![(sketch, entities)],
+        None,
+    );
+    let mut report = Report::default();
+    project(&mut ir, &mut report).unwrap();
+    assert_eq!(codes(&report), [CODE_PROJECTED]);
+    assert!(rows(&ir)[0]["source_properties"]
+        .get("construction_stated")
+        .is_none());
 }

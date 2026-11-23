@@ -18016,6 +18016,64 @@ fn a_design_history_stops_at_a_first_feature_that_is_not_projected() {
         .all(|f| f["name"] != "Block" || f["type"] == "import"));
 }
 
+/// A design-silent line across the square of sketch 1 splits its profile region in two when
+/// it is read as geometry.
+fn dividing_line() -> Model {
+    let mut model = design_block(design_span(
+        json!({"kind": "at_origin"}),
+        design_amount(10.0),
+    ));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            json!({"id": "se:design:sketch-entity#15", "sketch": "se:design:sketch#1",
+            "definition": {"kind": "free", "value": {"kind": "line", "value": {
+                "start": {"u": 0.0, "v": 5.0}, "end": {"u": 10.0, "v": 5.0}}}},
+            "roles": [], "native_options": {}, "source_settings": {}}),
+        );
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+/// A projected row takes no shortcut: with the design-silent line read as geometry the
+/// profile region may be wrong, so the extrude is unconfirmed without a source body check
+/// and refused when the check finds the replay differs.
+#[test]
+fn a_projected_sketch_goes_through_the_same_region_check_as_model_rows() {
+    let mut model = dividing_line();
+    dutchman_core::design_history::project(&mut model.ir, &mut Report::default());
+    let (_, unchecked) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&unchecked).contains("unverified: verification turned off"),
+        "{}",
+        history_line(&unchecked)
+    );
+    let writer = SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator {
+        different_history: true,
+        ..RecordedEvaluator::default()
+    }));
+    let (document, report) = convert(&model, &writer);
+    assert_eq!(types(&document)[0], ("import".to_owned(), false));
+    let extrude = &report.outcome().unwrap().features[1];
+    assert_eq!(extrude.kind, "extrude");
+    assert_eq!(extrude.status, dutchman_core::FeatureStatus::Blocked);
+    assert!(extrude.profile_unverified);
+    assert!(
+        extrude
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("replay differs"),
+        "{:?}",
+        extrude.reason
+    );
+}
+
 #[test]
 fn a_design_extent_the_design_leaves_unstated_is_refused_not_guessed() {
     let mut model = design_block(design_span(

@@ -284,14 +284,17 @@ MCP and the web app return their final reports without a progress stream.
 A CADIR v11 history stated only in the design layer is projected into model history
 before the history is written: sketches and extrudes and revolves of whole sketches
 become history features, each marked with the source property `projected_from=design`.
-The reader adds three loss codes, all at stage `map` and subject `design history` or the
+The reader adds five loss codes, all at stage `map` and subject `design history` or the
 feature's name: `design-history/projected` (Info) says the history was read from the design
 layer; `design-history/feature-not-projected` (Degraded) names a feature, or an operand of
 one, that is not projected yet, and the history stops there; `design-history/not-projected`
 (Degraded) says the whole history is not projected yet (several scopes, a configuration, or
 a root that is not one timeline), so conversion keeps the final geometry.
 `design-history/rolled-back` (Degraded) says the source rolled its history back and the
-rolled-back features are written as active features. This adds no report fields or schema
+rolled-back features are written as active features.
+`design-history/construction-unstated` (Info, subject the sketch's name) says the source did
+not state which entities of that sketch are construction geometry and they were read as
+profile geometry; the sketch's history row carries `source_properties.construction_stated=false`. This adds no report fields or schema
 version. See [the port audit](cadir-v11.md).
 
 ## Exit codes
