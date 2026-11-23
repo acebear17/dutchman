@@ -16613,12 +16613,31 @@ fn an_inventor_part_keeps_its_parameter_expressions() {
     // The expression without spaces or grouping parentheses, so the test does not depend on how
     // the writer spaces it.
     let expr = |name: &str| -> String {
-        find(name).unwrap_or_else(|| panic!("{name} is a parameter"))["expr"]
+        let text: String = find(name).unwrap_or_else(|| panic!("{name} is a parameter"))["expr"]
             .as_str()
             .unwrap()
             .chars()
             .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
-            .collect()
+            .collect();
+        // Numbers rounded to nine decimals, so float noise from the decoder (`1.5000000000000002`)
+        // does not matter.
+        let mut out = String::new();
+        let mut number = String::new();
+        for c in text.chars().chain(std::iter::once(' ')) {
+            if c.is_ascii_digit() || c == '.' {
+                number.push(c);
+                continue;
+            }
+            if !number.is_empty() {
+                let value: f64 = number.parse().unwrap();
+                out.push_str(&format!("{}", (value * 1e9).round() / 1e9));
+                number.clear();
+            }
+            if c != ' ' {
+                out.push(c);
+            }
+        }
+        out
     };
     // A length literal in millimetres, whether written as `40mm` or as metres (`0.04m`, with
     // whatever float noise the decoder leaves).
