@@ -311,7 +311,7 @@ file's message is that details line, with its error code, then "Anything else we
 Before any file has finished, or while one is still converting, the message names only the
 version and how long it has been running.
 
-**File a GitHub issue ↗** and, last, **Review and send report** sit side by side directly below the three steps.
+A row starting with the small label **Not on Discord?** and holding **File a GitHub issue ↗** and, last, **Review and send report** sits directly below the three steps.
 While the file is still converting the cloud button is greyed out and says "Available when this
 file finishes". **Review and send report** opens the review for a direct upload to the cloud inbox; nothing is sent
 until you review it and click Send. **File a GitHub issue ↗** is the public backup. It opens the

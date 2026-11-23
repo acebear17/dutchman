@@ -37,6 +37,8 @@ pub const GITHUB_OPENED: &str = "The GitHub form opened in your browser. Never a
 pub const MORE: &str = "More";
 /// The secondary button beside the GitHub link: review, then upload to the cloud inbox.
 pub const CLOUD_REPORT_BUTTON: &str = "Review and send report";
+/// The muted label that starts the row of report buttons.
+pub const NOT_ON_DISCORD: &str = "Not on Discord?";
 /// Why the cloud button is disabled while the file is still converting.
 pub const CLOUD_REPORT_WAIT: &str = "Available when this file finishes";
 /// Shown once a claim code is copied for updates on a sent report.

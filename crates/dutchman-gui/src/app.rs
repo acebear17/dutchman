@@ -3497,6 +3497,11 @@ impl App {
             }
             let mut show_wait_hint = false;
             ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(report_panel::NOT_ON_DISCORD)
+                        .small()
+                        .color(p.tide),
+                );
                 if ui
                     .button(present::REPORT_BUTTON)
                     .on_hover_text(present::REPORT_HELP)

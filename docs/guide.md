@@ -903,8 +903,9 @@ In narrow desktop windows, **Report a problem…** (or **Report this design…**
 selected) stays above **Convert** and scrolls to the full numbered cards in the page.
 See [reporting a problem](desktop.md#reporting-a-problem).
 
-Report consent is per report. In the desktop app, Discord is the first route, with a small
-**File a GitHub issue ↗** backup button below the three steps. **Review and send report** is a button beside it
+Report consent is per report. In the desktop app, Discord is the first route, with a row
+below the three steps that starts with the small label **Not on Discord?**, then the
+**File a GitHub issue ↗** backup button and **Review and send report**
 (greyed out until the file finishes); **More** holds AI help and diagnosis. It opens a review for the chosen file
 with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
