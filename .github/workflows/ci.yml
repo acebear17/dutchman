@@ -527,13 +527,15 @@ jobs:
   solidcraft-roundtrip:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
-    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
+    # The merge queue replays every code change in the newest SolidCraft too: these history
+    # tests run only with a SolidCraft, so a pull request's own checks never see them.
+    if: (needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true') || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true') || (github.event_name == 'pull_request' && needs.changes.outputs.floor == 'true')
     runs-on: ${{ needs.changes.outputs.flyer == 'true' && fromJSON('["self-hosted", "flyer"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        solidcraft: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"},{"version":"newest"}]' || '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"}]') }}
+        solidcraft: ${{ fromJSON((needs.changes.outputs.full == 'true' || github.event_name == 'merge_group') && '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"},{"version":"newest"}]' || '[{"version":"0.18.2","sha256":"9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff"}]') }}
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
@@ -653,7 +655,7 @@ jobs:
               "fmt": code, "clippy": code,
               "test": code or (event == "pull_request" and outputs.get("platform") == "true"), "docs": not code,
               "wasm": native, "msrv": native,
-              "solidcraft-roundtrip": native or (event == "pull_request" and outputs.get("floor") == "true"),
+              "solidcraft-roundtrip": native or (event == "merge_group" and code) or (event == "pull_request" and outputs.get("floor") == "true"),
               "test-macos": (full and outputs.get("rust") == "true") or (event == "pull_request" and outputs.get("platform") == "true"),
               "placements": full or (event == "merge_group" and code),
               "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",

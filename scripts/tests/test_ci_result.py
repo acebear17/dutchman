@@ -29,8 +29,9 @@ class CiResultTests(unittest.TestCase):
         needs["changes"]["outputs"] = {key: "true" for key in ("code", "rust", "docker")}
         needs["changes"]["outputs"]["full"] = str(full).lower()
         if event == "merge_group":
-            active.add("placements")
+            active |= {"placements", "solidcraft-roundtrip"}
             needs["placements"]["result"] = "success"
+            needs["solidcraft-roundtrip"]["result"] = "success"
         needs["changes"]["outputs"].update(platform=str(platform).lower(), floor=str(floor).lower())
         if event == "pull_request":
             if platform:
@@ -38,7 +39,7 @@ class CiResultTests(unittest.TestCase):
             if floor:
                 needs["solidcraft-roundtrip"]["result"] = "success"
         if docs:
-            for job in ("fmt", "clippy", "test", "placements"):
+            for job in ("fmt", "clippy", "test", "placements", "solidcraft-roundtrip"):
                 needs[job]["result"] = "skipped"
             needs["docs"]["result"] = "success"
             needs["changes"]["outputs"].update(code="false", rust="false", docker="false")
@@ -82,10 +83,14 @@ class CiResultTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_queue_skips_platform_and_image_checks(self):
-        for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip"):
+        for job in ("test-arm", "test-macos", "wasm", "msrv"):
             with self.subTest(job=job):
                 result = self.check_results("merge_group", results={job: "success"})
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_queue_requires_the_solidcraft_replay(self):
+        result = self.check_results("merge_group", failed="solidcraft-roundtrip")
+        self.assertNotEqual(result.returncode, 0)
 
     def test_queue_requires_linux_tools_and_smoke_placements(self):
         result = self.check_results("merge_group", failed="placements")
@@ -124,7 +129,9 @@ class CiResultTests(unittest.TestCase):
                 condition = condition.replace(key, repr(value))
             condition = re.sub(r"!(?!=)", "not ", condition.replace("&&", "and").replace("||", "or"))
             with self.subTest(job=job):
-                self.assertFalse(eval(condition, {"__builtins__": {}}))
+                # The SolidCraft replay is the one job the queue runs for every code change.
+                scheduled = eval(condition, {"__builtins__": {}})
+                self.assertEqual(scheduled, job == "solidcraft-roundtrip")
 
     def test_full_ci_accepts_retry_after_timeout_or_shutdown(self):
         # A timeout can appear as failure or cancelled in the needs context.
