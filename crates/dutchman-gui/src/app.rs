@@ -3495,6 +3495,7 @@ impl App {
                 Some(Step::Dm) => action = Some(Action::Dm(selected)),
                 Some(Step::Github) | None => {}
             }
+            let mut show_wait_hint = false;
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(present::REPORT_BUTTON)
@@ -3511,18 +3512,23 @@ impl App {
                     );
                     if !ready || busy {
                         button.on_disabled_hover_text(report_panel::CLOUD_REPORT_WAIT);
-                        if !ready {
-                            ui.label(
-                                RichText::new(report_panel::CLOUD_REPORT_WAIT)
-                                    .small()
-                                    .color(p.tide),
-                            );
-                        }
+                        show_wait_hint = !ready;
                     } else if button.clicked() {
                         action = Some(Action::Consent(index));
                     }
                 }
             });
+            if show_wait_hint {
+                // Its own line under the buttons, so it never wraps beside them.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(report_panel::CLOUD_REPORT_WAIT)
+                            .small()
+                            .color(p.tide),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Extend),
+                );
+            }
             if let Some(text) = done(Step::Github) {
                 ui.label(RichText::new(text).small().strong().color(p.ink));
             }

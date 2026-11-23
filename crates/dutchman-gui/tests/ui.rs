@@ -862,6 +862,11 @@ fn shot(
     let file = format!("{state}-{theme}.png");
     let image = harness.render().unwrap();
     let (width, height) = image.dimensions();
+    // People use a square or wider window, never a tall narrow one.
+    assert!(
+        height <= width,
+        "screenshot {file} is {width}x{height}: render at a landscape size such as 1280x800"
+    );
     use image::ImageEncoder;
     let output = std::fs::File::create(dir.join(&file)).unwrap();
     image::codecs::png::PngEncoder::new_with_quality(
@@ -1808,7 +1813,7 @@ mod consent_e2e {
         let stub = Stub::new(201);
         let out = tempfile::tempdir().unwrap();
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(1100.0, 1500.0))
+            .with_size(egui::vec2(1280.0, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
@@ -5241,7 +5246,7 @@ mod test_support;
 fn finished_cloud_app(dir: &Path) -> Harness<'static, App> {
     use serde_json::json;
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(1100.0, 1500.0))
+        .with_size(egui::vec2(1280.0, 800.0))
         .build_eframe(|cc| test_app(cc));
     harness.state_mut().set_out_dir(dir.to_path_buf());
     let input = dir.join("Bracket.f3d");
@@ -5282,7 +5287,7 @@ fn cloud_report_button_is_visible_and_enabled_once_the_file_has_a_report() {
 fn cloud_report_button_is_disabled_while_the_file_is_converting() {
     use egui_kittest::kittest::NodeT;
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(1100.0, 1500.0))
+        .with_size(egui::vec2(1280.0, 800.0))
         .build_eframe(|cc| test_app(cc));
     harness
         .state_mut()
@@ -5337,7 +5342,7 @@ fn report_buttons_screenshots() {
         // Neutral absolute paths: the app shows paths as they are, so none of the machine's.
         let docs = PathBuf::from("/Users/demo/Documents");
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(1100.0, 1500.0))
+            .with_size(egui::vec2(1280.0, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
         harness.state_mut().set_checker_for_test(true);
@@ -5369,7 +5374,7 @@ fn report_buttons_screenshots() {
         );
 
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(1100.0, 1500.0))
+            .with_size(egui::vec2(1280.0, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
         harness.state_mut().set_checker_for_test(true);
