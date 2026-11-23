@@ -402,11 +402,11 @@ fn a_large_failed_file_takes_the_private_link_and_no_folder_opens() {
 #[test]
 fn the_step_cards_stand_side_by_side_and_wrap_when_narrow() {
     let (harness, _dir) = failed_card("wide.f3d", 10, 1000.0);
-    let join = harness.get_by_label("Join our Discord server").rect();
+    let join = harness.get_by_label("Join our Discord").rect();
     let dm = harness.get_by_label("DM Dutchy").rect();
     assert!((join.top() - dm.top()).abs() < 1.0 && join.right() < dm.left());
     let (harness, _dir) = failed_card("narrow.f3d", 10, 520.0);
-    let join = harness.get_by_label("Join our Discord server").rect();
+    let join = harness.get_by_label("Join our Discord").rect();
     let step = harness.get_by_label("Please add a STEP export").rect();
     assert!(step.top() > join.bottom());
 }
@@ -518,9 +518,7 @@ fn screenshots() {
             convert(&mut harness);
             harness.state_mut().preview_size(0, size);
             harness.run_steps(8);
-            harness
-                .get_by_label("Join our Discord server")
-                .scroll_to_me();
+            harness.get_by_label("Join our Discord").scroll_to_me();
             harness.run_steps(8);
             shot(
                 &mut harness,
@@ -2646,7 +2644,7 @@ fn output_settings_collapse_after_conversion_and_reopen() {
         let footer = h.get_by_label("Convert").rect().top();
         for label in [
             dutchman_gui::report_panel::QUESTION,
-            "Join our Discord server",
+            "Join our Discord",
             dutchman::present::SEND_JOIN_BUTTON,
             dutchman::present::SEND_JOIN_NOTE,
         ] {
@@ -4911,7 +4909,7 @@ fn report_flow_case_screenshots() {
         );
         let bottom = h.get_by_label("Convert").rect().top();
         for label in [
-            "Join our Discord server",
+            "Join our Discord",
             dutchman::present::SEND_JOIN_BUTTON,
             dutchman::present::SEND_JOIN_NOTE,
         ] {
@@ -5362,6 +5360,14 @@ fn report_buttons_screenshots() {
             });
         harness.run_steps(8);
         harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "report-buttons-top",
+            name,
+            "Top of the left column: Designs and Output folder at their natural height.",
+        );
         harness.get_by_label(CLOUD).scroll_to_me();
         harness.run_steps(8);
         shot(

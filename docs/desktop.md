@@ -288,7 +288,7 @@ results, **About** chooses another; **Report this file…** on any finished card
 card's file and brings the panel into view. Its numbered cards are the way to reach us, Discord
 first:
 
-1. **Join our Discord server**: **Open invite** opens the invite. Already in? Skip this step.
+1. **Join our Discord**: **Open invite** opens the invite. Already in? Skip this step.
 2. **DM Dutchy**: **Copy and open DM** copies a message and opens Dutchy's DM. A file within
    Discord's upload limit is dragged in, and its folder opens for that; for a larger one, Dutchy
    replies with a private upload link. See

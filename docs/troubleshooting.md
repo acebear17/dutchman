@@ -110,7 +110,7 @@ and the file is the quickest way to fix it. A failed file's card in the desktop 
 has the steps (in the desktop app, in **Is there a problem? Is something missing?** at the bottom
 left; **Report this file…** on a card chooses that file):
 
-1. **Join our Discord server.** Already in? Skip this step.
+1. **Join our Discord.** Already in? Skip this step.
 2. **DM Dutchy.** The button copies a message and opens Dutchy's DM. Paste the message.
    It gives Dutchman's version, the error's code, the report id, the file's size, and whether a
    STEP is at hand. It names no file, and the report id is the one in the anonymous report and

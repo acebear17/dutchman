@@ -135,7 +135,7 @@ pub const REPORT_BUTTON: &str = "File a GitHub issue ↗";
 pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =
     "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:";
-pub const SEND_JOIN_TITLE: &str = "Join our Discord server";
+pub const SEND_JOIN_TITLE: &str = "Join our Discord";
 pub const SEND_JOIN_BUTTON: &str = "Open invite";
 pub const SEND_JOIN_NOTE: &str = "Already in? Skip this step.";
 pub const SEND_DM_TITLE: &str = "DM Dutchy";

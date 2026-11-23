@@ -42,7 +42,7 @@ pub const NOT_ON_DISCORD: &str = "Not on Discord?";
 /// Why the cloud button is disabled while the file is still converting.
 pub const CLOUD_REPORT_WAIT: &str = "Available when this file finishes";
 /// Shown once a claim code is copied for updates on a sent report.
-pub const UPDATES_COPIED: &str = "A claim code is copied. Join our Discord server (step 1) if you \
+pub const UPDATES_COPIED: &str = "A claim code is copied. Join our Discord (step 1) if you \
      haven't, then paste the code on its own in Dutchy's DM to get updates on this report.";
 /// The bottom bar's line after Stop.
 pub const STOPPING: &str = "Stopping the converter and its children. No other file starts.";
