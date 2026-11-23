@@ -1868,6 +1868,32 @@ fn a_symmetric_through_all_extent_is_mapped() {
     );
 }
 
+#[test]
+fn a_two_sided_extent_through_everything_both_ways_is_a_symmetric_one() {
+    let through = json!({"termination": {"kind": "through_all"}});
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let two_sided = json!({"kind": "two_sided", "first": through.clone(), "second": through});
+    let model = cube_with_history(10.0, whole_sketch(), Some(two_sided));
+    let (document, _) = convert(&model, &writer);
+    assert_eq!(
+        document["features"][1]["extent"],
+        json!({"direction": "symmetric", "convention": "total_distance",
+               "distance": "0 mm", "through_all": true})
+    );
+    // Through everything one way and a blind distance the other has no SolidCraft form yet.
+    let mixed = json!({"kind": "two_sided",
+        "first": {"termination": {"kind": "blind", "length": 4.0}},
+        "second": {"termination": {"kind": "through_all"}}});
+    let model = cube_with_history(10.0, whole_sketch(), Some(mixed));
+    let (document, report) = convert(&model, &writer);
+    assert_ne!(document["features"][1]["type"], "extrude");
+    assert!(
+        history_line(&report).contains("non-blind extrude end against the sketch normal"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 /// The final cube with a blocked feature between two otherwise mapped sketch features.
 fn reference_sketch_history() -> Model {
     let mut model = loft_history(10.0, |definition| {
