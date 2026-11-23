@@ -249,12 +249,17 @@ pub(crate) fn map(
     if !builder.links.is_empty() {
         // The letters' own ids come after every id written here.
         let counter = |prefix: &str| builder.counters.get(prefix).copied().unwrap_or(0);
-        sketch["links"] = Value::Array(builder.links.clone());
-        sketch["counters"] = json!({
-            "j": builder.links.len(),
-            "l": counter("l"),
-            "p": counter("p"),
-        });
+        if let Some(fields) = sketch.as_object_mut() {
+            fields.insert("links".to_owned(), Value::Array(builder.links.clone()));
+            fields.insert(
+                "counters".to_owned(),
+                json!({
+                    "j": builder.links.len(),
+                    "l": counter("l"),
+                    "p": counter("p"),
+                }),
+            );
+        }
     }
     Ok(json!({
         "id": id,
@@ -1178,7 +1183,9 @@ impl Builder {
             },
             "text" => {
                 if let Some(mut link) = text_link(geometry, report)? {
-                    link["id"] = json!(format!("j{}", self.links.len() + 1));
+                    if let Some(fields) = link.as_object_mut() {
+                        fields.insert("id".to_owned(), json!(format!("j{}", self.links.len() + 1)));
+                    }
                     if construction {
                         report.push(
                             Severity::Degraded,
@@ -1307,10 +1314,14 @@ fn text_link(geometry: &Value, report: &mut Report) -> Result<Option<Value>, Str
         .and_then(Value::as_str)
         .filter(|font| !font.trim().is_empty())
     {
-        source["font"] = json!(font);
+        if let Some(fields) = source.as_object_mut() {
+            fields.insert("font".to_owned(), json!(font));
+        }
     }
     if !style.is_empty() {
-        source["style"] = Value::Object(style);
+        if let Some(fields) = source.as_object_mut() {
+            fields.insert("style".to_owned(), Value::Object(style));
+        }
     }
     Ok(Some(json!({"kind": "text", "source": source})))
 }
