@@ -435,7 +435,17 @@ fn local_components(
     } else if let Some(completeness) = assembly::flattened_completeness(model, report) {
         report.set_completeness(completeness);
     }
-    report.record_missing_links(&missing_linked_components(model));
+    let missing = missing_linked_components(model);
+    let fusion_f3d = model
+        .source_file
+        .as_deref()
+        .and_then(|file| Path::new(file).extension())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("f3d"));
+    if fusion_f3d {
+        report.record_missing_inserted_designs(&missing);
+    } else {
+        report.record_missing_links(&missing);
+    }
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
@@ -935,6 +945,43 @@ mod tests {
         let mut report = Report::default();
         local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
         assert!(report.completeness().is_none());
+    }
+
+    #[test]
+    fn a_fusion_f3d_with_inserted_designs_missing_says_to_export_an_f3z() {
+        let mut report = Report::default();
+        let mut model = read(
+            Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            model.source_file.as_deref(),
+            Some("generated_unit_cube.f3d")
+        );
+        // Synthetic: two insertions whose source designs the reader states as unresolved.
+        model.ir.model.occurrences = serde_json::from_value(json!([
+            {"id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]},
+            {"id": "synthetic:assembly:occurrence#2", "ordinal": 2, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]}
+        ]))
+        .unwrap();
+        let mut report = Report::default();
+        local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
+        let dropped: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.severity == Severity::Dropped)
+            .collect();
+        assert_eq!(dropped.len(), 3, "{dropped:?}");
+        assert!(dropped[2].detail.starts_with(
+            "2 inserted components come from other Fusion designs that this .f3d doesn't \
+             contain; export the assembly as a Fusion Archive (.f3z) to bring them along."
+        ));
     }
 
     #[test]

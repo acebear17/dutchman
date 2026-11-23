@@ -2122,6 +2122,10 @@ unverified.
 Linked components the file places but doesn't contain are reported as a Dropped `linked components`
 loss naming them, counted under `completeness.left_out`, and the design is `unverified`: its parts are
 not all there, whatever the replay says.
+For a Fusion `.f3d` whose inserted components come from designs the file doesn't contain, each is a Dropped
+`inserted design <name>` loss and the summary reads "N inserted components come from other Fusion designs
+that this .f3d doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring them along." (see
+[fusion.md](fusion.md)). No field is added.
 The final opening check has its own time, at least 15 minutes, not what earlier checks left.
 Opening and geometry checks share a successful evaluation only for identical written bytes with the same SolidCraft evaluator; repaired designs are evaluated again.
 When SolidCraft doesn't finish it, verification is `unverified` with the reason "Not verified:
