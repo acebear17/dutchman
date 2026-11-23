@@ -13,6 +13,7 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub status: u16,
     pub headers: BTreeMap<String, String>,
@@ -120,6 +121,23 @@ pub(super) struct Session<'a, C> {
     /// With no `--max-calls`, the limit starts at [`AUTO_BASE_CALLS`] and grows as the
     /// document's elements and body-detail requests are discovered, up to [`AUTO_CEILING_CALLS`].
     pub auto: bool,
+    /// Told after each call is sent.
+    pub progress: Option<&'a mut dyn FetchProgress>,
+    /// The fetch's estimate of the total calls the document needs, once it is known.
+    pub needed: Option<u32>,
+}
+
+/// Follows a fetch as it runs.
+pub trait FetchProgress {
+    /// After each call is sent: the calls so far, and the estimated total once it is known.
+    fn calls(&mut self, sent: u32, needed: Option<u32>);
+    /// Asked before each call is sent: true ends the fetch with [`ErrorKind::Stopped`].
+    fn stop_requested(&mut self) -> bool {
+        false
+    }
+    /// Once, as soon as the document name and the linked tab's name are known: the title
+    /// the design goes by ([`super::bundle_title`]). Costs no call.
+    fn named(&mut self, _title: &str) {}
 }
 
 /// Calls an automatic budget starts with: document name, tab list, microversion checks.
@@ -157,6 +175,11 @@ impl<C: HttpClient> Session<'_, C> {
             if self.calls >= self.max_calls {
                 return Err(self.error(ErrorKind::Budget, "Onshape call budget reached; raise it with --max-calls (MCP: max_calls) to continue using cached replies."));
             }
+            if let Some(progress) = self.progress.as_mut() {
+                if progress.stop_requested() {
+                    return Err(self.error(ErrorKind::Stopped, "Fetch stopped. What it fetched is kept; fetch the same link again to continue with only the missing calls."));
+                }
+            }
             let date = httpdate::fmt_http_date(self.client.now());
             let nonce = self.client.nonce()?;
             let authorization = self
@@ -176,6 +199,9 @@ impl<C: HttpClient> Session<'_, C> {
                 ]),
             };
             self.calls += 1;
+            if let Some(progress) = self.progress.as_mut() {
+                progress.calls(self.calls, self.needed);
+            }
             let response = self.client.send(&request).map_err(|mut e| {
                 e.calls = self.calls;
                 e
@@ -442,6 +468,8 @@ mod bearer_tests {
             calls: 0,
             max_calls: 0,
             auto: false,
+            progress: None,
+            needed: None,
         };
         for (path, query, body) in [
             (format!("/api/{token}"), String::new(), Vec::new()),
