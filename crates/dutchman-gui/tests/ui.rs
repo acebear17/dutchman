@@ -5238,3 +5238,60 @@ fn notes_card_screenshots() {
         }
     }
 }
+
+/// The plain notes on a card with a Degraded note and an "unverified" history, Details closed and
+/// open, Day and Night, with neutral paths. Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the plain notes; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn plain_notes_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let docs = PathBuf::from("/Users/demo/Documents");
+        let mut harness = screenshot_harness(theme);
+        harness.set_size(egui::vec2(1100.0, 900.0));
+        harness.state_mut().set_checker_for_test(true);
+        harness.state_mut().preview_solidcraft(Some("0.46.2"));
+        harness.state_mut().set_out_dir(docs.join("Converted"));
+        let mut report = developer_notes_report();
+        report["mode"] = serde_json::json!("history");
+        harness
+            .state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: docs.join("Cube.ipt"),
+                output: Some(docs.join("Converted").join("Cube.sc")),
+                status: Status::Converted,
+                progress: None,
+                job: None,
+                size: None,
+                report: Some(report),
+            });
+        harness.run_steps(8);
+        harness.get_by_label_contains("Losses:").click_accesskit();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "plain-notes",
+            name,
+            "Plain notes, Details closed.",
+        );
+        harness.get_by_label("Details").click_accesskit();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "plain-notes-details",
+            name,
+            "Plain notes, Details open.",
+        );
+    }
+    std::fs::write(dir.join("plain-notes.md"), index).unwrap();
+}
