@@ -686,6 +686,21 @@ A face sketch is made only from a flat face: every boundary point must lie on on
 1e-5 of the face's size. When one does not, the refusal gives the largest distance off the plane
 and names a curved face such as a cylinder wall, whose two end circles face opposite ways.
 
+## A .f3d whose inserted designs are missing
+
+A Fusion assembly saved as one `.f3d` can hold components inserted from other Fusion designs. The
+`.f3d` keeps the placements but not those designs, so only its own parts convert. cadmpeg states
+each such insertion's prototype as unresolved (`f3d/assembly.component-insert-container-assumed`,
+`f3d/feature.component-insert-membership-assumed`). Dutchman reports one Dropped loss per missing
+design (subject `inserted design <name>`) and one summary (subject `linked components`):
+
+> N inserted components come from other Fusion designs that this .f3d doesn't contain; export the
+> assembly as a Fusion Archive (.f3z) to bring them along.
+
+The summary is also the `completeness.left_out` reason, the status line of the command line and the
+app, and the plugin's `missing_parts` reason. The design is never marked verified. In Fusion, use
+File > Export > Fusion Archive (`.f3z`), which carries the inserted designs inside it.
+
 ## Hidden parts with `--import-only`
 
 `--import-only` (stored geometry only) keeps every part the design hides, hidden as in the

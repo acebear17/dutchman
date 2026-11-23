@@ -620,6 +620,9 @@ pub fn outcome(report: &Value) -> String {
         return crate::tool_library::outcome(report);
     }
     let mut text = outcome_without_memory_note(report);
+    if let Some(message) = json::inserted_designs_message(report) {
+        text.push_str(&format!(" {message}"));
+    }
     if let Some(message) = json::unplaced_message(report) {
         text.push_str(&format!(" {message}"));
     }

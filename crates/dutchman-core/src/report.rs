@@ -961,7 +961,11 @@ impl Report {
             .as_ref()
             .and_then(Completeness::unplaced_message)
         {
-            outcome.check = Check::Partial(message);
+            // The missing designs are the larger cause: say so first.
+            outcome.check = Check::Partial(match &self.missing_links {
+                Some((_, why)) => format!("{why} {message}"),
+                None => message,
+            });
         }
         self.outcome = Some(outcome);
     }
@@ -969,21 +973,56 @@ impl Report {
     /// The source places linked components whose designs aren't in the file. The written
     /// design leaves them out, says so, and is not marked verified.
     pub fn record_missing_links(&mut self, names: &[String]) {
+        self.record_missing(names, false);
+    }
+
+    /// A Fusion `.f3d` places components inserted from other Fusion designs that the file
+    /// doesn't contain (cadmpeg states their prototype as unresolved). One Dropped loss names
+    /// each missing design and one summary says what to do; the design is left out and never
+    /// marked verified.
+    pub fn record_missing_inserted_designs(&mut self, names: &[String]) {
+        self.record_missing(names, true);
+    }
+
+    fn record_missing(&mut self, names: &[String], inserted: bool) {
         let count = names.len() as u64;
         if count == 0 {
             return;
         }
-        let named = if names.iter().all(|name| name.is_empty()) {
-            String::new()
+        let plural = count != 1;
+        let why = if inserted {
+            for name in names {
+                let what = if name.is_empty() { "(unnamed)" } else { name };
+                self.push(
+                    Severity::Dropped,
+                    format!("inserted design {what}"),
+                    format!(
+                        "the component {what} is inserted from another Fusion design that this \
+                         .f3d doesn't contain, so it is left out"
+                    ),
+                );
+            }
+            format!(
+                "{count} inserted component{} {} from other Fusion designs that this .f3d \
+                 doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring \
+                 {} along.",
+                if plural { "s" } else { "" },
+                if plural { "come" } else { "comes" },
+                if plural { "them" } else { "it" },
+            )
         } else {
-            format!(" ({})", names.join(", "))
+            let named = if names.iter().all(|name| name.is_empty()) {
+                String::new()
+            } else {
+                format!(" ({})", names.join(", "))
+            };
+            format!(
+                "{count} linked component{} {} in this file{named}. In Fusion, export the \
+                 assembly as .f3z, or put the linked designs' .f3d files next to it",
+                if plural { "s" } else { "" },
+                if plural { "aren't" } else { "isn't" },
+            )
         };
-        let why = format!(
-            "{count} linked component{} {} in this file{named}. In Fusion, export the assembly \
-             as .f3z, or put the linked designs' .f3d files next to it",
-            if count == 1 { "" } else { "s" },
-            if count == 1 { "isn't" } else { "aren't" },
-        );
         self.push(Severity::Dropped, "linked components", why.clone());
         self.missing_links = Some((count, why));
         if let Some(completeness) = self.completeness.take() {
@@ -992,6 +1031,11 @@ impl Report {
         if let Some(outcome) = self.outcome.take() {
             self.set_outcome(outcome);
         }
+    }
+
+    /// The sentence saying linked or inserted components are missing from the file, when some are.
+    pub fn missing_links_message(&self) -> Option<&str> {
+        self.missing_links.as_ref().map(|(_, why)| why.as_str())
     }
 
     /// What the writer made of the design, when it said.
@@ -1064,6 +1108,55 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn missing_inserted_designs_are_named_one_each_with_one_summary() {
+        let mut report = Report::default();
+        report.set_completeness(Completeness {
+            placed: 1,
+            placed_empty: 0,
+            unplaced: [("Local".to_owned(), 1)].into(),
+            left_out: Vec::new(),
+        });
+        report.record_missing_inserted_designs(&["Washer".to_owned(), String::new()]);
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: Vec::new(),
+        });
+        let dropped: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.severity == Severity::Dropped)
+            .map(|loss| loss.subject.as_str())
+            .collect();
+        assert_eq!(
+            dropped,
+            [
+                "inserted design Washer",
+                "inserted design (unnamed)",
+                "linked components"
+            ]
+        );
+        let summary = "2 inserted components come from other Fusion designs that this .f3d \
+                       doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
+                       bring them along.";
+        let left_out = &report.completeness().unwrap().left_out;
+        assert_eq!(
+            (left_out[0].reason.as_str(), left_out[0].count),
+            (summary, 2)
+        );
+        let Some(Check::Partial(why)) = report.outcome().map(|o| &o.check) else {
+            panic!("expected partial");
+        };
+        assert!(why.starts_with(summary), "{why}");
+        let mut one = Report::default();
+        one.record_missing_inserted_designs(&["Washer".to_owned()]);
+        assert!(one.losses().last().unwrap().detail.starts_with(
+            "1 inserted component comes from other Fusion designs that this .f3d doesn't contain; \
+             export the assembly as a Fusion Archive (.f3z) to bring it along."
+        ));
+    }
 
     #[test]
     fn missing_linked_components_are_left_out_and_never_verified() {
