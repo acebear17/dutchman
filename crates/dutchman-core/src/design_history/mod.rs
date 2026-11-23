@@ -7,7 +7,8 @@
 //! after decoding.
 //!
 //! The projection copies only what `design` states. A field `design` leaves silent is left out
-//! of the row, so the mapper refuses it with its own reason. A feature of a kind not projected
+//! of the row, or written as the row's own `unresolved` state where the row requires the field,
+//! so the mapper refuses it with its own reason. A feature of a kind not projected
 //! yet, or one whose operands are not projected yet, becomes a `native` row: the mapper reports
 //! it as an unmapped feature and the history stops there. Every projected row carries
 //! `source_properties.projected_from = "design"`, and the report says the history came from the
