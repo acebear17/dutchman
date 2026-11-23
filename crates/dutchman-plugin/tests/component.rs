@@ -656,16 +656,14 @@ fn fatal_member_failures(
             "{}",
         )?;
         let expected = match fault {
-            Fault::ReadDenied => PluginError::PermissionDenied(folder_access("Original source.read failure")),
+            Fault::ReadDenied => PluginError::PermissionDenied("Original source.read failure".into()),
             Fault::ReadLimit => PluginError::LimitExceeded("Original source.read failure".into()),
-            Fault::SizeDenied => PluginError::PermissionDenied(folder_access("Original source.size failure")),
+            Fault::SizeDenied => PluginError::PermissionDenied("Original source.size failure".into()),
             Fault::SizeLimit => PluginError::LimitExceeded("Original source.size failure".into()),
-            Fault::ResolveDenied => PluginError::PermissionDenied(folder_access("Original source.resolve failure")),
+            Fault::ResolveDenied => PluginError::PermissionDenied("Original source.resolve failure".into()),
             Fault::ResolveLimit => PluginError::LimitExceeded("Original source.resolve failure".into()),
             Fault::Aggregate => PluginError::LimitExceeded("Input exceeds the 1 GiB conversion limit; choose a smaller CAD file".into()),
             Fault::Oversize => PluginError::LimitExceeded("P02a.FCStd: input exceeds the 1073741824-byte file limit; choose a smaller CAD file".into()),
-            // Not in this loop; folder_not_granted covers it.
-            Fault::FolderDenied => PluginError::PermissionDenied("input_folder was not granted".into()),
         };
         assert_eq!(
             format!("{:?}", result.unwrap_err()),
@@ -680,13 +678,6 @@ fn fatal_member_failures(
         eprintln!("fatal_member_failure={fault:?}: original error, no output");
     }
     Ok(())
-}
-
-/// What the plugin says when SolidCraft refuses the read of the folder beside A01a.FCStd.
-fn folder_access(host: &str) -> String {
-    format!(
-        "Dutchman needs read access to the folder that holds A01a.FCStd: the design refers to other files in that folder. It reads only that folder, never writes, and never looks elsewhere. Give it that access by approving \"read access to the input folder\" when you install Dutchman (Preferences > Plugins > Install plugin...), keep the parts beside the assembly, then open the file again. SolidCraft said: {host}"
-    )
 }
 
 fn document(bytes: &[u8]) -> Value {
