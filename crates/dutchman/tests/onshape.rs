@@ -1599,7 +1599,7 @@ fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() 
     mock.replies.extend([
         response(
             200,
-            json!({"sourceMicroversion":MID,"features":[sketch_only_features()]}),
+            json!({"sourceMicroversion":MID,"rollbackIndex":1,"features":[sketch_only_features()]}),
         ),
         // The plane pick asks for the rollback state; a sketch builds no body there.
         response(200, json!({"microversionId":MID,"bodies":[]})),
@@ -1964,18 +1964,26 @@ fn fetched_face_sketch(matrix: Option<Value>) -> (dutchman_core::Model, dutchman
     mock.replies[9].body = step;
     mock.replies[3] = response(
         200,
-        json!({"sourceMicroversion":MID,"features":[
+        json!({"sourceMicroversion":MID,"rollbackIndex":3,"features":[
+            {"btType":"BTMFeature-134","featureType":"extrude","featureId":"plate","name":"Plate",
+             "parameters":[{"btType":"BTMParameterEnum-145","parameterId":"operationType","value":"NEW"}]},
             {"btType":"BTMSketch-151","featureType":"newSketch","featureId":"sketch","name":"Sketch",
              "parameters":[{"parameterId":"sketchPlane","queries":[{"btType":"BTMIndividualQuery-138","deterministicIds":["support"]}]}],
              "entities":[{"btType":"BTMSketchPoint-158","entityId":"point","x":0.003,"y":0.004}],"constraints":[]},
             {"featureType":"unsupportedSynthetic","featureId":"unsupported","parameters":[]}
         ]}),
     );
-    mock.replies[4] = response(
-        200,
-        json!({"microversionId":MID,"bodies":[{"id":"body",
-        "faces":[{"id":"support","orientation":true,"loops":[],"surface":{"type":"PLANE",
-            "origin":{"x":0.01,"y":-0.02,"z":0.005},"normal":{"z":1.0}}}]}]}),
+    // The plate and its "support" face come from the first feature: absent in the
+    // rollback state before it, present in the state before the sketch.
+    mock.replies[4] = response(200, json!({"microversionId":MID,"bodies":[]}));
+    mock.replies.insert(
+        5,
+        response(
+            200,
+            json!({"microversionId":MID,"bodies":[{"id":"body",
+            "faces":[{"id":"support","orientation":true,"loops":[],"surface":{"type":"PLANE",
+                "origin":{"x":0.01,"y":-0.02,"z":0.005},"normal":{"z":1.0}}}]}]}),
+        ),
     );
     let mut placement = json!({"featureId":"sketch"});
     if let Some(matrix) = matrix {
@@ -2013,7 +2021,10 @@ fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
         json!({"x":0.0,"y":1.0,"z":0.0})
     );
     assert!(model.source_step.is_some());
-    assert!(!report.losses().iter().any(|loss| loss.subject == "Sketch"));
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.ends_with("; subject: Sketch")));
 }
 
 #[test]
@@ -2062,13 +2073,16 @@ fn assert_face_sketch_refused(model: &dutchman_core::Model, report: &dutchman_co
     let wire = serde_json::to_value(&model.ir).unwrap();
     assert!(model.ir.model.sketches.is_empty());
     assert_eq!(
-        wire["model"]["features"][0]["definition"]["value"]["kind"],
+        wire["model"]["features"][1]["definition"]["value"]["kind"],
         "native"
     );
     assert!(model.source_step.is_some());
-    assert!(report.losses().iter().any(|loss| loss.subject == "Sketch"
-        && loss.code.as_deref() == Some("onshape/history.not-supported")
-        && loss.detail.contains("kept the final STEP geometry")));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.ends_with("; subject: Sketch")
+            && loss.code.as_deref() == Some("onshape/history.not-supported")
+            && loss.detail.contains("kept the final STEP geometry")));
 }
 
 /// Answers each endpoint from the fixtures, so a document of any size can be fetched.
