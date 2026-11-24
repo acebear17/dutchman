@@ -90,7 +90,7 @@ timeout. See [Public share links](guide.md#public-share-links) for limits and cl
 
 On Windows and macOS, Dutchman Convert can ask the Fusion exporter, an add-in running inside
 your Fusion, to export designs from your Fusion account, and convert them. It needs the exporter
-running (open Fusion with the exporter switched on). Choose **Export from Fusion…** and:
+running (open Fusion with the exporter switched on). Choose **Export from Fusion…** (in the bar with Convert) and:
 
 1. Dutchman asks Fusion for the list of your hubs, projects and designs. Nothing is opened
    or changed in your account.
@@ -110,6 +110,14 @@ resumes and only retries the failed ones. A failed or stopped export says in pla
 happened and what to do: another export using the folder, Fusion signed out or out of
 memory, a full disk, Fusion closed during the export, and so on. **Convert what exported**
 converts what was finished.
+
+Dutchman waits for Fusion while a list or an export runs. If Fusion closes, or the exporter stops
+answering, for a whole minute, or Fusion does not take a request within two minutes, Dutchman gives
+up with a plain message and **Try again** (the export carries on where it stopped). **Stop**
+asks Fusion to stop; **Stop waiting** leaves the step without waiting for an answer. If the list
+cannot be made, the window says why and waits for **Try again**; it never asks again by itself.
+Dutchman only uses the exporter whose jobs folder is the `jobs` folder inside `.cad-export`, and it
+shows at most 100,000 designs and 32 levels of folders.
 
 This uses the exporter's job files in `~/.cad-export` (`%USERPROFILE%\.cad-export` on Windows):
 an `inventory` job into Dutchman's folder, then an `export` job with the picked designs by id,

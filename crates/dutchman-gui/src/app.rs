@@ -654,6 +654,12 @@ impl App {
         self.fusion_export.preview(env);
     }
 
+    /// Offers "Export from Fusion…" on any system (UI tests only).
+    #[doc(hidden)]
+    pub fn offer_everywhere_for_tests(&mut self) {
+        self.fusion_export.offer();
+    }
+
     /// The designs and folders added to convert, for UI tests.
     #[doc(hidden)]
     pub fn inputs_for_test(&self) -> &[PathBuf] {
@@ -671,7 +677,12 @@ impl App {
     /// manifest reader will replace the body of this function.
     pub fn convert_export_folder(&mut self, dir: PathBuf, ctx: &egui::Context) {
         self.add_inputs([dir]);
-        if !self.running() {
+        if self.running() {
+            self.notice = Some(
+                "The folder exported from Fusion is queued. Press Convert when the current conversion ends."
+                    .into(),
+            );
+        } else {
             self.start(ctx);
         }
     }
@@ -2116,6 +2127,9 @@ impl App {
         if let Some(folder) = self.fusion_export.poll(ctx) {
             self.convert_export_folder(folder, ctx);
         }
+        if let Some(notice) = self.fusion_export.take_notice() {
+            self.notice = Some(notice);
+        }
         self.receive_links(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -2737,16 +2751,6 @@ impl App {
                 {
                     worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
                 }
-                if self.fusion_export.offered()
-                    && ui
-                        .add_enabled(enabled, egui::Button::new("Export from Fusion…"))
-                        .on_hover_text(
-                            "Ask the Fusion exporter in your Fusion to export designs, then convert them",
-                        )
-                        .clicked()
-                {
-                    self.fusion_export.toggle();
-                }
                 if !self.inputs.is_empty()
                     && ui
                         .add_enabled(enabled, egui::Button::new("Clear"))
@@ -3172,6 +3176,19 @@ impl App {
                     ui.label(dutchman::tool_library::WORDS);
                 });
             });
+            if self.fusion_export.offered()
+                && ui
+                    .add_enabled(
+                        !self.running() && !self.updater.blocks_conversions(),
+                        egui::Button::new("Export from Fusion…"),
+                    )
+                    .on_hover_text(
+                        "Ask the Fusion exporter in your Fusion to export designs, then convert them",
+                    )
+                    .clicked()
+            {
+                self.fusion_export.toggle();
+            }
         });
         if self.running() && self.diagnostic_stopped {
             ui.label(RichText::new(report_panel::STOPPING).color(p.lantern_text));

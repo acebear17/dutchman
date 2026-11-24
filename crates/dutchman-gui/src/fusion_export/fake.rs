@@ -75,11 +75,16 @@ impl FakeAddin {
 
     /// Writes the agent file with the given features.
     pub fn announce(&self, features: &[&str], busy: Option<&str>) {
+        self.announce_at(features, busy, &iso_now(), std::process::id());
+    }
+
+    /// As `announce`, with the heartbeat time and the process id of Fusion given.
+    pub fn announce_at(&self, features: &[&str], busy: Option<&str>, updated: &str, pid: u32) {
         let agent = json!({
             "protocol": 1, "protocols": [1], "agent": "fusion-bulk-export",
             "exporter": "fusion-bulk-export", "version": "0.3.5",
-            "fusion_version": "2.0.21508", "fusion_running": true, "pid": std::process::id(),
-            "started": iso_now(), "updated": iso_now(), "busy": busy, "job": null,
+            "fusion_version": "2.0.21508", "fusion_running": true, "pid": pid,
+            "started": iso_now(), "updated": updated, "busy": busy, "job": null,
             "jobs_dir": self.jobs_dir().to_string_lossy(), "features": features,
         });
         atomic_write(

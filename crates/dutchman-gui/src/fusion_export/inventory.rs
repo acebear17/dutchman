@@ -5,6 +5,13 @@ use std::path::Path;
 
 use serde_json::Value;
 
+/// The deepest folder nesting the picker takes.
+pub const MAX_DEPTH: usize = 32;
+/// The most designs the picker takes.
+pub const MAX_DESIGNS: usize = 100_000;
+/// The biggest `inventory.json` read.
+pub const MAX_FILE: u64 = 64 * 1024 * 1024;
+
 /// A Fusion design: its lineage URN and what the picker shows of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Design {
@@ -72,6 +79,15 @@ impl Folder {
         self.folders.iter_mut().for_each(Folder::sort);
     }
 
+    /// Whether any design here or below matches, as [`Folder::collect`] would find.
+    pub fn any_match(&self, query: &str, parent_hit: bool) -> bool {
+        let hit = parent_hit || query.is_empty() || self.name.to_lowercase().contains(query);
+        self.designs
+            .iter()
+            .any(|d| hit || d.name.to_lowercase().contains(query))
+            || self.folders.iter().any(|f| f.any_match(query, hit))
+    }
+
     /// Every design in this folder and below.
     pub fn count(&self) -> usize {
         self.designs.len() + self.folders.iter().map(Folder::count).sum::<usize>()
@@ -117,8 +133,9 @@ impl Inventory {
 
     /// Reads `inventory.json`. Only Fusion designs (`.f3d`) are offered.
     pub fn read(path: &Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|why| format!("Cannot read the list of your Fusion designs: {why}"))?;
+        let text = super::agent_min::read_small(path, MAX_FILE)
+            .map_err(|why| format!("Cannot read the list of your Fusion designs: {why}."))?
+            .ok_or("The Fusion exporter did not write the list of your designs.")?;
         let value: Value = serde_json::from_str(&text)
             .map_err(|_| "The list of your Fusion designs is not readable.".to_owned())?;
         Self::from_value(&value)
@@ -139,6 +156,7 @@ impl Inventory {
             .get("hubs")
             .and_then(Value::as_object)
             .ok_or("The list of your Fusion designs has no hubs.")?;
+        let mut designs = 0usize;
         let mut inventory = Inventory {
             unreadable: value
                 .get("unreadable")
@@ -175,8 +193,16 @@ impl Inventory {
                         .and_then(Value::as_array)
                         .into_iter()
                         .flatten()
+                        .take(MAX_DEPTH + 1)
                         .filter_map(|name| name.as_str().map(str::to_owned))
                         .collect();
+                    designs += 1;
+                    if designs > MAX_DESIGNS {
+                        return Err(format!("Your Fusion account lists more than {MAX_DESIGNS} designs, more than Dutchman can show. Export part of it from Fusion instead."));
+                    }
+                    if path.len() > MAX_DEPTH {
+                        return Err(format!("A design in your Fusion account sits more than {MAX_DEPTH} folders deep, which Dutchman cannot show."));
+                    }
                     root.insert(
                         &path,
                         Design {

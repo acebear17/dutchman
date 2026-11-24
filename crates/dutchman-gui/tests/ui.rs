@@ -32,7 +32,10 @@ fn test_app(cc: &eframe::CreationContext<'_>) -> App {
         ))
     });
     dutchman_gui::set_diagnostics_folder(folder.clone());
-    App::new(cc)
+    let mut app = App::new(cc);
+    // Windows and macOS offer "Export from Fusion…"; the layout tests see it on Linux too.
+    app.offer_everywhere_for_tests();
+    app
 }
 use eframe::egui::{self, ThemePreference};
 use egui_kittest::kittest::Queryable;
@@ -5631,6 +5634,25 @@ fn connected_onshape_keeps_results_in_their_own_column() {
         h.get_by_label("Onshape connected ✓").click_accesskit();
         h.run_steps(4);
         h.get_by_label("Paste your Onshape Part Studio link");
+        assert!(!h.state().page_scrolls());
+    }
+}
+
+/// Windows and macOS offer "Export from Fusion…" in the Convert bar (the tests offer it
+/// everywhere): it must not make the left column overflow at 1280x800.
+#[test]
+fn the_fusion_button_in_the_convert_bar_keeps_the_left_column_inside() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let out = tempfile::tempdir().unwrap();
+        let h = many_results_onshape_harness(out.path(), theme, true);
+        let button = h.get_by_label("Export from Fusion…").rect();
+        let convert = h.get_by_label("Convert").rect();
+        assert!(
+            (button.center().y - convert.center().y).abs() < 1.0,
+            "the button is on the Convert bar's row"
+        );
+        assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert.top());
+        assert!(button.right() <= 1280.0);
         assert!(!h.state().page_scrolls());
     }
 }

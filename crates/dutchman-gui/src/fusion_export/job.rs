@@ -44,9 +44,11 @@ impl Kind {
 
 /// `2026-11-23T09:31:00+00:00` for now.
 pub fn iso_now() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
+    iso_at(super::agent_min::now_secs())
+}
+
+/// The same for a time in seconds since 1970.
+pub fn iso_at(secs: i64) -> String {
     let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // Civil-from-days (proleptic Gregorian).
     let z = days + 719_468;
@@ -391,7 +393,11 @@ impl Status {
 
 /// The job's status; `None` while the exporter has not claimed it yet.
 pub fn read_status(jobs_dir: &Path, id: &str) -> Option<Status> {
-    let text = std::fs::read_to_string(jobs_dir.join(format!("{id}.status.json"))).ok()?;
+    let text = super::agent_min::read_small(
+        &jobs_dir.join(format!("{id}.status.json")),
+        super::agent_min::SMALL_FILE,
+    )
+    .ok()??;
     Status::from_value(&serde_json::from_str(&text).ok()?)
 }
 
@@ -470,6 +476,15 @@ pub fn reason_info(reason: &str, message: &str) -> (String, Next) {
             "The export was stopped. Everything finished so far is kept.",
             Next::Nothing,
         ),
+        // Found by Dutchman itself, not reported by the exporter.
+        "agent_gone" => (
+            "Fusion closed, or the Fusion exporter stopped, and did not come back within a minute. Open Fusion with the exporter switched on, then try again; the export carries on where it stopped.",
+            Next::TryAgain,
+        ),
+        "no_answer" => (
+            "The Fusion exporter did not take the request within two minutes. Check that Fusion is open with the exporter switched on, then try again.",
+            Next::TryAgain,
+        ),
         _ => {
             // The exporter's message names the error type, never a design or path.
             let text = if message.is_empty() {
@@ -495,11 +510,12 @@ pub enum Update {
 }
 
 /// Follows one job on its own thread: sends each new status, writes `.cancel` once when
-/// `stop` is set, and after a final state deletes the job's files and sends [`Update::Final`].
+/// `stop` is set, ends quietly when `abandon` is set, and after a final state deletes the job's files and sends [`Update::Final`].
 pub fn follow(
     jobs_dir: PathBuf,
     id: String,
     stop: Arc<AtomicBool>,
+    abandon: Arc<AtomicBool>,
     poll: Duration,
     sender: Sender<(String, Update)>,
     repaint: impl Fn() + Send + 'static,
@@ -508,6 +524,9 @@ pub fn follow(
         let mut last: Option<Status> = None;
         let mut cancelled = false;
         loop {
+            if abandon.load(Ordering::SeqCst) {
+                return;
+            }
             if stop.load(Ordering::SeqCst) && !cancelled {
                 cancelled = cancel(&jobs_dir, &id).is_ok();
             }

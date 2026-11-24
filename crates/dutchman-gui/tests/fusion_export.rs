@@ -54,11 +54,9 @@ fn fixture(german: bool, ending: Ending, theme: ThemePreference) -> Fixture {
         .with_size(egui::vec2(1280.0, 800.0))
         .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
-    harness.state_mut().preview_fusion_export(Env {
-        cad_dir: Some(dir.path().join(".cad-export")),
-        work_dir: dir.path().join("Dutchman Fusion exports"),
-        poll: Duration::from_millis(20),
-    });
+    harness
+        .state_mut()
+        .preview_fusion_export(Env::for_test(dir.path()));
     harness.run_steps(8);
     Fixture {
         _dir: dir,
@@ -104,11 +102,8 @@ fn the_entry_is_only_offered_where_fusion_runs_or_in_a_test() {
         h.query_by_label("Export from Fusion…").is_some(),
         cfg!(any(windows, target_os = "macos"))
     );
-    h.state_mut().preview_fusion_export(Env {
-        cad_dir: Some(dir.path().join(".cad-export")),
-        work_dir: dir.path().join("x"),
-        poll: Duration::from_millis(20),
-    });
+    h.state_mut()
+        .preview_fusion_export(Env::for_test(dir.path()));
     h.run_steps(4);
     assert!(h.query_by_label("Export from Fusion…").is_some());
 }
@@ -119,11 +114,8 @@ fn without_the_exporter_the_window_waits_for_it() {
     let mut h = Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
         .build_eframe(|cc| test_app(cc));
-    h.state_mut().preview_fusion_export(Env {
-        cad_dir: Some(dir.path().join(".cad-export")),
-        work_dir: dir.path().join("x"),
-        poll: Duration::from_millis(20),
-    });
+    h.state_mut()
+        .preview_fusion_export(Env::for_test(dir.path()));
     h.run_steps(4);
     h.get_by_label("Export from Fusion…").click();
     h.run_steps(5);

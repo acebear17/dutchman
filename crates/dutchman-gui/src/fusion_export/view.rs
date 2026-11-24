@@ -31,6 +31,7 @@ impl Panel {
                 match self.stage {
                     Stage::NoAgent => self.no_agent_ui(ui),
                     Stage::Listing => self.listing_ui(ui),
+                    Stage::ListFailed => self.list_failed_ui(ui),
                     Stage::Picking => self.picking_ui(ui, height),
                     Stage::Exporting => self.exporting_ui(ui),
                     Stage::Finished => convert = self.finished_ui(ui),
@@ -48,20 +49,57 @@ impl Panel {
             ui.spinner();
             ui.label("Waiting for the Fusion exporter. Open Fusion with the exporter switched on; this carries on by itself.");
         });
+        if let Some(problem) = &self.agent_problem {
+            let p = theme::palette(ui);
+            ui.label(RichText::new(problem).color(p.danger));
+        }
+    }
+
+    fn list_failed_ui(&mut self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui);
+        let why = self
+            .list_error
+            .clone()
+            .unwrap_or_else(|| "Your Fusion designs could not be listed.".to_owned());
+        ui.label(RichText::new(why).color(p.danger));
+        if ui.button("Try again").clicked() {
+            self.list_designs();
+        }
     }
 
     fn listing_ui(&mut self, ui: &mut egui::Ui) {
+        let reading = self.reading_list;
         ui.horizontal(|ui| {
             ui.spinner();
             let text = match self.running.as_ref().and_then(|r| r.status.as_ref()) {
+                _ if reading => "Reading the list of your designs…",
                 Some(status) if status.state == "running" => "Listing your Fusion designs…",
                 _ => "Asking Fusion for the list of your designs…",
             };
             ui.label(text);
         });
-        if ui.button("Stop").clicked() {
-            self.stop();
+        if self.running.is_some() {
+            self.stop_buttons(ui);
         }
+    }
+
+    /// Stop, which asks the exporter, and Stop waiting, which gives up on an answer.
+    fn stop_buttons(&mut self, ui: &mut egui::Ui) {
+        let stopping = self.running.as_ref().is_some_and(|r| r.stopping);
+        ui.horizontal(|ui| {
+            if stopping {
+                ui.label("Stopping…");
+            } else if ui.button("Stop").clicked() {
+                self.stop();
+            }
+            if ui
+                .button("Stop waiting")
+                .on_hover_text("Leave this step without waiting for Fusion")
+                .clicked()
+            {
+                self.stop_waiting();
+            }
+        });
     }
 
     fn picking_ui(&mut self, ui: &mut egui::Ui, height: f32) {
@@ -80,15 +118,19 @@ impl Panel {
                     .desired_width(f32::INFINITY),
             )
             .labelled_by(search.id);
-            let shown = inventory.matching_ids(&self.query);
+            if self.shown_query.as_deref() != Some(self.query.as_str()) {
+                self.shown = inventory.matching_ids(&self.query);
+                self.shown_query = Some(self.query.clone());
+            }
+            let shown = self.shown.len();
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Select all shown").clicked() {
-                    self.picked.extend(shown.iter().cloned());
+                    self.picked.extend(self.shown.iter().cloned());
                 }
                 if ui.button("Clear").clicked() {
                     self.picked.clear();
                 }
-                ui.label(format!("{} of {} designs shown", shown.len(), total));
+                ui.label(format!("{} of {} designs shown", shown, total));
             });
             let query = self.query.trim().to_lowercase();
             egui::ScrollArea::vertical()
@@ -182,9 +224,8 @@ impl Panel {
         }
         if stopping {
             ui.label("Stopping after the design in progress. What is finished is kept.");
-        } else if ui.button("Stop").clicked() {
-            self.stop();
         }
+        self.stop_buttons(ui);
     }
 
     fn finished_ui(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
@@ -319,13 +360,18 @@ fn folder_ui(
     path: &(&String, &String),
 ) {
     let hit = parent_hit || (!query.is_empty() && folder.name.to_lowercase().contains(query));
-    let mut here = Vec::new();
-    folder.collect(query, parent_hit, &mut here);
-    if here.is_empty() {
+    if !folder.any_match(query, parent_hit) {
         return;
     }
     if !folder.name.is_empty() {
-        let mut header = egui::CollapsingHeader::new(format!("{} ({})", folder.name, here.len()))
+        let shown = if query.is_empty() {
+            folder.count()
+        } else {
+            let mut here = Vec::new();
+            folder.collect(query, parent_hit, &mut here);
+            here.len()
+        };
+        let mut header = egui::CollapsingHeader::new(format!("{} ({})", folder.name, shown))
             .id_salt(("fx-folder", path.0, path.1, &folder.name));
         if !query.is_empty() {
             header = header.open(Some(true));

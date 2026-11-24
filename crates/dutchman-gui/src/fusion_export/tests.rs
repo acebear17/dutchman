@@ -48,6 +48,7 @@ fn a_job_moves_from_queued_to_running_to_done_and_its_files_are_cleaned_up() {
         addin.jobs_dir(),
         id.clone(),
         Default::default(),
+        Default::default(),
         FAST,
         sender,
         || {},
@@ -212,6 +213,8 @@ fn every_reason_code_has_plain_words_and_an_action() {
         ("account_changed", Next::TryAgain),
         ("interrupted", Next::TryAgain),
         ("cancelled", Next::Nothing),
+        ("agent_gone", Next::TryAgain),
+        ("no_answer", Next::TryAgain),
         ("error", Next::TryAgain),
         ("from_a_future_release", Next::TryAgain),
     ];
@@ -240,6 +243,7 @@ fn a_queued_job_is_cancelled_without_running() {
         addin.jobs_dir(),
         id.clone(),
         Arc::clone(&stop),
+        Default::default(),
         FAST,
         sender,
         || {},
@@ -277,11 +281,7 @@ fn a_queued_job_is_cancelled_without_running() {
 
 fn panel_for(dir: &Path) -> (Panel, eframe::egui::Context) {
     let mut panel = Panel::new();
-    panel.preview(Env {
-        cad_dir: Some(dir.join(".cad-export")),
-        work_dir: dir.join("Dutchman Fusion exports"),
-        poll: FAST,
-    });
+    panel.preview(Env::for_test(dir));
     panel.open = true;
     (panel, eframe::egui::Context::default())
 }
@@ -561,4 +561,426 @@ fn the_time_is_iso_8601_with_an_offset() {
     let now = job::iso_now();
     assert_eq!(now.len(), 25, "{now}");
     assert!(now.starts_with("20") && now.ends_with("+00:00"), "{now}");
+}
+
+// ---- the review's findings ----
+
+use super::agent_min::{self, Found, Liveness};
+use super::inventory;
+
+fn jobs_left(addin: &FakeAddin) -> usize {
+    std::fs::read_dir(addin.jobs_dir()).unwrap().count()
+}
+
+fn fail_job(addin: &FakeAddin, id: &str, reason: &str) {
+    let out = addin.jobs_dir().join("out");
+    assert!(addin.claim(id));
+    addin.status(id, "failed", Some(reason), "x", (0, None, None), 0, 0, &out);
+}
+
+#[test]
+fn a_failed_list_waits_for_try_again_and_never_asks_again_by_itself() {
+    let (dir, addin) = setup();
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "the list job", |_| {
+        !addin.unclaimed().is_empty()
+    });
+    let id = addin.unclaimed().remove(0);
+    fail_job(&addin, &id, "not_signed_in");
+    wait_for(&mut panel, &ctx, "the failure", |p| {
+        p.stage() == Stage::ListFailed
+    });
+    assert!(panel.list_error.as_ref().unwrap().contains("not signed in"));
+    assert_eq!(
+        jobs_left(&addin),
+        0,
+        "the failed job's files are cleaned up"
+    );
+    // Many polls later nothing was asked again: the agent is still there.
+    for _ in 0..60 {
+        panel.poll(&ctx);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(panel.stage(), Stage::ListFailed);
+    assert_eq!(jobs_left(&addin), 0, "no new inventory job without a click");
+    // The person's Try again asks once.
+    panel.list_designs();
+    assert_eq!(panel.stage(), Stage::Listing);
+    assert_eq!(addin.unclaimed().len(), 1);
+}
+
+#[test]
+fn stop_while_listing_does_not_relist() {
+    let (dir, addin) = setup();
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "the list job", |_| {
+        !addin.unclaimed().is_empty()
+    });
+    let id = addin.unclaimed().remove(0);
+    assert!(addin.claim(&id));
+    wait_for(&mut panel, &ctx, "queued", |p| {
+        p.running.as_ref().is_some_and(|r| r.status.is_some())
+    });
+    panel.stop();
+    wait_for(&mut panel, &ctx, "the cancel", |_| {
+        addin.cancel_requested(&id)
+    });
+    let out = addin.jobs_dir().join("out");
+    addin.status(
+        &id,
+        "cancelled",
+        Some("cancelled"),
+        "x",
+        (0, None, None),
+        0,
+        0,
+        &out,
+    );
+    wait_for(&mut panel, &ctx, "the end", |p| {
+        p.stage() == Stage::ListFailed
+    });
+    assert!(panel.list_error.as_ref().unwrap().contains("stopped"));
+    for _ in 0..40 {
+        panel.poll(&ctx);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(panel.stage(), Stage::ListFailed);
+    assert_eq!(jobs_left(&addin), 0);
+}
+
+#[test]
+fn a_jobs_folder_outside_cad_export_is_refused() {
+    let (dir, addin) = setup();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let file = agent_min::agent_file(&addin.cad);
+    let mut agent: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    agent["jobs_dir"] = json!(elsewhere.to_string_lossy());
+    std::fs::write(&file, agent.to_string()).unwrap();
+    assert!(matches!(agent_min::read(&file), Found::Invalid(_)));
+    assert!(agent_min::read_minimal(&file).is_none());
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "a look", |p| p.last_agent_check.is_some());
+    assert_eq!(panel.stage(), Stage::NoAgent);
+    assert!(panel
+        .agent_problem
+        .as_ref()
+        .unwrap()
+        .contains("outside your .cad-export"));
+    assert_eq!(
+        std::fs::read_dir(&elsewhere).unwrap().count(),
+        0,
+        "nothing was written there"
+    );
+    // A relative or parent-pointing jobs_dir is no better.
+    agent["jobs_dir"] = json!(addin.cad.join("jobs/../../elsewhere").to_string_lossy());
+    std::fs::write(&file, agent.to_string()).unwrap();
+    assert!(matches!(agent_min::read(&file), Found::Invalid(_)));
+}
+
+#[cfg(unix)]
+#[test]
+fn links_and_oversized_files_are_not_read() {
+    let (dir, addin) = setup();
+    let secret = dir.path().join("secret.json");
+    std::fs::write(&secret, "{}").unwrap();
+    // A linked agent file.
+    let file = agent_min::agent_file(&addin.cad);
+    let real = dir.path().join("real-agent.json");
+    std::fs::rename(&file, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &file).unwrap();
+    assert!(matches!(agent_min::read(&file), Found::Invalid(_)));
+    std::fs::remove_file(&file).unwrap();
+    std::fs::rename(&real, &file).unwrap();
+    // A linked and an oversized status file.
+    let status = addin.jobs_dir().join("a.status.json");
+    std::os::unix::fs::symlink(&secret, &status).unwrap();
+    assert!(job::read_status(&addin.jobs_dir(), "a").is_none());
+    std::fs::remove_file(&status).unwrap();
+    let big = vec![b' '; agent_min::SMALL_FILE as usize + 1];
+    std::fs::write(&status, &big).unwrap();
+    assert!(job::read_status(&addin.jobs_dir(), "a").is_none());
+    assert!(agent_min::read_small(&status, agent_min::SMALL_FILE).is_err());
+    // A linked inventory.
+    let listing = dir.path().join("inventory.json");
+    std::os::unix::fs::symlink(&secret, &listing).unwrap();
+    assert!(Inventory::read(&listing).is_err());
+}
+
+#[test]
+fn an_oversized_inventory_is_refused_without_being_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inventory.json");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(inventory::MAX_FILE + 1).unwrap();
+    let why = Inventory::read(&path).unwrap_err();
+    assert!(why.contains("too large"), "{why}");
+    assert!(Inventory::read(&dir.path().join("none.json")).is_err());
+}
+
+#[test]
+fn the_list_is_the_file_in_dutchmans_folder_not_the_one_the_status_names() {
+    let (dir, addin) = setup();
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "the list job", |_| {
+        !addin.unclaimed().is_empty()
+    });
+    let id = addin.unclaimed().remove(0);
+    assert!(addin.claim(&id));
+    // A hostile status names another file as the inventory.
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(
+        elsewhere.join("inventory.json"),
+        sample_inventory(true).to_string(),
+    )
+    .unwrap();
+    let ours = PathBuf::from(addin.job(&id)["output_dir"].as_str().unwrap());
+    std::fs::create_dir_all(&ours).unwrap();
+    std::fs::write(
+        ours.join("inventory.json"),
+        sample_inventory(false).to_string(),
+    )
+    .unwrap();
+    addin.status(&id, "done", None, "x", (1, Some(1), None), 0, 0, &elsewhere);
+    wait_for(&mut panel, &ctx, "the list", |p| {
+        p.stage() == Stage::Picking
+    });
+    assert_eq!(
+        panel.inventory.as_ref().unwrap().hubs[0].name,
+        "Acme Engineering"
+    );
+}
+
+use std::path::PathBuf;
+
+#[test]
+fn a_deep_path_or_too_many_designs_get_a_plain_message() {
+    let mut deep = sample_inventory(false);
+    let path: Vec<String> = (0..=inventory::MAX_DEPTH)
+        .map(|n| format!("f{n}"))
+        .collect();
+    deep["hubs"]["hub-1"]["projects"]["project-1"]["files"][0]["path"] = json!(path);
+    let why = Inventory::from_value(&deep).unwrap_err();
+    assert!(why.contains("folders deep"), "{why}");
+    // Exactly at the limit still works, and does not recurse further than the path.
+    let ok: Vec<String> = (0..inventory::MAX_DEPTH).map(|n| format!("f{n}")).collect();
+    deep["hubs"]["hub-1"]["projects"]["project-1"]["files"][0]["path"] = json!(ok);
+    assert_eq!(Inventory::from_value(&deep).unwrap().count(), 4);
+    // A path of a million names is cut at the limit, not collected.
+    let huge: Vec<String> = (0..1_000_000).map(|n| n.to_string()).collect();
+    deep["hubs"]["hub-1"]["projects"]["project-1"]["files"][0]["path"] = json!(huge);
+    assert!(Inventory::from_value(&deep).is_err());
+    let files: Vec<Value> = (0..=inventory::MAX_DESIGNS)
+        .map(|n| json!({"id": format!("urn:{n}"), "name": "d", "path": [], "extension": "f3d", "version": 1}))
+        .collect();
+    let many =
+        json!({"hubs": {"h": {"name": "H", "projects": {"p": {"name": "P", "files": files}}}}});
+    let why = Inventory::from_value(&many).unwrap_err();
+    assert!(why.contains("more than 100000 designs"), "{why}");
+}
+
+#[test]
+fn the_heartbeat_rule_never_takes_a_stale_heartbeat_alone_as_gone() {
+    let agent = |updated: Option<i64>, pid: Option<u32>| agent_min::Agent {
+        jobs_dir: PathBuf::new(),
+        features: vec![],
+        version: String::new(),
+        pid,
+        updated,
+    };
+    let now = 1_000_000;
+    assert_eq!(
+        agent_min::liveness(&agent(Some(now - 59), Some(1)), now, |_| false),
+        Liveness::Running
+    );
+    assert_eq!(
+        agent_min::liveness(&agent(Some(now - 61), Some(1)), now, |_| true),
+        Liveness::Busy
+    );
+    assert_eq!(
+        agent_min::liveness(&agent(Some(now - 61), Some(1)), now, |_| false),
+        Liveness::Gone
+    );
+    assert_eq!(
+        agent_min::liveness(&agent(None, None), now, |_| true),
+        Liveness::Gone
+    );
+    assert_eq!(
+        agent_min::parse_iso("1970-01-02T00:00:00+00:00"),
+        Some(86_400)
+    );
+    assert_eq!(agent_min::parse_iso("1970-01-01T01:00:00+01:00"), Some(0));
+    assert_eq!(
+        agent_min::parse_iso("2026-11-23T09:30:11.004000+00:00"),
+        Some(1_795_426_211)
+    );
+    assert_eq!(
+        agent_min::parse_iso(&job::iso_at(1_795_426_211)),
+        Some(1_795_426_211)
+    );
+    assert_eq!(agent_min::parse_iso("nonsense"), None);
+}
+
+/// A panel with an export running against an exporter that never answers.
+fn waiting_export(
+    dir: &Path,
+    addin: &FakeAddin,
+    edit: impl Fn(&mut Env),
+) -> (Panel, eframe::egui::Context) {
+    let _ = addin;
+    let mut env = Env::for_test(dir);
+    edit(&mut env);
+    let mut panel = Panel::new();
+    panel.preview(env);
+    panel.open = true;
+    let ctx = eframe::egui::Context::default();
+    // Skip the list: pretend it was made.
+    panel.inventory = Some(Inventory::from_value(&sample_inventory(false)).unwrap());
+    panel.stage = Stage::Picking;
+    pick_all(&mut panel);
+    panel.export_picked();
+    assert_eq!(panel.stage(), Stage::Exporting);
+    (panel, ctx)
+}
+
+#[test]
+fn an_exporter_that_is_gone_for_a_minute_ends_the_wait_with_a_plain_message() {
+    let (dir, addin) = setup();
+    let (mut panel, ctx) = waiting_export(dir.path(), &addin, |env| {
+        env.give_up = Duration::from_millis(150);
+        env.pid_alive = |_| false;
+    });
+    assert_eq!(jobs_left(&addin), 1);
+    // Fusion closes: its agent file goes away.
+    std::fs::remove_file(agent_min::agent_file(&addin.cad)).unwrap();
+    wait_for(&mut panel, &ctx, "giving up", |p| {
+        p.stage() == Stage::Finished
+    });
+    let status = &panel.ended.as_ref().unwrap().status;
+    assert_eq!(status.reason.as_deref(), Some("agent_gone"));
+    assert!(panel.running.is_none());
+    assert_eq!(
+        jobs_left(&addin),
+        0,
+        "a job nobody took is withdrawn so it cannot start later"
+    );
+    assert!(
+        panel.take_notice().is_none(),
+        "the window is open: no notice needed"
+    );
+}
+
+#[test]
+fn a_stale_heartbeat_with_a_living_fusion_keeps_waiting() {
+    let (dir, addin) = setup();
+    addin.announce_at(
+        FEATURES,
+        None,
+        &job::iso_at(agent_min::now_secs() - 600),
+        4242,
+    );
+    let (mut panel, ctx) = waiting_export(dir.path(), &addin, |env| {
+        env.give_up = Duration::from_millis(100);
+        env.pid_alive = |_| true;
+    });
+    for _ in 0..40 {
+        panel.poll(&ctx);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(panel.stage(), Stage::Exporting, "Fusion is busy, not gone");
+}
+
+#[test]
+fn a_job_that_never_gets_a_status_is_given_up_after_the_wait() {
+    let (dir, addin) = setup();
+    let (mut panel, ctx) = waiting_export(dir.path(), &addin, |env| {
+        env.no_answer = Duration::from_millis(150);
+    });
+    wait_for(&mut panel, &ctx, "giving up", |p| {
+        p.stage() == Stage::Finished
+    });
+    assert_eq!(
+        panel.ended.as_ref().unwrap().status.reason.as_deref(),
+        Some("no_answer")
+    );
+    assert_eq!(jobs_left(&addin), 0);
+}
+
+#[test]
+fn stop_waiting_leaves_the_stage_and_withdraws_an_unclaimed_job() {
+    let (dir, addin) = setup();
+    let (mut panel, ctx) = waiting_export(dir.path(), &addin, |_| {});
+    panel.stop();
+    assert!(
+        panel.running.as_ref().unwrap().stopping,
+        "Stop alone waits for the exporter"
+    );
+    panel.stop_waiting();
+    assert_eq!(panel.stage(), Stage::Picking);
+    assert!(panel.running.is_none());
+    assert_eq!(jobs_left(&addin), 0);
+    assert!(panel.error.as_ref().unwrap().0.contains("Stopped waiting"));
+    // The same while listing.
+    let (dir, _addin) = setup();
+    let (mut panel, ctx2) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx2, "the list job", |p| p.running.is_some());
+    panel.stop_waiting();
+    assert_eq!(panel.stage(), Stage::ListFailed);
+    let _ = ctx;
+}
+
+#[test]
+fn fusion_closing_while_the_picker_is_open_is_noticed_before_an_export() {
+    let (dir, addin) = setup();
+    let service = Service::spawn(addin.clone(), sample_inventory(false), Ending::done(), FAST);
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "the list", |p| {
+        p.stage() == Stage::Picking
+    });
+    drop(service);
+    std::fs::remove_file(agent_min::agent_file(&addin.cad)).unwrap();
+    pick_all(&mut panel);
+    panel.export_picked();
+    assert_eq!(panel.stage(), Stage::Picking);
+    assert!(panel.error.as_ref().unwrap().0.contains("not running"));
+    assert!(panel.running.is_none());
+    assert_eq!(jobs_left(&addin), 0, "no job was written");
+}
+
+#[test]
+fn an_export_ending_while_the_window_is_closed_leaves_a_notice() {
+    let (dir, addin) = setup();
+    let mut ending = Ending::done();
+    ending.failed = 1;
+    let _service = Service::spawn(addin.clone(), sample_inventory(false), ending, FAST);
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "the list", |p| {
+        p.stage() == Stage::Picking
+    });
+    pick_all(&mut panel);
+    panel.export_picked();
+    panel.open = false;
+    wait_for(&mut panel, &ctx, "the end", |p| {
+        p.stage() == Stage::Finished
+    });
+    assert!(panel.take_notice().unwrap().contains("ended with problems"));
+    assert!(panel.take_notice().is_none());
+}
+
+#[test]
+fn the_search_result_is_kept_until_the_text_changes() {
+    let (dir, addin) = setup();
+    let _service = Service::spawn(addin.clone(), sample_inventory(false), Ending::done(), FAST);
+    let (mut panel, ctx) = panel_for(dir.path());
+    wait_for(&mut panel, &ctx, "the list", |p| {
+        p.stage() == Stage::Picking
+    });
+    // The window draws it; here the cache is exercised through the same fields.
+    assert!(panel.shown_query.is_none());
+    panel.query = "seal".into();
+    let inventory = panel.inventory.clone().unwrap();
+    panel.shown = inventory.matching_ids(&panel.query);
+    panel.shown_query = Some(panel.query.clone());
+    assert_eq!(panel.shown.len(), 1);
 }
