@@ -444,6 +444,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             .is_none_or(|counts| counts.unplaced_count() == 0)),
     );
     out.insert("input".to_owned(), input);
+    if let Some(version) = report.source_version() {
+        out.insert("source_version".to_owned(), json!(version));
+    }
     if let Some((requested, used)) = report.threads() {
         out.insert(
             "threads".to_owned(),
@@ -2041,6 +2044,16 @@ mod tests {
                 {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0, "rebuilt": 0, "needing": 0, "reapplied": 0},
             ])
         );
+    }
+
+    #[test]
+    fn source_version_is_reported_only_when_the_file_records_it() {
+        let mut report = Report::default();
+        let none = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(none.get("source_version").is_none());
+        report.record_source_version("25.2.1".to_owned());
+        let some = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(some["source_version"], "25.2.1");
     }
 
     #[test]
