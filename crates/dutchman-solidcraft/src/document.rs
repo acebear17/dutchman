@@ -187,6 +187,16 @@ pub(crate) fn keep_sketches(doc: &mut Value, references: &History, model: &Model
         return;
     }
     let mut references = references.clone();
+    if references.features.is_empty() {
+        // No sketch is kept, so a parameter a sketch dimension or a feature depth would
+        // drive has no user; only the design's own variables stay.
+        references
+            .params
+            .retain(|param| param.get("model").and_then(Value::as_bool) != Some(true));
+        if references.params.is_empty() {
+            return;
+        }
+    }
     references.relocate(FEATURE, COMPONENT, "", &mut Default::default());
     let hidden: Vec<Value> = references
         .features
