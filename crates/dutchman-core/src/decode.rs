@@ -346,8 +346,14 @@ fn decode_unguarded(
     drop(members);
     drop(reading);
     let decoded = decoded.map_err(|err| {
-        if depth == DecodeDepth::Design
-            && matches!(&err, DecodeFailure::Codec(CodecError::ResourceLimit(_)))
+        // cadmpeg refuses a JSON or XML tree that could exceed the per-expansion allowance as
+        // NotImplemented (cadmpeg_core::decode::tree); under planning limits that is the limit.
+        let over_allowance = planning.is_some()
+            && matches!(&err, DecodeFailure::Codec(CodecError::NotImplemented(message))
+                if message.ends_with("per-expansion allowance"));
+        if over_allowance
+            || depth == DecodeDepth::Design
+                && matches!(&err, DecodeFailure::Codec(CodecError::ResourceLimit(_)))
         {
             Error::MemoryBudget(format!("planning decoder resource limit reached: {err}"))
         } else {
@@ -356,6 +362,18 @@ fn decode_unguarded(
     })?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
     if let Some(planning) = planning {
+        // The Onshape codec omits a member larger than the expansion allowance and reads on.
+        // Under planning limits that omission is the planning memory limit, not a smaller model.
+        if let Some(note) = decode_report
+            .losses
+            .iter()
+            .find(|note| note.code.to_string() == "onshape/member.too-large")
+        {
+            return Err(Error::MemoryBudget(format!(
+                "planning decoder resource limit reached: {}",
+                note.message
+            )));
+        }
         planning.check_features(ir.model.features.len().max(ir.design.features.len()))?;
     }
 
