@@ -6394,11 +6394,12 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
         wire["model"]["features"][2]["suppressed"] = json!(true);
         shared.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, _) = convert(&shared, &writer);
-        assert!(document["features"][0]["sketch"]["curves"]
+        // The layout lines are entities 5 to 8, found by id: the curves are in cadmpeg's id order.
+        let keys: Vec<u32> = (1..=28).collect();
+        let curves = document["features"][0]["sketch"]["curves"]
             .as_array()
-            .unwrap()[4..8]
-            .iter()
-            .all(|c| c["construction"] == true));
+            .unwrap();
+        assert!((5..=8).all(|key| curves[id_order_index(&keys, key)]["construction"] == true));
     }
 }
 
