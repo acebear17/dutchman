@@ -4049,6 +4049,74 @@ fn update_dialog_screenshots() {
     }
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders the update window with a GPU; set DUTCHMAN_GUI_SCREENSHOTS to a folder"]
+fn update_unreachable_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    // Settings come from a temporary home, never the reader's. The panel shows no design name or
+    // path, so there is no long German string to simulate: English Day and Night only.
+    if std::env::var_os("DUTCHMAN_GUI_SCREENSHOT_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "update_unreachable_screenshots",
+                "--nocapture",
+            ])
+            .env("DUTCHMAN_GUI_SCREENSHOT_CHILD", "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "screenshot child failed: {status}");
+        return;
+    }
+    // Offer the next minor release after the running build, so the panel never offers an older one.
+    let mut running = env!("CARGO_PKG_VERSION").split('.');
+    let major = running.next().unwrap();
+    let minor: u64 = running.next().unwrap().parse().unwrap();
+    let newer = format!("{major}.{}.0", minor + 1);
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.set_size(egui::vec2(1280.0, 800.0));
+        harness.state_mut().set_checker_for_test(true);
+        harness
+            .state_mut()
+            .updater
+            .preview(dutchman_gui::update::Release {
+                fixes_reports: Vec::new(),
+                tag: format!("v{newer}"),
+                notes: format!("Dutchman {newer}\n\nA newer version of Dutchman Convert."),
+                download: format!("https://github.com/dutchman-cad/dutchman/releases/tag/v{newer}"),
+            });
+        harness.state_mut().updater.preview_download_unreachable();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label_contains(&format!("Dutchman {newer} is available"))
+            .is_some());
+        assert!(harness.query_by_label("Try again").is_some());
+        assert!(harness.query_by_label("Download manually").is_some());
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "update-unreachable",
+            name,
+            "download could not reach GitHub",
+        );
+    }
+}
+
 #[test]
 fn the_guide_link_names_this_builds_version() {
     assert_eq!(
