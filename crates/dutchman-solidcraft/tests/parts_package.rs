@@ -162,6 +162,39 @@ fn a_package_a_module_wrote() {
         "{}",
         serde_json::to_string_pretty(&doc["occurrences"]).unwrap()
     );
+    // The one-resistor package: R1's body (model box x -0.8..0.8, y -0.4..0.4, z 0..0.45) lands
+    // at x 24.2..25.8, y 14.6..15.4, z 1.6..2.05 mm.
+    let mut again = Report::default();
+    let model = read_package(&dir, &manifest, &mut again).unwrap();
+    let assembly = model.assembly.unwrap();
+    let r1 = assembly
+        .placements
+        .iter()
+        .find(|p| p.name.as_deref() == Some("R1"));
+    if let Some(r1) = r1 {
+        let (mut low, mut high) = ([f64::MAX; 3], [f64::MIN; 3]);
+        for x in [-0.8, 0.8] {
+            for y in [-0.4, 0.4] {
+                for z in [0.0, 0.45] {
+                    for axis in 0..3 {
+                        let row = r1.transform[axis];
+                        let v = row[0] * x + row[1] * y + row[2] * z + row[3];
+                        low[axis] = f64::min(low[axis], v);
+                        high[axis] = f64::max(high[axis], v);
+                    }
+                }
+            }
+        }
+        for (got, want) in low
+            .iter()
+            .chain(high.iter())
+            .zip([24.2, 14.6, 1.6, 25.8, 15.4, 2.05])
+        {
+            assert!((got - want).abs() < 0.01, "R1 box {low:?}..{high:?}");
+        }
+    } else {
+        eprintln!("no part R1 in this package; the R1 position check is skipped");
+    }
     if let Some(out) = std::env::var_os("DUTCHMAN_PARTS_OUT") {
         std::fs::write(out, &bytes).unwrap();
     }
@@ -169,4 +202,36 @@ fn a_package_a_module_wrote() {
         let bodies = evaluate(&cli, &bytes);
         println!("{}", serde_json::to_string_pretty(&bodies).unwrap());
     }
+}
+
+#[test]
+fn a_part_colour_reaches_the_design_as_a_body_look() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("part.step"), cube_step()).unwrap();
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "cube", "file": "part.step"}],
+        "parts": [
+            {"name": "Painted", "model": "cube", "color": "#336699"},
+            {"name": "Plain", "model": "cube", "transform": [[1,0,0,5],[0,1,0,0],[0,0,1,0]]},
+        ],
+    });
+    let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity != dutchman_core::Severity::Dropped),
+        "{:?}",
+        report.losses()
+    );
+    let doc = document(&bytes);
+    assert!(
+        doc["appearances"]
+            .to_string()
+            .to_lowercase()
+            .contains("336699"),
+        "{}",
+        doc["appearances"]
+    );
 }

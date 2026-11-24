@@ -25,7 +25,7 @@ use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::placement::{Placement3x4, IDENTITY};
 use crate::{
@@ -64,6 +64,8 @@ const MASKED_COPPER: [f64; 3] = [0.05, 0.45, 0.22];
 const BARE_COPPER: [f64; 3] = [0.83, 0.64, 0.22];
 /// White, the default for silkscreen.
 const SILKSCREEN: [f64; 3] = [1.0, 1.0, 1.0];
+/// Solder mask green, the default for a mask overlay.
+const SOLDER_MASK: [f64; 3] = [0.05, 0.45, 0.22];
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -101,6 +103,8 @@ struct PartEntry {
     #[serde(default)]
     transform: Option<[[f64; 4]; 3]>,
     #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
     notes: Vec<Value>,
 }
 
@@ -117,6 +121,8 @@ struct OverlayEntry {
     #[serde(default)]
     color: Option<String>,
     #[serde(default)]
+    opacity: Option<f64>,
+    #[serde(default)]
     areas: Vec<Value>,
 }
 
@@ -128,6 +134,7 @@ struct AreaEntry {
 }
 
 /// One validated area: its loops without a repeated closing point.
+#[derive(Debug)]
 struct Area {
     outer: Vec<[f64; 2]>,
     holes: Vec<Vec<[f64; 2]>>,
@@ -258,6 +265,8 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
     // The part each placed name became, with its transform, for the overlays.
     let mut placed: BTreeMap<String, Placement3x4> = BTreeMap::new();
     let mut dropped_parts: BTreeSet<String> = BTreeSet::new();
+    // The coloured copy of a model for each (model, colour) a part asks for.
+    let mut variants: BTreeMap<(String, String), usize> = BTreeMap::new();
 
     for value in &manifest.parts {
         let entry: PartEntry = match serde_json::from_value(value.clone()) {
@@ -370,6 +379,37 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
             dropped_parts.insert(entry.name);
             continue;
         }
+        let index = match entry.color.as_deref() {
+            None => index,
+            Some(text) => {
+                let colored = parse_color(text)
+                    .ok_or_else(|| format!("its colour `{}` is not #rrggbb", clip(text, 16)));
+                let key = (entry.model.clone(), text.to_ascii_lowercase());
+                let made = colored.and_then(|rgb| match variants.get(&key) {
+                    Some(at) => Ok(*at),
+                    None => {
+                        let at =
+                            colour_variant(&mut assembly, index, rgb, text, &entry.model, report)?;
+                        variants.insert(key, at);
+                        Ok(at)
+                    }
+                });
+                match made {
+                    Ok(at) => at,
+                    Err(why) => {
+                        left_out(
+                            report,
+                            &mut assembly,
+                            Some(&entry.name),
+                            Some(file),
+                            format!("part \"{}\" is left out: {why}", clip(&entry.name, 64)),
+                        );
+                        dropped_parts.insert(entry.name);
+                        continue;
+                    }
+                }
+            }
+        };
         let name = names.unique(&entry.name);
         if name != entry.name {
             report.push_at(
@@ -425,6 +465,97 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
         assembly: Some(assembly),
         source_step: None,
     })
+}
+
+/// A copy of part `index` whose bodies carry the colour `text`, as appearance bindings, the way
+/// every reader gives a body its colour. A model that is a sheet (no solid bodies) keeps its
+/// own look, with a note.
+fn colour_variant(
+    assembly: &mut Assembly,
+    index: usize,
+    rgb: [f64; 3],
+    text: &str,
+    model: &str,
+    report: &mut Report,
+) -> Result<usize, String> {
+    let Some(source) = assembly.parts.get(index) else {
+        return Err("its model was not read".to_owned());
+    };
+    if source.ir.geometry.bodies.is_empty() {
+        report.push_at(
+            Stage::Input,
+            Severity::Degraded,
+            format!("model \"{}\"", clip(model, 64)),
+            format!(
+                "its colour `{}` is not applied: the model has no solid body to colour",
+                clip(text, 16)
+            ),
+        );
+        return Ok(index);
+    }
+    if assembly.parts.len() >= MAX_PARTS {
+        return Err(format!(
+            "the package would pass {MAX_PARTS} parts with its colours"
+        ));
+    }
+    let mut copy = source.clone();
+    // The writer takes a body's look from its appearance bindings when it writes the part from
+    // its geometry, not from the STEP text a part was read from (the way a mirrored part is
+    // restated).
+    copy.source_step = None;
+    copy.fidelity = None;
+    let hex = text.trim_start_matches('#').to_ascii_lowercase();
+    let appearance = format!("dutchman:parts:appearance#{hex}");
+    copy.ir.model.appearance_bindings.retain(|binding| {
+        !matches!(
+            binding.target.entity,
+            cadmpeg_ir::appearance::AppearanceTarget::Body(_)
+        )
+    });
+    if !copy
+        .ir
+        .model
+        .appearances
+        .iter()
+        .any(|a| a.id.as_str() == appearance)
+    {
+        let made = serde_json::from_value(json!({
+            "id": appearance,
+            "base_color": {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": 1.0},
+            "properties": {},
+            "textures": [],
+        }));
+        match made {
+            Ok(made) => copy.ir.model.appearances.push(made),
+            Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
+        }
+    }
+    let ids: Vec<Value> = copy
+        .ir
+        .geometry
+        .bodies
+        .iter()
+        .filter_map(|body| serde_json::to_value(&body.id).ok())
+        .collect();
+    for (n, id) in ids.into_iter().enumerate() {
+        let binding = serde_json::from_value(json!({
+            "id": format!("dutchman:parts:binding#{hex}-{n}"),
+            "target": {"entity": {"kind": "body", "value": id}},
+            "appearance": appearance,
+            "channels": {},
+        }));
+        match binding {
+            Ok(binding) => copy.ir.model.appearance_bindings.push(binding),
+            Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
+        }
+    }
+    let at = assembly.parts.len();
+    assembly.parts.push(copy);
+    assembly.definitions.push(None);
+    assembly
+        .identities
+        .push(Some(format!("{PARTS_SCHEMA}:{model}:{hex}")));
+    Ok(at)
 }
 
 fn refuse(message: String) -> Error {
@@ -679,11 +810,12 @@ fn overlays(
                 _ => MASKED_COPPER,
             },
             "silkscreen" => SILKSCREEN,
+            "mask" => SOLDER_MASK,
             other => {
                 dropped(
                     report,
                     format!(
-                        "its kind `{}` is not copper or silkscreen; it is left out",
+                        "its kind `{}` is not copper, silkscreen or mask; it is left out",
                         clip(other, 32)
                     ),
                 );
@@ -692,18 +824,39 @@ fn overlays(
         };
         let color = match entry.color.as_deref() {
             None => color,
-            Some(text) => parse_color(text).unwrap_or_else(|| {
+            Some(text) => {
+                let Some(parsed) = parse_color(text) else {
+                    dropped(
+                        report,
+                        format!(
+                            "its colour `{}` is not #rrggbb; it is left out",
+                            clip(text, 16)
+                        ),
+                    );
+                    continue;
+                };
+                parsed
+            }
+        };
+        let transparency = match (entry.kind.as_str(), entry.opacity) {
+            (_, None) => None,
+            ("mask", Some(o)) if o.is_finite() && (0.0..=1.0).contains(&o) => Some(1.0 - o),
+            ("mask", Some(o)) => {
+                dropped(
+                    report,
+                    format!("its opacity {o} is not a number from 0 to 1; it is left out"),
+                );
+                continue;
+            }
+            (_, Some(_)) => {
                 report.push_at(
                     Stage::Input,
                     Severity::Degraded,
                     subject.clone(),
-                    format!(
-                        "its colour `{}` is not #rrggbb; the default for its kind is used",
-                        clip(text, 16)
-                    ),
+                    "its opacity is read on a mask only; it is ignored here".to_owned(),
                 );
-                color
-            }),
+                None
+            }
         };
         let Some(part_name) = entry.part.as_deref() else {
             dropped(
@@ -793,7 +946,7 @@ fn overlays(
             );
             continue;
         }
-        let text = sheet_step(&entry.name, z * scale, &areas, color);
+        let text = sheet_step(&entry.name, z * scale, &areas, color, transparency);
         let mut scratch = Report::default();
         let model = crate::read_bytes(
             Format::Step,
@@ -903,7 +1056,8 @@ fn clean_ring(points: &[[f64; 2]], scale: f64, what: &str) -> Result<Vec<[f64; 2
 }
 
 /// Checks one area: finite points, at least 3 in every loop, the outer loop counter-clockwise,
-/// holes clockwise and inside it, and no loop crossing or touching itself or another.
+/// holes clockwise and inside it (and not inside each other), no loop crossing itself, and no
+/// two loops crossing or sharing part of an edge. Loops may touch at a point.
 fn validate_area(area: AreaEntry, scale: f64, work_left: &mut u64) -> Result<Area, String> {
     let outer = clean_ring(&area.outer, scale, "the outer loop")?;
     let outer_area = twice_area(&outer);
@@ -913,7 +1067,7 @@ fn validate_area(area: AreaEntry, scale: f64, work_left: &mut u64) -> Result<Are
     if outer_area < 0.0 {
         return Err("the outer loop runs clockwise, not counter-clockwise".to_owned());
     }
-    let mut holes = Vec::with_capacity(area.holes.len());
+    let mut holes: Vec<Vec<[f64; 2]>> = Vec::with_capacity(area.holes.len());
     for (n, hole) in area.holes.iter().enumerate() {
         let what = format!("hole {}", n.saturating_add(1));
         let ring = clean_ring(hole, scale, &what)?;
@@ -924,11 +1078,11 @@ fn validate_area(area: AreaEntry, scale: f64, work_left: &mut u64) -> Result<Are
         if hole_area > 0.0 {
             return Err(format!("{what} runs counter-clockwise, not clockwise"));
         }
-        if let Some(first) = ring.first() {
-            if !inside_ring(&outer, *first) {
-                return Err(format!("{what} is not inside the outer loop"));
-            }
-            if let Some(other) = holes.iter().position(|h| inside_ring(h, *first)) {
+        if !within(&ring, &outer, work_left)? {
+            return Err(format!("{what} is not inside the outer loop"));
+        }
+        for (other, earlier) in holes.iter().enumerate() {
+            if within(&ring, earlier, work_left)? || within(earlier, &ring, work_left)? {
                 return Err(format!(
                     "{what} is inside hole {}; a hole inside a hole is not drawn",
                     other.saturating_add(1)
@@ -944,6 +1098,30 @@ fn validate_area(area: AreaEntry, scale: f64, work_left: &mut u64) -> Result<Are
     }
     Ok(Area { outer, holes })
 }
+
+/// Whether `inner` lies inside `outer`: judged by the first of its first few points that is not
+/// on `outer`'s boundary, so a loop touching `outer` at a point still counts as inside. Charges
+/// the work limit.
+fn within(inner: &[[f64; 2]], outer: &[[f64; 2]], work_left: &mut u64) -> Result<bool, String> {
+    for p in inner.iter().take(8) {
+        let cost = u64::try_from(outer.len()).unwrap_or(u64::MAX);
+        if *work_left < cost {
+            *work_left = 0;
+            return Err(WORK_LIMIT.to_owned());
+        }
+        *work_left = work_left.saturating_sub(cost);
+        let on_edge = outer
+            .iter()
+            .zip(outer.iter().cycle().skip(1))
+            .any(|(a, b)| point_segment(*p, *a, *b) < TOUCH);
+        if !on_edge {
+            return Ok(inside_ring(outer, *p));
+        }
+    }
+    Ok(false)
+}
+
+const WORK_LIMIT: &str = "the package has more loop checking to do than the work limit allows";
 
 /// Whether `p` is inside `ring` (even-odd).
 fn inside_ring(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
@@ -963,26 +1141,100 @@ fn orient(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
-fn on_segment(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> bool {
-    p[0] >= a[0].min(b[0])
-        && p[0] <= a[0].max(b[0])
-        && p[1] >= a[1].min(b[1])
-        && p[1] <= a[1].max(b[1])
+/// Two points closer than this (mm) are one point.
+const TOUCH: f64 = 1e-6;
+
+fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
-/// Whether segments `p1 p2` and `p3 p4` cross or touch.
-fn meet(p1: [f64; 2], p2: [f64; 2], p3: [f64; 2], p4: [f64; 2]) -> bool {
-    let (d1, d2) = (orient(p3, p4, p1), orient(p3, p4, p2));
-    let (d3, d4) = (orient(p1, p2, p3), orient(p1, p2, p4));
+/// The distance from `p` to the segment `a b`.
+fn point_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let len2 = d[0] * d[0] + d[1] * d[1];
+    if len2 == 0.0 {
+        return dist(p, a);
+    }
+    let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0);
+    dist(p, [a[0] + t * d[0], a[1] + t * d[1]])
+}
+
+/// How two segments meet.
+#[derive(PartialEq)]
+enum Contact {
+    Apart,
+    /// They meet at a point (a shared vertex, or a vertex on the other's edge).
+    Touch,
+    /// They cross each other.
+    Cross,
+    /// They share part of an edge.
+    Overlap,
+}
+
+fn contact(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Contact {
+    let ends = [(a, b), (b, a)];
+    let others = [(c, d), (d, c)];
+    let mut shared = Vec::new();
+    for (p, x) in ends {
+        for (q, y) in others {
+            if dist(p, q) < TOUCH {
+                shared.push((p, x, y));
+            }
+        }
+    }
+    if shared.len() >= 2 {
+        // Both ends meet: the same edge, or a pair of edges with a repeated vertex.
+        return Contact::Overlap;
+    }
+    if let Some((p, x, y)) = shared.first() {
+        // One shared vertex: they only overlap when they leave it the same way.
+        let u = [x[0] - p[0], x[1] - p[1]];
+        let v = [y[0] - p[0], y[1] - p[1]];
+        let cross = u[0] * v[1] - u[1] * v[0];
+        let dot = u[0] * v[0] + u[1] * v[1];
+        let longest = u[0].hypot(u[1]).max(v[0].hypot(v[1]));
+        return if dot > 0.0 && cross.abs() <= TOUCH * longest {
+            Contact::Overlap
+        } else {
+            Contact::Touch
+        };
+    }
+    let (d1, d2) = (orient(c, d, a), orient(c, d, b));
+    let (d3, d4) = (orient(a, b, c), orient(a, b, d));
     if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
         && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
     {
-        return true;
+        return Contact::Cross;
     }
-    (d1 == 0.0 && on_segment(p3, p4, p1))
-        || (d2 == 0.0 && on_segment(p3, p4, p2))
-        || (d3 == 0.0 && on_segment(p1, p2, p3))
-        || (d4 == 0.0 && on_segment(p1, p2, p4))
+    let length = dist(a, b);
+    if length > 0.0 && point_line(c, a, b, length) <= TOUCH && point_line(d, a, b, length) <= TOUCH
+    {
+        // On one line: how far they overlap along it.
+        let along =
+            |p: [f64; 2]| ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / length;
+        let (lo, hi) = (along(c).min(along(d)), along(c).max(along(d)));
+        let overlap = hi.min(length) - lo.max(0.0);
+        return if overlap > TOUCH {
+            Contact::Overlap
+        } else if overlap >= -TOUCH {
+            Contact::Touch
+        } else {
+            Contact::Apart
+        };
+    }
+    if point_segment(a, c, d) < TOUCH
+        || point_segment(b, c, d) < TOUCH
+        || point_segment(c, a, b) < TOUCH
+        || point_segment(d, a, b) < TOUCH
+    {
+        return Contact::Touch;
+    }
+    Contact::Apart
+}
+
+/// The distance from `p` to the line through `a b` (of length `length`).
+fn point_line(p: [f64; 2], a: [f64; 2], b: [f64; 2], length: f64) -> f64 {
+    orient(a, b, p).abs() / length
 }
 
 /// A segment of one loop, for the crossing sweep.
@@ -998,8 +1250,9 @@ struct Segment {
     b: [f64; 2],
 }
 
-/// Why two segments of `rings` cross or touch where they should not, found by sweeping the
-/// segments in x order.
+/// Why two segments of `rings` cross or overlap where they should not, found by sweeping the
+/// segments in x order. A loop may touch another at a point, never itself. Every pair the sweep
+/// compares is charged to `work_left`.
 fn crossing(rings: &[&[[f64; 2]]], work_left: &mut u64) -> Option<String> {
     let mut segments = Vec::new();
     for (ring_index, ring) in rings.iter().enumerate() {
@@ -1020,30 +1273,30 @@ fn crossing(rings: &[&[[f64; 2]]], work_left: &mut u64) -> Option<String> {
     segments.sort_by(|x, y| x.min_x.total_cmp(&y.min_x));
     for (i, s) in segments.iter().enumerate() {
         for t in segments.iter().skip(i.saturating_add(1)) {
-            if t.min_x > s.max_x {
+            if t.min_x > s.max_x + TOUCH {
                 break;
             }
             if *work_left == 0 {
-                return Some(
-                    "the package has more loop checking to do than the work limit allows".to_owned(),
-                );
+                return Some(WORK_LIMIT.to_owned());
             }
             *work_left = work_left.saturating_sub(1);
-            if t.min_y > s.max_y || s.min_y > t.max_y {
+            if t.min_y > s.max_y + TOUCH || s.min_y > t.max_y + TOUCH {
                 continue;
             }
-            if s.ring == t.ring {
+            let same = s.ring == t.ring;
+            let next_to = same && {
                 let apart = s.index.abs_diff(t.index);
-                if apart == 1 || apart == s.len.saturating_sub(1) {
-                    continue;
+                apart == 1 || apart == s.len.saturating_sub(1)
+            };
+            match contact(s.a, s.b, t.a, t.b) {
+                Contact::Apart => {}
+                Contact::Touch if next_to => {}
+                Contact::Touch if !same => {}
+                Contact::Overlap if !same => {
+                    return Some("two loops share part of an edge".to_owned());
                 }
-            }
-            if meet(s.a, s.b, t.a, t.b) {
-                return Some(if s.ring == t.ring {
-                    "a loop crosses or touches itself".to_owned()
-                } else {
-                    "two loops cross or touch".to_owned()
-                });
+                Contact::Cross if !same => return Some("two loops cross or touch".to_owned()),
+                _ => return Some("a loop crosses or touches itself".to_owned()),
             }
         }
     }
@@ -1223,7 +1476,13 @@ impl Step {
 
 /// An overlay as STEP: one open shell of planar faces at height `z`, one face per area (outer
 /// loop counter-clockwise and hole loops clockwise, so the normal is +z), each coloured `rgb`.
-fn sheet_step(name: &str, z: f64, areas: &[Area], rgb: [f64; 3]) -> String {
+fn sheet_step(
+    name: &str,
+    z: f64,
+    areas: &[Area],
+    rgb: [f64; 3],
+    transparency: Option<f64>,
+) -> String {
     let mut w = Step::default();
     let plane_placement = w.placement([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let plane = w.add(format!("PLANE('',#{plane_placement})"));
@@ -1274,12 +1533,20 @@ fn sheet_step(name: &str, z: f64, areas: &[Area], rgb: [f64; 3]) -> String {
     let fill = w.add(format!("FILL_AREA_STYLE_COLOUR('',#{colour})"));
     let fill_style = w.add(format!("FILL_AREA_STYLE('',(#{fill}))"));
     let surface_fill = w.add(format!("SURFACE_STYLE_FILL_AREA(#{fill_style})"));
-    let side = w.add(format!("SURFACE_SIDE_STYLE('',(#{surface_fill}))"));
-    let usage = w.add(format!("SURFACE_STYLE_USAGE(.BOTH.,#{side})"));
-    let style = w.add(format!("PRESENTATION_STYLE_ASSIGNMENT((#{usage}))"));
     let styled: Vec<usize> = faces
         .iter()
-        .map(|face| w.add(format!("STYLED_ITEM('',(#{style}),#{face})")))
+        .map(|face| {
+            // The transparency is written for each face beside its colour.
+            let mut styles = format!("#{surface_fill}");
+            if let Some(t) = transparency {
+                let clear = w.add(format!("SURFACE_STYLE_TRANSPARENT({})", real(t)));
+                styles.push_str(&format!(",#{clear}"));
+            }
+            let side = w.add(format!("SURFACE_SIDE_STYLE('',({styles}))"));
+            let usage = w.add(format!("SURFACE_STYLE_USAGE(.BOTH.,#{side})"));
+            let style = w.add(format!("PRESENTATION_STYLE_ASSIGNMENT((#{usage}))"));
+            w.add(format!("STYLED_ITEM('',(#{style}),#{face})"))
+        })
         .collect();
     w.finish(
         name,
@@ -1645,7 +1912,7 @@ mod tests {
 
     #[test]
     fn default_colours_by_kind_and_finish() {
-        let green = sheet_step("a", 0.0, &[], MASKED_COPPER);
+        let green = sheet_step("a", 0.0, &[], MASKED_COPPER, None);
         assert!(green.contains("0.05,0.45,0.22"));
         let dir = package("colours");
         write_models(&dir);
@@ -1796,7 +2063,11 @@ mod tests {
         ]));
         let (model, report) = read(&dir, &m);
         assert!(model.is_ok());
-        assert!(mentions(&report, Severity::Degraded, "hole 2 is inside hole 1"));
+        assert!(mentions(
+            &report,
+            Severity::Degraded,
+            "hole 2 is inside hole 1"
+        ));
     }
 
     #[test]
@@ -1825,15 +2096,20 @@ mod tests {
         let dir = package("overflow");
         write_models(&dir);
         let mut m = manifest(json!({"units": "m"}));
-        m["parts"][1]["transform"] = json!([[1,0,0,1.0e308],[0,1,0,0],[0,0,1,0]]);
+        m["parts"][1]["transform"] = json!([[1, 0, 0, 1.0e308], [0, 1, 0, 0], [0, 0, 1, 0]]);
         let (model, report) = read(&dir, &m);
         let assembly = model.unwrap().assembly.unwrap();
         assert!(mentions(&report, Severity::Dropped, "part \"C1\""));
-        assert!(mentions(&report, Severity::Dropped, "not finite once scaled"));
-        assert!(assembly
-            .placements
+        assert!(mentions(
+            &report,
+            Severity::Dropped,
+            "not finite once scaled"
+        ));
+        assert!(assembly.placements.iter().all(|p| p
+            .transform
             .iter()
-            .all(|p| p.transform.iter().flatten().all(|v| v.is_finite())));
+            .flatten()
+            .all(|v| v.is_finite())));
     }
 
     #[test]
@@ -1841,8 +2117,8 @@ mod tests {
         let dir = package("notrigid");
         write_models(&dir);
         let mut m = manifest(json!({}));
-        m["parts"][1]["transform"] = json!([[2,0,0,0],[0,1,0,0],[0,0,1,0]]);
-        m["parts"][2]["transform"] = json!([[1,0.5,0,0],[0,1,0,0],[0,0,1,0]]);
+        m["parts"][1]["transform"] = json!([[2, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]);
+        m["parts"][2]["transform"] = json!([[1, 0.5, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]);
         let (model, report) = read(&dir, &m);
         let assembly = model.unwrap().assembly.unwrap();
         assert_eq!(assembly.placements.len(), 1);
@@ -1870,7 +2146,11 @@ mod tests {
         let step = assembly.parts[sheet.part].source_step.as_deref().unwrap();
         assert!(!step.contains("NaN") && !step.contains("inf"));
         assert!(mentions(&report, Severity::Degraded, "1 area(s) left out"));
-        assert!(mentions(&report, Severity::Degraded, "fewer than 3 different"));
+        assert!(mentions(
+            &report,
+            Severity::Degraded,
+            "fewer than 3 different"
+        ));
         assert!(report
             .losses()
             .iter()
@@ -1935,7 +2215,12 @@ mod tests {
     fn windows_form_and_nul_file_names_are_refused() {
         let dir = package("winpaths");
         write_models(&dir);
-        for file in ["C:\\x.step", "\\\\server\\share\\x.step", "a\\b.step", "a\0b.step"] {
+        for file in [
+            "C:\\x.step",
+            "\\\\server\\share\\x.step",
+            "a\\b.step",
+            "a\0b.step",
+        ] {
             let mut m = manifest(json!({}));
             m["models"][1]["file"] = json!(file);
             let (model, _) = read(&dir, &m);
@@ -1944,6 +2229,143 @@ mod tests {
                 "{file:?}: {model:?}"
             );
         }
+    }
+
+    fn sheet_faces(assembly: &Assembly, name: &str) -> usize {
+        let sheet = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no sheet {name}"));
+        assembly.parts[sheet.part].ir.geometry.faces.len()
+    }
+
+    #[test]
+    fn loops_touching_at_one_vertex_are_accepted_even_within_rounding() {
+        let dir = package("touch");
+        write_models(&dir);
+        let corner = json!([[0.0, 0.0], [1.0, 2.0], [2.0, 1.0]]);
+        let a = json!([[2.0, 2.0], [2.0, 4.0], [4.0, 4.0], [4.0, 2.0]]);
+        let b = json!([[4.000_000_1, 4.0], [5.0, 6.0], [6.0, 5.0]]);
+        let m = one_area_overlay(json!([
+            {"outer": square(10.0), "holes": [corner, a, b]},
+        ]));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(sheet_faces(&assembly, "Copper top"), 1);
+        assert!(!mentions(&report, Severity::Degraded, "area(s) left out"));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn loops_sharing_part_of_an_edge_are_refused_by_name() {
+        let dir = package("overlap");
+        write_models(&dir);
+        let along_the_edge = json!([[0.0, 2.0], [0.0, 5.0], [2.0, 5.0], [2.0, 2.0]]);
+        let m = one_area_overlay(json!([
+            {"outer": square(10.0), "holes": [along_the_edge]},
+            {"outer": square(5.0), "holes": []},
+        ]));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(sheet_faces(&assembly, "Copper top"), 1);
+        assert!(mentions(
+            &report,
+            Severity::Degraded,
+            "two loops share part of an edge"
+        ));
+    }
+
+    #[test]
+    fn a_mask_overlay_is_drawn_with_its_holes_and_opacity() {
+        let dir = package("mask");
+        write_models(&dir);
+        let pad = json!([[1.0, 1.0], [1.0, 2.0], [2.0, 2.0], [2.0, 1.0]]);
+        let mut mask = overlay(
+            "Mask top",
+            json!([
+                {"outer": square(5.0), "holes": [pad]},
+                {"outer": [[6.0, 6.0], [8.0, 6.0], [8.0, 8.0]], "holes": []},
+            ]),
+        );
+        mask["kind"] = json!("mask");
+        mask.as_object_mut().unwrap().remove("finish");
+        mask["opacity"] = json!(0.85);
+        let mut plain = mask.clone();
+        plain["name"] = json!("Mask plain");
+        plain.as_object_mut().unwrap().remove("opacity");
+        let mut bad = mask.clone();
+        bad["name"] = json!("Mask bad");
+        bad["opacity"] = json!(1.5);
+        let (model, report) = read(&dir, &manifest(json!({"overlays": [mask, plain, bad]})));
+        let assembly = model.unwrap().assembly.unwrap();
+        let step_of = |name: &str| {
+            let p = assembly
+                .placements
+                .iter()
+                .find(|p| p.name.as_deref() == Some(name))
+                .unwrap();
+            assembly.parts[p.part].source_step.clone().unwrap()
+        };
+        let step = step_of("Mask top");
+        assert!(step.contains("COLOUR_RGB('',0.05,0.45,0.22)"));
+        assert!(step.contains("1.601"));
+        assert_eq!(step.matches("FACE_BOUND(").count(), 1);
+        assert_eq!(step.matches("SURFACE_STYLE_TRANSPARENT(0.15)").count(), 2);
+        assert!(!step_of("Mask plain").contains("SURFACE_STYLE_TRANSPARENT"));
+        assert!(mentions(&report, Severity::Dropped, "overlay \"Mask bad\""));
+        assert!(mentions(&report, Severity::Dropped, "opacity"));
+        assert!(!assembly
+            .placements
+            .iter()
+            .any(|p| p.name.as_deref() == Some("Mask bad")));
+    }
+
+    #[test]
+    fn a_colour_that_is_not_rrggbb_refuses_that_overlay_or_part_by_name() {
+        let dir = package("colours2");
+        write_models(&dir);
+        let mut m = manifest(json!({"overlays": [
+            {"name": "Silk", "kind": "silkscreen", "part": "Board", "z": 1.6, "color": "yellow",
+             "areas": [{"outer": square(1.0), "holes": []}]},
+            overlay("Copper top", json!([{"outer": square(1.0), "holes": []}])),
+        ]}));
+        m["parts"][1]["color"] = json!("#336699");
+        m["parts"][2]["color"] = json!("blue");
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(&report, Severity::Dropped, "overlay \"Silk\""));
+        assert!(mentions(&report, Severity::Dropped, "part \"C2\""));
+        assert!(mentions(&report, Severity::Dropped, "not #rrggbb"));
+        let c1 = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some("C1"))
+            .unwrap();
+        let board = &assembly.placements[0];
+        let part = &assembly.parts[c1.part];
+        assert!(!part.ir.geometry.bodies.is_empty());
+        assert_eq!(
+            part.ir.model.appearance_bindings.len(),
+            part.ir.geometry.bodies.len(),
+            "each body of the part carries its colour"
+        );
+        assert!(assembly.parts[board.part]
+            .ir
+            .model
+            .appearance_bindings
+            .is_empty());
+        assert!(assembly
+            .placements
+            .iter()
+            .any(|p| p.name.as_deref() == Some("Copper top")));
+        assert!(!assembly
+            .placements
+            .iter()
+            .any(|p| p.name.as_deref() == Some("C2")));
     }
 
     #[test]
