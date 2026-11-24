@@ -1930,7 +1930,7 @@ fn feature_row<'a>(wire: &'a mut Value, id: &str) -> &'a mut Value {
         .unwrap()
         .iter_mut()
         .find(|f| f["id"] == id)
-        .unwrap_or_else(|| panic!("no feature {id}"))
+        .unwrap()
 }
 
 fn reference_sketch_history() -> Model {
