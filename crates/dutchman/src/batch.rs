@@ -95,7 +95,13 @@ impl Settings {
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     let extension = options.output_extension();
     for job in jobs {
-        let _ = job.output.set_extension(extension);
+        let _ = job
+            .output
+            .set_extension(if crate::tool_library::is_library(&job.input) {
+                dutchman_core::camtools::EXTENSION
+            } else {
+                extension
+            });
         job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
@@ -441,6 +447,23 @@ pub fn line(result: &Value) -> String {
             .pointer("/output/path")
             .and_then(Value::as_str)
             .unwrap_or("?");
+        if result.pointer("/output/format").and_then(Value::as_str)
+            == Some(crate::tool_library::FORMAT)
+        {
+            let count = |key: &str| {
+                result
+                    .pointer(&format!("/tools/{key}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let (written, left) = (count("written"), count("not_written"));
+            let words = if left == 0 {
+                format!("{written} tools")
+            } else {
+                format!("{written} tools; {left} not written, see the losses")
+            };
+            return format!("converted  {input} -> {output} ({words})");
+        }
         let written = match (
             result.get("mode").and_then(Value::as_str),
             result
@@ -448,7 +471,7 @@ pub fn line(result: &Value) -> String {
                 .and_then(Value::as_str),
         ) {
             (Some("partial_history"), _) => {
-                "partial editable history; imported final shape visible"
+                "partial editable history; the rest is one imported body"
             }
             (Some("history"), Some("verified")) => "editable history, verified in SolidCraft",
             (Some("history"), _) => "editable history, unverified",
@@ -605,7 +628,11 @@ fn plan_with_limit(
                         Format::part_revision(&relative)
                             .map_or_else(|| relative.clone(), |(part, _)| part),
                     )
-                    .with_extension(crate::OutputFormat::Solidcraft.extension()),
+                    .with_extension(if crate::tool_library::is_library(&path) {
+                        dutchman_core::camtools::EXTENSION
+                    } else {
+                        crate::OutputFormat::Solidcraft.extension()
+                    }),
                 &mut outputs,
             );
             let replace = Format::part_revision(&path).is_none();
@@ -760,8 +787,13 @@ pub fn summary(jobs: &[Job]) -> String {
     let mut assemblies = 0;
     let mut parts = 0;
     let mut steps = 0;
+    let mut libraries = 0;
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
+        if crate::tool_library::is_library(&job.input) {
+            libraries += 1;
+            continue;
+        }
         match extension_of(&job.input).as_str() {
             "sldasm" | "iam" | "f3z" => assemblies += 1,
             "step" | "stp" => steps += 1,
@@ -776,8 +808,19 @@ pub fn summary(jobs: &[Job]) -> String {
     };
     let part_word = if parts == 1 { "part" } else { "parts" };
     let file_word = if steps == 1 { "file" } else { "files" };
+    let library_word = if libraries == 1 {
+        "tool library"
+    } else {
+        "tool libraries"
+    };
+    if libraries > 0 && assemblies + parts + steps == 0 {
+        return format!("{libraries} {library_word}");
+    }
     let mut text =
         format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
+    if libraries > 0 {
+        text.push_str(&format!(", {libraries} {library_word}"));
+    }
     if assemblies > 0 {
         text.push_str("; converting assemblies with their parts");
     }
@@ -870,7 +913,10 @@ fn search(
         }
         if meta.is_dir() {
             search(root, &path, depth + 1, out, skipped, include, left);
-        } else if meta.is_file() && Format::from_path(&path).is_none() {
+        } else if meta.is_file()
+            && Format::from_path(&path).is_none()
+            && !crate::tool_library::is_library(&path)
+        {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
             let relative = path
@@ -1060,6 +1106,10 @@ impl Journal {
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(io(err)),
+        }
+        // The journal may sit in the output folder, which this run has not made yet.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io)?;
         }
         let file = std::fs::OpenOptions::new()
             .create(true)

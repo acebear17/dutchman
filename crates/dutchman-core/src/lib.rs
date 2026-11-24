@@ -6,9 +6,11 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
+pub mod design_history;
 mod error;
 pub mod estimate;
 mod format;
@@ -29,6 +31,7 @@ pub mod progress_words;
 mod refusal;
 pub mod source;
 mod source_errors;
+mod source_version;
 #[cfg(test)]
 mod test_products;
 pub mod time;
@@ -161,7 +164,7 @@ impl Model {
 pub use report::{
     AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
     InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
-    PartHistory, Report, Severity, SourceError, Stage,
+    PartHistory, Report, RestImported, Severity, SourceError, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
@@ -171,6 +174,13 @@ pub fn is_native_binder(kind: &str) -> bool {
         kind,
         "PartDesign::SubShapeBinder" | "PartDesign::ShapeBinder"
     )
+}
+
+/// Whether a source-native CADIR operation is a coordinate frame the source keeps only as
+/// construction references and expressions (a Fusion Coordinate System whose solved frame
+/// cadmpeg does not state). It builds no geometry; like a binder it is a helper.
+pub fn is_native_coordinate_system(kind: &str) -> bool {
+    kind == "CoordinateSystem"
 }
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
@@ -235,7 +245,7 @@ pub fn assembly_references(
     let model = decode_file(format, input, &mut Report::default(), None)?;
     let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
@@ -354,6 +364,7 @@ pub fn read_with_progress(
         report,
         &|format, path, report| {
             let model = decode_file(format, path, report, progress)?;
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {
@@ -423,7 +434,17 @@ fn local_components(
     } else if let Some(completeness) = assembly::flattened_completeness(model, report) {
         report.set_completeness(completeness);
     }
-    report.record_missing_links(&missing_linked_components(model));
+    let missing = missing_linked_components(model);
+    let fusion_f3d = model
+        .source_file
+        .as_deref()
+        .and_then(|file| Path::new(file).extension())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("f3d"));
+    if fusion_f3d {
+        report.record_missing_inserted_designs(&missing);
+    } else {
+        report.record_missing_links(&missing);
+    }
 }
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
@@ -935,6 +956,52 @@ mod tests {
         let mut report = Report::default();
         local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
         assert!(report.completeness().is_none());
+    }
+
+    #[test]
+    fn a_fusion_f3d_with_inserted_designs_missing_says_to_export_an_f3z() {
+        let mut report = Report::default();
+        let mut model = read(
+            Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            model.source_file.as_deref(),
+            Some("generated_unit_cube.f3d")
+        );
+        // Synthetic: two insertions whose source designs the reader states as unresolved.
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // On this CADIR, an insertion whose design is not in the file is a part definition
+        // with no bodies, as in `missing_links_are_reported_but_embedded_components_are_complete`.
+        wire["model"]["product_definitions"] = json!([{
+            "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
+            "bodies": [], "sketches": [], "bom_properties": {}
+        }]);
+        let prototype =
+            json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"});
+        wire["model"]["occurrences"] = json!([
+            {"id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": prototype,
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]},
+            {"id": "synthetic:assembly:occurrence#2", "ordinal": 2, "name": "Component Insert",
+             "parent": {"kind": "root"}, "prototype": prototype,
+             "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]}
+        ]);
+        model.ir = crate::test_products::read(&wire);
+        let mut report = Report::default();
+        local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
+        let dropped: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.severity == Severity::Dropped)
+            .collect();
+        assert_eq!(dropped.len(), 3, "{dropped:?}");
+        assert!(dropped[2].detail.starts_with(
+            "2 inserted components come from other Fusion designs that this .f3d doesn't \
+             contain; export the assembly as a Fusion Archive (.f3z) to bring them along."
+        ));
     }
 
     #[test]

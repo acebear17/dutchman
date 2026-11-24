@@ -67,6 +67,9 @@ pub(crate) fn repro_anonymous(
 
 /// The input file as the reports describe it.
 pub fn input(path: &Path) -> Value {
+    if crate::tool_library::is_library(path) {
+        return crate::tool_library::input(path);
+    }
     let format = Format::from_path(path);
     json!({
         "path": path.display().to_string(),
@@ -81,6 +84,11 @@ pub fn input(path: &Path) -> Value {
 /// A conversion's input capability, before its result.
 pub fn status_line(report: &Value) -> Option<String> {
     let input = report.get("input")?;
+    if crate::tool_library::is_report(report) {
+        return Some(crate::tool_library::status_text(
+            input.get("extension")?.as_str()?,
+        ));
+    }
     Some(format!(
         "{} .{}: {}",
         input.get("program")?.as_str()?,
@@ -397,6 +405,9 @@ pub fn error(schema: &str, input: Value, error: &Error) -> Value {
     );
     if let Some(fields) = report.get_mut("error").and_then(Value::as_object_mut) {
         fields.insert("kind".into(), json!(error.kind()));
+        if let Some(cause) = error.cause() {
+            fields.insert("cause".into(), json!(cause));
+        }
         if let Error::Checks { facts, .. } = error {
             fields.insert("findings".into(), json!(facts.findings));
             fields.insert("curve_kinds".into(), json!(facts.curve_kinds));
@@ -433,6 +444,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             .is_none_or(|counts| counts.unplaced_count() == 0)),
     );
     out.insert("input".to_owned(), input);
+    if let Some(version) = report.source_version() {
+        out.insert("source_version".to_owned(), json!(version));
+    }
     if let Some((requested, used)) = report.threads() {
         out.insert(
             "threads".to_owned(),
@@ -488,9 +502,14 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
         .completeness()
         .and_then(Completeness::unplaced_message)
     {
+        // Designs missing from the file are the larger cause: say so first.
+        let reason = match report.missing_links_message() {
+            Some(why) => format!("{why} {message}"),
+            None => message,
+        };
         out.insert(
             "verification".to_owned(),
-            json!({"status": "partial", "reason": message}),
+            json!({"status": "partial", "reason": reason}),
         );
     }
     if !report.joints().is_empty() {
@@ -532,6 +551,18 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
         "placements": completeness.placements(),
         "left_out": left_out,
     })
+}
+
+/// The sentence saying a Fusion `.f3d` places components inserted from designs it doesn't
+/// contain, when its completeness records them as left out.
+pub fn inserted_designs_message(report: &Value) -> Option<String> {
+    report
+        .pointer("/completeness/left_out")?
+        .as_array()?
+        .iter()
+        .filter_map(|cause| cause.get("reason")?.as_str())
+        .find(|reason| reason.contains(" from other Fusion designs that this .f3d doesn't contain"))
+        .map(str::to_owned)
 }
 
 /// Plain explanation shared by CLI and app results.
@@ -801,11 +832,17 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         "verification".to_owned(),
         json!({"status": status, "reason": reason}),
     );
-    out.insert(
-        "history".to_owned(),
-        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing,
-            "reapplied": reapplied, "features": features}),
-    );
+    let mut history = json!({"mapped": mapped, "total": total, "rebuilt": rebuilt,
+        "needing": needing, "reapplied": reapplied, "features": features});
+    // The first feature not converted: from it on, the design is one imported body.
+    if let (Mode::PartialHistory, Some(rest), Some(fields)) = (
+        outcome.mode,
+        dutchman_core::RestImported::of(&outcome.features),
+        history.as_object_mut(),
+    ) {
+        fields.insert("rest_imported_from".to_owned(), json!(rest.from));
+    }
+    out.insert("history".to_owned(), history);
     out
 }
 
@@ -1372,6 +1409,7 @@ pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport
     match result {
         Ok(report) => {
             json!({"schema": crate::onshape::SCHEMA, "ok": true, "output": report.output.display().to_string(),
+            "title": report.title,
             "microversion": report.microversion, "calls": report.calls, "cache_hits": report.cache_hits})
         }
         Err(error) => {
@@ -1437,21 +1475,21 @@ mod tests {
     #[test]
     fn installed_version_notices_are_pure_and_non_blocking() {
         for (found, status, notice) in [
-            (Some("0.47.0"), "newer", Some("SolidCraft 0.47 is newer than this Dutchman knows. Designs are written for 0.46 and open fine in 0.47.")),
+            (Some("0.49.0"), "newer", Some("SolidCraft 0.49 is newer than this Dutchman knows. Designs are written for 0.48 and open fine in 0.49.")),
             (Some("0.17.9"), "too_old", Some("SolidCraft 0.17 is too old to open Dutchman's designs. Install a newer SolidCraft to open them.")),
             (Some("0.18.1"), "current", None),
-            (Some("0.46.9"), "current", None),
+            (Some("0.48.9"), "current", None),
             (Some("0.24.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.24, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.25.1"), "older_loses_history", Some("Designs are written for SolidCraft 0.25, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.26.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.26, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.27.1"), "older_loses_history", Some("Designs are written for SolidCraft 0.27, the version you have. A newer SolidCraft keeps more of their history.")),
-            (Some("0.46.2"), "current", None),
+            (Some("0.48.0"), "current", None),
             (Some("0.18.2"), "older_loses_history", Some("Designs are written for SolidCraft 0.18, the version you have. A newer SolidCraft keeps more of their history.")),
             (None, "none_found", None),
         ] {
             let mut report = json!({"solidcraft": solidcraft_values(None, found.map(str::to_owned))});
             assert_eq!(report["solidcraft"]["status"], status);
-            assert_eq!(report["solidcraft"]["known_newest"], "0.46");
+            assert_eq!(report["solidcraft"]["known_newest"], "0.48");
             assert_eq!(solidcraft_notice(&report).as_deref(), notice);
             report["error"] = json!({"message": "conversion failed"});
             assert!(solidcraft_notice(&report).is_none());
@@ -1464,7 +1502,7 @@ mod tests {
     #[test]
     fn cli_version_lines_are_normalized_like_the_writer() {
         for (line, version) in [
-            ("solidcraft-cli 0.46.2", Some("0.46.2")),
+            ("solidcraft-cli 0.48.0", Some("0.48.0")),
             ("solidcraft-cli v0.26.0-beta", Some("0.26.0")),
             ("solidcraft-cli 0.25", Some("0.25.0")),
             ("not a version", None),
@@ -1486,7 +1524,7 @@ mod tests {
         conversion_choices(&mut report, Path::new("missing.ipt"), &options);
         assert_eq!(
             report["solidcraft"],
-            json!({"target": "0.25", "found": null, "known_newest": "0.46", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.48", "status": "none_found"})
         );
     }
 
@@ -1515,7 +1553,7 @@ mod tests {
         assert_eq!(writer.resolved_version(), target);
         assert_eq!(
             solidcraft_info(&options).unwrap(),
-            json!({"target": "0.25", "found": null, "known_newest": "0.46", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.48", "status": "none_found"})
         );
         assert!(options.reported_solidcraft_version().is_none());
         assert!(!dir.path().join("solidcraft-cli.spawned").exists());
@@ -1523,20 +1561,20 @@ mod tests {
 
     #[test]
     fn solidcraft_versions_report_target_found_and_absence() {
-        let target = "0.46.2".parse().unwrap();
+        let target = "0.48.0".parse().unwrap();
         for (found, line) in [
             (
                 Some("0.26.0".to_owned()),
-                "Target SolidCraft 0.46 (found 0.26.0)",
+                "Target SolidCraft 0.48 (found 0.26.0)",
             ),
             (
-                Some("0.46.1".to_owned()),
-                "Target SolidCraft 0.46 (found 0.46.1)",
+                Some("0.48.1".to_owned()),
+                "Target SolidCraft 0.48 (found 0.48.1)",
             ),
-            (None, "Target SolidCraft 0.46 (none found)"),
+            (None, "Target SolidCraft 0.48 (none found)"),
         ] {
             let report = json!({"solidcraft": solidcraft_values(Some(target), found.clone())});
-            assert_eq!(report["solidcraft"]["target"], "0.46");
+            assert_eq!(report["solidcraft"]["target"], "0.48");
             assert_eq!(report["solidcraft"]["found"], json!(found));
             assert_eq!(solidcraft_line(&report).as_deref(), Some(line));
             let mut refused = report.clone();
@@ -1547,7 +1585,7 @@ mod tests {
             solidcraft_values(None, Some("0.26.0".into()))["target"],
             "0.26"
         );
-        assert_eq!(solidcraft_values(None, None)["target"], "0.46");
+        assert_eq!(solidcraft_values(None, None)["target"], "0.48");
         for to in [
             crate::OutputFormat::Freecad,
             crate::OutputFormat::Fcstd,
@@ -1720,6 +1758,35 @@ mod tests {
     }
 
     #[test]
+    fn missing_inserted_designs_lead_the_report_and_every_summary() {
+        let mut source = Report::default();
+        source.set_completeness(Completeness {
+            placed: 1,
+            unplaced: [("Panel".into(), 1)].into(),
+            ..Completeness::default()
+        });
+        source.record_missing_inserted_designs(&["Washer".into(), "Nut".into()]);
+        let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3d"}), &source));
+        let sentence = "2 inserted components come from other Fusion designs that this .f3d \
+                        doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
+                        bring them along.";
+        assert!(report["verification"]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with(sentence));
+        assert_eq!(report["completeness"]["left_out"][0]["reason"], sentence);
+        assert!(completeness_lines(&report)
+            .iter()
+            .any(|line| line.contains(sentence)));
+        assert!(crate::present::incomplete(&report));
+        let view = crate::present::FileView::from_report(&report);
+        assert_eq!(view.status_word, "Incomplete");
+        assert!(view
+            .outcome
+            .contains("export the assembly as a Fusion Archive (.f3z)"));
+    }
+
+    #[test]
     fn unproven_positions_make_reports_partial_and_summaries_plain() {
         let mut source = Report::default();
         source.set_completeness(Completeness {
@@ -1880,6 +1947,29 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_history_names_the_first_feature_not_converted() {
+        let mut blocked = feature("hole", FeatureStatus::Blocked);
+        blocked.name = Some("Hole 1".to_owned());
+        let rows = vec![feature("sketch", FeatureStatus::Mapped), blocked];
+        let history = |mode| {
+            let fields = outcome_fields(&Outcome {
+                mode,
+                check: Check::Partial("x".to_owned()),
+                features: rows.clone(),
+            });
+            Value::Object(fields)
+        };
+        assert_eq!(
+            history(Mode::PartialHistory).pointer("/history/rest_imported_from"),
+            Some(&json!("Hole 1"))
+        );
+        assert_eq!(
+            history(Mode::History).pointer("/history/rest_imported_from"),
+            None
+        );
+    }
+
+    #[test]
     fn a_note_is_cut_at_its_first_sentence() {
         let long = "the document carries no declaration, so nothing was verified. The document \
                     is read on the residual path. Agreement is consistency.";
@@ -1954,6 +2044,16 @@ mod tests {
                 {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0, "rebuilt": 0, "needing": 0, "reapplied": 0},
             ])
         );
+    }
+
+    #[test]
+    fn source_version_is_reported_only_when_the_file_records_it() {
+        let mut report = Report::default();
+        let none = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(none.get("source_version").is_none());
+        report.record_source_version("25.2.1".to_owned());
+        let some = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(some["source_version"], "25.2.1");
     }
 
     #[test]

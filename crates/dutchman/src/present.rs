@@ -99,6 +99,13 @@ pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
     "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
 
+/// The third card's note for a Fusion tool library.
+pub const SEND_TOOLS_STEP_NOTE: &str =
+    "The other export of the same library lets us check every tool's sizes.";
+
+/// The panel's intro for a Fusion tool library.
+pub const SEND_TOOLS_INTRO: &str = "If tools are missing or their sizes are wrong, help us fix it:";
+
 pub const REPORT_HELP: &str = "Opens a prefilled GitHub issue under your GitHub username.";
 pub const MISSING_HELP: &str =
     "Choose the folder that holds them, or one of them, to convert this file again \
@@ -130,12 +137,12 @@ pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
 }
 
 /// The secondary way to report a failed file: nothing of the file, no names.
-pub const REPORT_BUTTON: &str = "GitHub issue";
+pub const REPORT_BUTTON: &str = "File a GitHub issue ↗";
 /// The folded section of a failed card that holds the other ways to send the file.
 pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =
     "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:";
-pub const SEND_JOIN_TITLE: &str = "Join our Discord server";
+pub const SEND_JOIN_TITLE: &str = "Join our Discord";
 pub const SEND_JOIN_BUTTON: &str = "Open invite";
 pub const SEND_JOIN_NOTE: &str = "Already in? Skip this step.";
 pub const SEND_DM_TITLE: &str = "DM Dutchy";
@@ -164,6 +171,10 @@ pub struct SendSteps {
     pub drag: bool,
     /// Whether to ask for a STEP export too.
     pub step_card: bool,
+    /// The third card's title and note: a STEP export of the design, or for a Fusion tool library
+    /// the same library exported the other way.
+    pub step_title: String,
+    pub step_note: Option<&'static str>,
 }
 
 impl SendSteps {
@@ -177,6 +188,10 @@ impl SendSteps {
         let dm_text = match (drag, surface) {
             (true, Surface::Desktop) => "Drag the file in (its folder is open).".to_owned(),
             (true, Surface::Web) => "Drag the file in (the file you picked).".to_owned(),
+            (false, _) if crate::tool_library::is_report(report) => format!(
+                "Paste the message. Dutchy replies with a private upload link for the tool library ({} hours).",
+                policy.private_link.hours
+            ),
             (false, _) => format!(
                 "Paste the message. Dutchy replies with a private upload link (up to {}).",
                 policy.link_limits()
@@ -184,13 +199,21 @@ impl SendSteps {
         };
         Self {
             dm_text,
-            intro: if report.get("ok").and_then(Value::as_bool) == Some(true) {
+            intro: if crate::tool_library::is_report(report) {
+                SEND_TOOLS_INTRO
+            } else if report.get("ok").and_then(Value::as_bool) == Some(true) {
                 SEND_CONVERTED_INTRO
             } else {
                 SEND_INTRO
             },
             drag,
             step_card: !source_is_step(report),
+            step_title: if crate::tool_library::is_report(report) {
+                crate::tool_library::other_export_title(report)
+            } else {
+                SEND_STEP_TITLE.to_owned()
+            },
+            step_note: crate::tool_library::is_report(report).then_some(SEND_TOOLS_STEP_NOTE),
         }
     }
 }
@@ -301,6 +324,19 @@ impl FileView {
             Status::Failed => ("Failed", 0),
             Status::Incomplete => ("Incomplete", 0),
             Status::Flattened => ("Converted, no history", 1),
+            Status::Converted | Status::ConvertedWithLosses
+                if report.is_some_and(crate::tool_library::is_report) =>
+            {
+                let left = report
+                    .and_then(|r| r.pointer("/tools/not_written"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                if left == 0 {
+                    ("Converted", 2)
+                } else {
+                    ("Converted, some tools left out", 1)
+                }
+            }
             Status::Converted | Status::ConvertedWithLosses => {
                 let word = match report.and_then(|r| r.get("mode")).and_then(Value::as_str) {
                     Some("partial_history") => "Partly converted",
@@ -580,7 +616,13 @@ pub fn missing_summary(missing: &[String]) -> String {
 
 /// What was written, in a sentence.
 pub fn outcome(report: &Value) -> String {
+    if crate::tool_library::is_report(report) {
+        return crate::tool_library::outcome(report);
+    }
     let mut text = outcome_without_memory_note(report);
+    if let Some(message) = json::inserted_designs_message(report) {
+        text.push_str(&format!(" {message}"));
+    }
     if let Some(message) = json::unplaced_message(report) {
         text.push_str(&format!(" {message}"));
     }
@@ -765,6 +807,27 @@ fn identity_note(report: &Value) -> Option<String> {
     }
 }
 
+/// Where the editable features of a partial history end and the imported body begins, from the
+/// report's feature rows.
+fn rest_imported(report: &Value) -> Option<dutchman_core::RestImported> {
+    use dutchman_core::FeatureStatus;
+    let rows = report.pointer("/history/features")?.as_array()?;
+    dutchman_core::RestImported::find(rows.iter().filter_map(|row| {
+        let status = match row.get("status")?.as_str()? {
+            "mapped" => FeatureStatus::Mapped,
+            "not_needed" => FeatureStatus::NotNeeded,
+            "left_out" => FeatureStatus::LeftOut,
+            "blocked" => FeatureStatus::Blocked,
+            _ => return None,
+        };
+        Some((
+            status,
+            row.get("name").and_then(Value::as_str),
+            row.get("reason").and_then(Value::as_str),
+        ))
+    }))
+}
+
 fn outcome_without_memory_note(report: &Value) -> String {
     let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
     // Features kept but re-applied to a base body as the design ends are not rebuilt.
@@ -789,12 +852,13 @@ fn outcome_without_memory_note(report: &Value) -> String {
         count("/history/needing", "/history/total"),
     );
     match field("/mode") {
-        Some("partial_history") => match counts {
-            (Some(m), Some(t)) => format!(
-                "Partial editable history, {}; imported final shape visible.",
+        Some("partial_history") => match (rest_imported(report), counts) {
+            (Some(rest), _) => rest.sentence(),
+            (None, (Some(m), Some(t))) => format!(
+                "Partial editable history, {}; the rest is one imported body.",
                 history(m, t)
             ),
-            _ => "Partial editable history; imported final shape visible.".to_owned(),
+            _ => "Partial editable history; the rest is one imported body.".to_owned(),
         },
         Some("history") => {
             let check = match (field("/verification/status"), field("/verification/reason")) {
@@ -914,13 +978,31 @@ mod tests {
             {"name": "part.f3d: Extrude 1", "kind": "extrude", "status": "mapped", "reapplied": true}
         ]}});
         let text = outcome(&report);
-        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; imported final shape visible."), "{text}");
+        assert!(text.starts_with("Partial editable history, 43 of 235 features rebuilt, 76 kept and re-applied to the final body; the rest is one imported body."), "{text}");
         assert!(text.ends_with("Base Feature 1 holds the body as the design ends. The features after it are kept but re-apply to that body, so editing them may not change the shape."), "{text}");
         let plain = serde_json::json!({"ok": true, "mode": "partial_history",
             "history": {"rebuilt": 3, "needing": 4, "reapplied": 0, "features": []}});
         assert_eq!(
             outcome(&plain),
-            "Partial editable history, 3 of 4 features rebuilt; imported final shape visible."
+            "Partial editable history, 3 of 4 features rebuilt; the rest is one imported body."
+        );
+    }
+
+    #[test]
+    fn the_card_says_which_features_are_editable_and_where_the_imported_body_starts() {
+        let report = serde_json::json!({"ok": true, "mode": "partial_history",
+        "history": {"rebuilt": 2, "needing": 4, "rest_imported_from": "Hole 1", "features": [
+            {"name": "Sketch 1", "kind": "sketch", "status": "mapped"},
+            {"name": "Extrude 1", "kind": "extrude", "status": "mapped"},
+            {"name": "Hole 1", "kind": "hole", "status": "blocked",
+                "reason": "its entry is not resolved"},
+            {"name": "Hole 2", "kind": "hole", "status": "blocked",
+                "reason": "after the first blocking feature"}
+        ]}});
+        assert_eq!(
+            outcome(&report),
+            "Features 1\u{2013}2 are editable; from Hole 1 on, the part is one imported body. \
+             Hole 1: its entry is not resolved."
         );
     }
 

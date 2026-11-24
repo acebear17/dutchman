@@ -138,10 +138,12 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 
 FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
+Fusion tool libraries (`.tools`, `.json`) also convert to CamCraft's `.camtools` (`dutchman library.tools`): tool geometry, holder and cutting data, with every tool and field CamCraft has no place for named in the report. See docs/camcraft-tools.md.
+
 Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-Designs open in SolidCraft 0.18.2 to 0.46; 0.46 is the newest known target.
+Designs open in SolidCraft 0.18.2 to 0.48; 0.48 is the newest known target.
 
 A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
@@ -154,9 +156,9 @@ or please send a file that converts wrong, with a STEP export of the exact same 
 [Discord](https://discord.gg/yTcseBEdeu). Send only designs you have the right to send; we keep them private and use them only to fix the converter.
 
 The desktop app always shows **Is there a problem? Is something missing?** at the bottom left:
-join the Discord server, then DM Dutchy. The secondary pills
-**Anonymous report** and **GitHub issue** sit directly below the three steps, and also appear
-under **More**. The anonymous report review shows
+join the Discord server, then DM Dutchy. The secondary buttons
+**File a GitHub issue ↗** and, last, **Review and send report** sit directly below the three steps. The
+anonymous report review shows
 exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
 The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support
 converted-file summaries. See [Reporting a problem](docs/guide.md#report-consent).
@@ -222,6 +224,7 @@ For other clients:
 **Formats and results**
 
 - [Formats](docs/formats.md): how each format is recognised and what converts.
+- [Fusion tool libraries to CamCraft](docs/camcraft-tools.md): `.tools` and `.json` libraries to `.camtools`, field by field.
 - [Fusion](docs/fusion.md), [Inventor](docs/inventor.md), [SolidWorks](docs/sldprt.md), and [FreeCAD](docs/freecad.md): what converts from each program today, and what stands in the way.
 - [Feature history](docs/history.md): what maps onto SolidCraft, how it is checked, and partial history.
 - [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files and report what broke, without sharing a file.

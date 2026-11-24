@@ -27,6 +27,9 @@ An unreadable sketch point no longer discards otherwise readable design history.
 component occurrence frames and inserted-component placements resolve, and construction-plane
 mirrors read their selected work plane. Known simple and clearance hole forms no longer
 report an assumed diameter; tapped holes still report how their stored bore is interpreted.
+A Fusion coordinate system that cadmpeg keeps only as construction references builds no geometry,
+so the history continues past it; a later feature that needs its placement is refused with a reason
+that names it.
 
 Bodies now follow the component that stored them, and component placements read from saved
 local occurrence paths, so more designs open as placed parts with their own history. A local
@@ -186,6 +189,8 @@ including countersunk entries. Fusion measures Extents To to the cylindrical sho
 the conical point extends beyond the selected face. Dutchman resolves that distance
 along the drilling direction and keeps the countersink at the entry. Unresolved,
 offset, tilted, or unproven terminating faces retain a specific history blocker.
+A terminating face with arcs, circles or inner loops in its outline is mapped when SolidCraft's
+replay before the hole contains exactly that face.
 Later features rebuild when the hole maps. A refused hole still stops body-building
 history; independently resolved reference sketches remain available.
 
@@ -311,6 +316,13 @@ visible final-shape Import receives its own names and colours. Names remain dist
 from those of the editable copy.
 When a partial history is kept hidden, appearance losses refer to the visible final
 shape rather than to final bodies absent from that partial copy.
+A hidden editable-history copy builds no body of its own: its body-building features are
+written suppressed and only its sketches stay live. The visible final-shape Import is the
+part, so a STEP export, a render, a body count or a mass measure of the design sees each
+part once. To edit the history, unsuppress its features in the timeline and suppress or
+hide the final-shape Import while you work. The conversion check in
+`scripts/written-design-compare.py` fails when any hidden editable-history copy holds a
+body, and names the part it would duplicate.
 The look keeps the resolved colour, opacity, and appearance name; it does not infer a
 physical material from a visual preset.
 
@@ -338,11 +350,27 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
+## Sketch text
+
+Fusion sketch text maps to SolidCraft sketch text, and SolidCraft sets the letters. The words,
+font, bold, baseline start, angle, height and the horizontal (left, centre, right) and vertical
+(top, middle, bottom) alignment are kept. Width scaling, a medium weight, and top or bottom
+anchoring (which can sit differently in SolidCraft's font box) are reported as degraded notes.
+A text with no stored placement, such as one laid out along a curve, is left out of its sketch
+with a degraded note, and the rest of the sketch maps.
+
 ## Sketches without a timeline row
 
 Fusion keeps some sketches with no Sketch step in the timeline; cadmpeg then lists the sketch
 alone. A feature whose profile uses such a sketch gets it written just before itself, so the
 feature finds it; any other such sketch is kept for reference after the timeline, as before.
+
+## A design whose timeline did not decode
+
+A design that carries no feature history converts as an import, and the report says "the design
+carries no feature history". When the file does hold a timeline but cadmpeg could not decode it (for
+example a sheet-metal settings record it found invalid), the report says so instead: the feature
+timeline is in the file, but cadmpeg could not decode it, followed by what it could not read.
 
 ## Trimmed and unresolved profile regions
 
@@ -554,6 +582,11 @@ transform, and each component as a product definition.
   holds it. Its geometry is still converted and can be shown again in SolidCraft. In a part with
   shown and hidden bodies, the hidden ones are written marked hidden: SolidCraft 0.42 and newer
   open them hidden, older releases show the part whole.
+- **Suppressed components** (an occurrence the source itself marks suppressed, as in Inventor
+  and Solid Edge assemblies) are placed hidden at their position, the same way; they stay in
+  the design and its part list, and an Info `suppressed components` note names them. A
+  component a Fusion insertion does not hold (the suppression Fusion uses to select a stored
+  layout) is left out as before.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part. Offsets apply to the second connector:
@@ -671,6 +704,21 @@ additional relations are reported and their solved geometry is retained. An unre
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
 
+## A .f3d whose inserted designs are missing
+
+A Fusion assembly saved as one `.f3d` can hold components inserted from other Fusion designs. The
+`.f3d` keeps the placements but not those designs, so only its own parts convert. cadmpeg states
+each such insertion's prototype as unresolved (`f3d/assembly.component-insert-container-assumed`,
+`f3d/feature.component-insert-membership-assumed`). Dutchman reports one Dropped loss per missing
+design (subject `inserted design <name>`) and one summary (subject `linked components`):
+
+> N inserted components come from other Fusion designs that this .f3d doesn't contain; export the
+> assembly as a Fusion Archive (.f3z) to bring them along.
+
+The summary is also the `completeness.left_out` reason, the status line of the command line and the
+app, and the plugin's `missing_parts` reason. The design is never marked verified. In Fusion, use
+File > Export > Fusion Archive (`.f3z`), which carries the inserted designs inside it.
+
 ## Hidden parts with `--import-only`
 
 `--import-only` (stored geometry only) keeps every part the design hides, hidden as in the
@@ -700,6 +748,11 @@ this fallback: replacing them would discard earlier body history. No geometry is
 reconstructed from an unavailable sketch. The feature is `mapped`, written as an Import, and
 `history/body-fallback-imported` reports the lost recipe as Degraded. Later features
 and verification use the imported body as usual.
+When a later feature changes that final-model body (a fillet, a moved face) and the source keeps no
+history body for the feature, the feature is refused: the source stores the body only as the design
+ends, so neither a stored result nor a profile read from the faces of that body can be proven. The
+reason keeps the original refusal first, says the source states no sketch for the profile, and names
+the later feature that changes the body.
 
 Fusion thread construction records carry a designation, nominal-size text, profile/type,
 physical pitch, and, in extended records, class and hand controls. The pinned codec projects

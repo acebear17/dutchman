@@ -69,7 +69,8 @@ attachments at concave edges. The plate must still be rectangular, square to the
 its entire selected edge, share its thickness, and start at the bend end or the outer face.
 Height is measured from the outer face; bend radius comes from the paired bend. The writer
 uses the existing `sheet_flange` feature with `edges`, `height`, `angle: "90 deg"`, `radius`,
-and `position: "inside"`; no new version gate or command inputs are needed.
+and `position: "inside"`; a plate attached along several equal, parallel edges on one face lists
+all of them in `edges`; no new version gate or command inputs are needed.
 
 The attachment proof refuses curved, open, crossing, disconnected, or collinear base edges,
 base profiles with holes or partial regions, and bases changed by earlier solid features.
@@ -122,6 +123,8 @@ maps (see the parts table above for what blocks Inventor history today):
   are taken from the sub-assembly files instead.
 - Left out and reported as Dropped: parts or sub-assemblies that cannot be found or read,
   scaled placements, and occurrences whose part is not a separate file.
+- Suppressed occurrences are placed hidden at their position, not dropped; an Info
+  `suppressed components` note names them.
 - Upstream: cadmpeg leaves local prototypes untransferred. CADIR version 7 (cadmpeg 0.6.3) can
   carry assembly joints, but the Inventor codec does not read them yet.
 
