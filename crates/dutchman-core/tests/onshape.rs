@@ -170,13 +170,22 @@ fn custom_features_name_the_missing_frozen_shape_even_with_rollback_details() {
             .skip(ordinal + 1)
             .filter_map(|f| f["name"].as_str())
             .collect();
-        let losses: Vec<_> = unsupported.iter().filter(|l| l.subject == name).collect();
+        // The codec ends each detail with the feature it names.
+        let suffix = format!("; subject: {name}");
+        let losses: Vec<_> = unsupported
+            .iter()
+            .filter(|l| l.detail.ends_with(&suffix))
+            .collect();
         assert_eq!(losses.len(), 1, "{unsupported:?}");
-        for other in unsupported.iter().filter(|l| l.subject != name) {
-            assert!(later.contains(&other.subject.as_str()), "{other:?}");
+        for other in unsupported.iter().filter(|l| !l.detail.ends_with(&suffix)) {
+            assert!(
+                later
+                    .iter()
+                    .any(|name| other.detail.ends_with(&format!("; subject: {name}"))),
+                "{other:?}"
+            );
         }
         let loss = losses[0];
-        assert_eq!(loss.subject, name);
         assert_eq!(loss.severity, Severity::Degraded);
         let reason = format!(
             "custom FeatureScript feature {name} is not supported yet: bundle format 1 \
@@ -184,7 +193,7 @@ fn custom_features_name_the_missing_frozen_shape_even_with_rollback_details() {
         );
         assert_eq!(
             loss.detail,
-            format!("{reason}; kept the final STEP geometry")
+            format!("{reason}; kept the final STEP geometry{suffix}")
         );
         assert!(feature["definition"]["value"]["value"]["kind"]
             .as_str()
@@ -203,7 +212,9 @@ fn custom_feature_stop_uses_its_id_when_the_name_is_absent() {
         }
     });
     let (_, report) = read(&bytes).unwrap();
-    assert!(report.losses().iter().any(|l| l.subject == "Custom feature"
+    assert!(report.losses().iter().any(|l| l
+        .detail
+        .ends_with("; subject: Custom feature")
         && l.detail
             .contains("custom FeatureScript feature Custom feature")));
 }
@@ -366,34 +377,47 @@ fn wrong_magic_schema_and_microversion_are_refused() {
 }
 
 #[test]
-fn consistency_flag_refuses_mixed_snapshots_and_preserves_legacy_v1() {
+fn consistency_flag_reports_mixed_snapshots_and_preserves_legacy_v1() {
     // The checked-in v1 fixtures predate the optional consistency/provenance fields.
     let legacy = fixture("revolve");
-    let (original, _) = read(&legacy).unwrap();
+    let (mut original, _) = read(&legacy).unwrap();
     let consistent = changed(&legacy, |path, value| {
         if path == "manifest.json" {
             value["consistent"] = json!(true);
         }
     });
-    let (current, _) = read(&consistent).unwrap();
+    let (mut current, _) = read(&consistent).unwrap();
+    // The codec keeps each source member as an asset; the edit rewrote the manifest bytes.
+    original.ir.model.assets.clear();
+    current.ir.model.assets.clear();
     assert_eq!(current.ir, original.ir);
     assert_eq!(current.source_step, original.source_step);
 
+    // Each response is admitted against its own pinned microversion, so an inconsistent bundle
+    // keeps what it can read and reports the rest.
     let inconsistent = changed(&legacy, |path, value| {
         if path == "manifest.json" {
             value["consistent"] = json!(false);
         }
-        // This must be refused before trying to decode construction history.
         if path.ends_with("features.json") {
             value["features"] = Value::Null;
         }
     });
-    let reason = read(&inconsistent).unwrap_err().to_string();
-    assert!(reason.contains("marked inconsistent"), "{reason}");
-    assert!(
-        reason.contains("fetch it again, or use a version link"),
-        "{reason}"
+    let (model, report) = read(&inconsistent).unwrap();
+    assert!(model.ir.model.features.is_empty());
+    assert_eq!(
+        model.ir.geometry.bodies.len(),
+        original.ir.geometry.bodies.len()
     );
+    for code in ["onshape/history.not-supported", "onshape/record.malformed"] {
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some(code)),
+            "{code}"
+        );
+    }
     for flag in [Value::Null, json!("false"), json!(0)] {
         let malformed = changed(&legacy, |path, value| {
             if path == "manifest.json" {
@@ -1362,15 +1386,22 @@ fn elliptical_curves_with_unresolved_axes_or_bounds_leave_a_named_loss() {
                 .push(curve);
         });
         let (model, report) = read(&bytes).unwrap();
-        assert_eq!(kinds(&model)[0], "native");
+        // One unresolved curve is a loss of that curve, not of the sketch.
+        assert_eq!(kinds(&model)[0], "sketch");
         assert!(report
             .losses()
             .iter()
-            .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
-        assert!(timeline(&model)["model"]["sketch_entities"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+            .any(|l| l.code.as_deref() == Some("onshape/sketch.geometry-not-supported")));
+        let wire = timeline(&model);
+        let entities = wire["model"]["sketch_entities"].as_array().unwrap();
+        assert_eq!(
+            entities
+                .iter()
+                .filter(|e| e["geometry"]["kind"] == "line")
+                .count(),
+            4
+        );
+        assert!(entities.iter().any(|e| e["geometry"]["kind"] == "native"));
         assert!(model.source_step.is_some());
     }
 }
