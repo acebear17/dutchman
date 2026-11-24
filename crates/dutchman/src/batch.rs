@@ -1514,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_cycles() {
+    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_one_member_of_a_cycle() {
         let dir = tempfile::tempdir().unwrap();
         for name in [
             "root.iam",
@@ -1550,12 +1550,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            BTreeSet::from([
-                "root.iam".into(),
-                "unused.ipt".into(),
-                "cyclea.iam".into(),
-                "cycleb.iam".into()
-            ])
+            BTreeSet::from(["root.iam".into(), "unused.ipt".into(), "cyclea.iam".into()])
         );
     }
 
@@ -1759,11 +1754,12 @@ mod tests {
         }
         let planned = plan(std::slice::from_ref(&export), &dir.path().join("out"));
         assert!(planned.problems.is_empty(), "{:?}", planned.problems);
-        // The screw and the plate are placed inside the assemblies that insert them; the
-        // rebuilt archive stands for its design's .f3d; the unreferenced design converts.
+        // The placeholder .f3d files cannot be read, so nothing is placed inside them and each
+        // stays a result of its own; the rebuilt archive stands for its design's .f3d and
+        // carries the screw its manifest entry lists.
         assert_eq!(
             converted_names(&planned),
-            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d"]
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
         );
     }
 
@@ -1781,7 +1777,7 @@ mod tests {
         assert!(planned.problems.is_empty(), "{:?}", planned.problems);
         assert_eq!(
             converted_names(&planned),
-            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d"]
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d", "Plate v1.f3d"]
         );
     }
 
