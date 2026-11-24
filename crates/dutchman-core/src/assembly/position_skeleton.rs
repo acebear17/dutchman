@@ -64,15 +64,14 @@ impl<'a> Skeleton<'a> {
         let occurrences: Vec<_> = rows.iter().collect();
         let worlds: BTreeMap<&str, Placement3x4> =
             positions.iter().map(|(id, p)| (id.as_str(), *p)).collect();
-        let (joints, _) = joints(
+        let arena = |name: &str| {
             document
-                .pointer("/model/assembly_joints")
+                .pointer(&format!("/model/{name}"))
                 .and_then(Value::as_array)
-                .map_or(&[][..], Vec::as_slice),
-            &paths,
-            &worlds,
-            &inserted_designs(&occurrences),
-        );
+                .map_or(&[][..], Vec::as_slice)
+        };
+        let ordered = joints_in_timeline_order(arena("assembly_joints"), arena("features"));
+        let (joints, _) = joints(&ordered, &paths, &worlds, &inserted_designs(&occurrences));
         assembly.joints = joints;
         assembly.held = rows
             .iter()

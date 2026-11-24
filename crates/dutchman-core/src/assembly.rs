@@ -993,7 +993,8 @@ fn local_components_in_document(
     let mut identities = std::mem::take(&mut tree.part_identities);
     let worlds = world_placements(&occurrences)?;
     let inserted = inserted_designs(&occurrences);
-    let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
+    let ordered = joints_in_timeline_order(arena("assembly_joints"), arena("features"));
+    let (joints, mut left_out) = joints(&ordered, &tree.paths, &worlds, &inserted);
 
     let own_part = if !loose.is_empty() {
         parts.push(tree.sliced(Slice::Loose, &loose, model.name.clone())?);
@@ -2186,11 +2187,75 @@ fn world_placements<'a>(
     Ok(out)
 }
 
+/// The joint rows in the order Fusion solved them. cadmpeg writes the joint arena in id
+/// order, and a joint id is its stream and record index, not its place in the timeline. Each
+/// joint is bound to a feature whose operation is `assembly_joint` naming it; that feature's
+/// `ordinal` is the joint's place. A rigid group binds only its first joint, and its other
+/// joints (ids ending in `m<N>`) follow it, by N. Joints no feature names come after those,
+/// by id.
+pub(crate) fn joints_in_timeline_order<'a>(
+    joints: &'a [Value],
+    features: &[Value],
+) -> Vec<&'a Value> {
+    let mut ordinals: BTreeMap<&str, u64> = BTreeMap::new();
+    for feature in features {
+        if feature
+            .pointer("/definition/value/kind")
+            .and_then(Value::as_str)
+            != Some("assembly_joint")
+        {
+            continue;
+        }
+        let (Some(joint), Some(ordinal)) = (
+            feature
+                .pointer("/definition/value/value/joint")
+                .and_then(Value::as_str),
+            feature.get("ordinal").and_then(Value::as_u64),
+        ) else {
+            continue;
+        };
+        let entry = ordinals.entry(joint).or_insert(ordinal);
+        *entry = (*entry).min(ordinal);
+    }
+    let key = |row: &Value| {
+        let id = row.get("id").and_then(Value::as_str).unwrap_or("");
+        let (place, member) = match ordinals.get(id) {
+            Some(&ordinal) => (ordinal, 0),
+            None => match group_member(id) {
+                Some((first, member)) => match ordinals.get(first) {
+                    Some(&ordinal) => (ordinal, member),
+                    None => (u64::MAX, 0),
+                },
+                None => (u64::MAX, 0),
+            },
+        };
+        (place, member, id.to_owned())
+    };
+    let mut ordered: Vec<&Value> = joints.iter().collect();
+    ordered.sort_by_cached_key(|row| key(row));
+    ordered
+}
+
+/// A rigid-group member joint's id as its group's first joint's id and its member number.
+/// Both end `#<length>:<stream><record index>`, the member's with `m<N>` after; the length
+/// is the stream's, so a stream that ends in `m` is not mistaken for the marker.
+fn group_member(id: &str) -> Option<(&str, u64)> {
+    let (_, tail) = id.rsplit_once('#')?;
+    let (length, rest) = tail.split_once(':')?;
+    let after_stream = rest.get(length.parse::<usize>().ok()?..)?;
+    let (index, member) = after_stream.split_once('m')?;
+    if index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let number = member.parse::<u64>().ok()?;
+    Some((&id[..id.len() - member.len() - 1], number))
+}
+
 /// The joints that can be written between placed parts, and a note for each that cannot.
 /// `paths` gives where each occurrence is placed; `worlds`, its placement in the world as
 /// cadmpeg stores it.
 fn joints(
-    rows: &[Value],
+    rows: &[&Value],
     paths: &BTreeMap<&str, Located>,
     worlds: &BTreeMap<&str, Placement3x4>,
     inserted: &BTreeMap<&str, &str>,
@@ -5638,6 +5703,146 @@ mod tests {
             ir: crate::test_products::read(&wire),
             ..model
         }
+    }
+
+    /// The model with a feature at each ordinal naming the joint with that key, as cadmpeg
+    /// binds a joint to the timeline step that made it.
+    fn with_joint_features(model: Model, bound: &[(u64, &str)]) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let features = wire["model"]["features"].as_array_mut().unwrap();
+        for (ordinal, joint) in bound {
+            features.push(json!({
+                "id": format!("f3d:model:feature#joint{ordinal}"), "ordinal": ordinal,
+                "suppressed": false,
+                "definition": {"kind": "operation", "value": {"kind": "assembly_joint", "value": {"joint": joint}}},
+                "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [],
+            }));
+        }
+        Model {
+            ir: crate::test_products::read(&wire),
+            ..model
+        }
+    }
+
+    fn ids(rows: &[&Value]) -> Vec<String> {
+        rows.iter()
+            .map(|row| {
+                row["id"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit_once('#')
+                    .unwrap()
+                    .1
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn joints_solve_in_timeline_order_not_id_order() {
+        let rows = |model: Model| {
+            with_joints(
+                model,
+                json!([
+                    joint(
+                        1,
+                        json!({"kind": "fixed"}),
+                        connector(None),
+                        connector_at(1, &[], facing(IDENTITY))
+                    ),
+                    joint(
+                        2,
+                        json!({"kind": "fixed"}),
+                        connector(None),
+                        connector_at(2, &[], facing(IDENTITY))
+                    ),
+                    joint(
+                        3,
+                        json!({"kind": "fixed"}),
+                        connector(None),
+                        connector_at(3, &[], facing(IDENTITY))
+                    ),
+                ]),
+            )
+        };
+        let base = || {
+            nested(
+                false,
+                Some(json!([
+                    placed(0, "frame", root(), 0.0),
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", inside(0), 9.0),
+                    placed(3, "block", root(), 0.0),
+                ])),
+            )
+        };
+        let by_id = local_components(&rows(base())).unwrap().unwrap().0;
+        let timeline = with_joint_features(
+            rows(base()),
+            &[
+                (1, "f3d:model:joint#3"),
+                (2, "f3d:model:joint#2"),
+                (3, "f3d:model:joint#1"),
+            ],
+        );
+        let by_time = local_components(&timeline).unwrap().unwrap().0;
+        let held: Vec<_> = by_id.joints.iter().map(|j| j.b.clone()).collect();
+        let mut expected = held.clone();
+        expected.reverse();
+        assert_eq!(held.len(), 3);
+        assert_eq!(
+            by_time
+                .joints
+                .iter()
+                .map(|j| j.b.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn rigid_group_members_follow_the_first_joint_by_member_number() {
+        let rows: Vec<Value> = [
+            "f3d:model:joint#3:abc1",
+            "f3d:model:joint#3:abc3",
+            "f3d:model:joint#3:abc7",
+            "f3d:model:joint#3:abc7m10",
+            "f3d:model:joint#3:abc7m2",
+            "f3d:model:joint#3:abc9",
+            "f3d:model:joint#4:foom5",
+        ]
+        .iter()
+        .map(|id| json!({ "id": id }))
+        .collect();
+        let feature = |ordinal: u64, joint: &str| {
+            json!({"id": format!("f#{ordinal}"), "ordinal": ordinal,
+                "definition": {"kind": "operation", "value": {"kind": "assembly_joint", "value": {"joint": joint}}}})
+        };
+        let features = [
+            feature(5, "f3d:model:joint#3:abc7"),
+            feature(3, "f3d:model:joint#3:abc3"),
+            feature(1, "f3d:model:joint#4:foom5"),
+            json!({"id": "f#9", "ordinal": 0,
+                "definition": {"kind": "operation", "value": {"kind": "native", "value": {}}}}),
+        ];
+        let ordered = joints_in_timeline_order(&rows, &features);
+        assert_eq!(
+            ids(&ordered),
+            [
+                "4:foom5",
+                "3:abc3",
+                "3:abc7",
+                "3:abc7m2",
+                "3:abc7m10",
+                "3:abc1",
+                "3:abc9"
+            ]
+        );
+        // With no features at all, the joints keep their id order.
+        let plain = joints_in_timeline_order(&rows, &[]);
+        let mut sorted = ids(&plain);
+        sorted.sort();
+        assert_eq!(ids(&plain), sorted);
     }
 
     /// One side of a joint: the design's root, or an occurrence (with nested occurrence keys).
