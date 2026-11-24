@@ -552,8 +552,7 @@ mod tests {
 
     #[test]
     fn find_reads_the_home_folder_only() {
-        assert!(cad_export_dir()
-            .is_none_or(|d| d.ends_with(".cad-export")));
+        assert!(cad_export_dir().is_none_or(|d| d.ends_with(".cad-export")));
     }
 
     #[cfg(unix)]

@@ -809,10 +809,7 @@ fn the_heartbeat_rule_never_takes_a_stale_heartbeat_alone_as_gone() {
         agent::liveness(&agent(None, None), now, &|_| true),
         Liveness::Gone
     );
-    assert_eq!(
-        agent::parse_time("1970-01-02T00:00:00+00:00"),
-        Some(86_400)
-    );
+    assert_eq!(agent::parse_time("1970-01-02T00:00:00+00:00"), Some(86_400));
     assert_eq!(agent::parse_time("1970-01-01T01:00:00+01:00"), Some(0));
     assert_eq!(
         agent::parse_time("2026-11-23T09:30:11.004000+00:00"),
@@ -877,12 +874,7 @@ fn an_exporter_that_is_gone_for_a_minute_ends_the_wait_with_a_plain_message() {
 #[test]
 fn a_stale_heartbeat_with_a_living_fusion_keeps_waiting() {
     let (dir, addin) = setup();
-    addin.announce_at(
-        FEATURES,
-        None,
-        &job::iso_at(agent::now_secs() - 600),
-        4242,
-    );
+    addin.announce_at(FEATURES, None, &job::iso_at(agent::now_secs() - 600), 4242);
     let (mut panel, ctx) = waiting_export(dir.path(), &addin, |env| {
         env.give_up = Duration::from_millis(100);
         env.pid_alive = |_| true;
@@ -1037,7 +1029,9 @@ fn without_an_exporter_the_window_offers_the_install_and_goes_on_when_it_appears
     let _service = Service::spawn(addin.clone(), sample_inventory(false), Ending::done(), FAST);
     step_until(&mut h, "the list", |p| p.stage() == Stage::Picking);
     assert!(h.query_by_label("Install the Fusion exporter").is_none());
-    assert!(h.query_by_label("The Fusion exporter was not found").is_none());
+    assert!(h
+        .query_by_label("The Fusion exporter was not found")
+        .is_none());
     h.get_by_label("Search");
 }
 

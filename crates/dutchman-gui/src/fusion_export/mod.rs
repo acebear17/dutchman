@@ -31,8 +31,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent::{Agent, Presence};
-use inventory::Inventory;
 use installer::Installer;
+use inventory::Inventory;
 use job::{Kind, Next, Status, Update};
 
 /// Where things live and how long to wait; replaced in tests and screenshots.

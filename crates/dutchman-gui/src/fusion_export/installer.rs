@@ -448,12 +448,12 @@ mod tests {
     #[test]
     fn not_found_offers_one_install_button_where_fusion_runs() {
         let mut h = harness(state(true, Presence::Absent, None, Install::Idle));
-        h.run();
+        h.run_steps(4);
         h.get_by_label("Install the Fusion exporter");
         h.get_by_label("The Fusion exporter was not found");
         h.get_by_label_contains("carries on by itself");
         let mut h = harness(state(false, Presence::Gone, None, Install::Idle));
-        h.run();
+        h.run_steps(4);
         assert!(h.query_by_label("Install the Fusion exporter").is_none());
         h.get_by_label_contains("Windows and macOS");
     }
@@ -467,7 +467,7 @@ mod tests {
             None,
             Install::Idle,
         ));
-        h.run();
+        h.run_steps(4);
         h.get_by_label(why);
         h.get_by_label("Install the Fusion exporter");
     }
@@ -507,7 +507,7 @@ mod tests {
         let mut s = state(true, Presence::Absent, Some("0.4.0"), Install::Idle);
         s.installer.set_latest("0.4.1");
         let mut h = harness(s);
-        h.run();
+        h.run_steps(4);
         h.get_by_label_contains("A newer Fusion exporter is available (0.4.1)");
         assert!(h.query_by_label("Install the Fusion exporter").is_none());
     }
@@ -528,7 +528,7 @@ mod tests {
     }
 
     fn click_install(h: &mut Harness<'static, State>) {
-        h.run();
+        h.run_steps(4);
         h.get_by_label("Install the Fusion exporter").click();
         let started = std::time::Instant::now();
         while matches!(
@@ -592,7 +592,10 @@ mod tests {
             .set_install_options(options_at(port, addins.path(), sum));
         let mut h = harness(s);
         click_install(&mut h);
-        assert!(matches!(h.state_mut().installer.install_state(), Install::Done(_)));
+        assert!(matches!(
+            h.state_mut().installer.install_state(),
+            Install::Done(_)
+        ));
         h.get_by_label("Switch it on once in Fusion");
         h.get_by_label_contains("Shift+S");
         assert!(addins
