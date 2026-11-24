@@ -6651,29 +6651,21 @@ mod tests {
                         placed(3, "block", root(), 0.0),
                     ])),
                 );
-                // The document states its joints in id order, so the ids follow the intended
-                // order: the anchor, the joint that grounds the holder, then the two under test.
-                let (first, second) = if held_at.is_some() { (3, 4) } else { (2, 3) };
-                let (internal_key, outer_key) = if outer_first {
-                    (second, first)
-                } else {
-                    (first, second)
-                };
                 let internal = joint(
-                    internal_key,
+                    1,
                     json!({"kind": "fixed"}),
                     connector_at(1, &[], at([30.0, 0.0, 0.0], 0.0)),
                     connector_at(2, &[], facing(IDENTITY)),
                 );
                 let outer = joint(
-                    outer_key,
+                    2,
                     json!({"kind": "fixed"}),
                     connector_at(3, &[], at([100.0, 0.0, 0.0], 0.0)),
                     connector_at(1, &[], facing(IDENTITY)),
                 );
                 // A is already placed before the outer joint reaches the holder.
                 let anchor = joint(
-                    1,
+                    3,
                     json!({"kind": "fixed"}),
                     connector(None),
                     connector_at(3, &[], facing(IDENTITY)),
@@ -6688,14 +6680,28 @@ mod tests {
                     rows.as_array_mut().unwrap().insert(
                         1,
                         joint(
-                            2,
+                            4,
                             json!({"kind": "fixed"}),
                             connector(None),
                             connector_at(0, &[], facing(at([-x, 0.0, 0.0], 0.0))),
                         ),
                     );
                 }
-                let mut wire = serde_json::to_value(&with_joints(model.clone(), rows).ir).unwrap();
+                // The joints are stored in id order; the timeline order is their order here.
+                let bound: Vec<(u64, String)> = rows
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(0..)
+                    .map(|(row, ordinal)| (ordinal, row["id"].as_str().unwrap().to_owned()))
+                    .collect();
+                let bound: Vec<(u64, &str)> =
+                    bound.iter().map(|(n, id)| (*n, id.as_str())).collect();
+                let mut stored = rows.as_array().unwrap().clone();
+                stored.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+                let timeline = with_joints(model.clone(), json!(stored));
+                let mut wire =
+                    serde_json::to_value(&with_joint_features(timeline, &bound).ir).unwrap();
                 if posed {
                     wire["native"]["f3d"]["xref_references"] = json!([
                         {"id": "f3d:xref:reference#0", "current_pose": {"carrier_record_index": 7}}
