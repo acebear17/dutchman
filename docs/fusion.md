@@ -694,12 +694,52 @@ each such insertion's prototype as unresolved (`f3d/assembly.component-insert-co
 `f3d/feature.component-insert-membership-assumed`). Dutchman reports one Dropped loss per missing
 design (subject `inserted design <name>`) and one summary (subject `linked components`):
 
-> N inserted components come from other Fusion designs that this .f3d doesn't contain; export the
-> assembly as a Fusion Archive (.f3z) to bring them along.
+> N inserted components come from other Fusion designs that this .f3d doesn't contain; convert the
+> whole export folder (or its zip) so the inserted designs come along, or export the assembly as a
+> Fusion Archive (.f3z) from Fusion's File > Export.
 
 The summary is also the `completeness.left_out` reason, the status line of the command line and the
-app, and the plugin's `missing_parts` reason. The design is never marked verified. In Fusion, use
-File > Export > Fusion Archive (`.f3z`), which carries the inserted designs inside it.
+app, and the plugin's `missing_parts` reason. The design is never marked verified. Convert the
+export folder (or its zip) as below, or in Fusion use File > Export > Fusion Archive (`.f3z`), which
+carries the inserted designs inside it.
+
+## Converting an export folder with inserted designs
+
+A bulk export writes every design an assembly inserts as its own `.f3d` next to the assembly, and a
+`manifest.json` that lists, per design, the designs it references (`references[]`: the design's `id`
+and, in newer manifests, its `version` and the exported file's `path`). Give Dutchman the export
+folder (or its zip) and each top-level assembly converts whole:
+
+```
+dutchman convert "My export" --out converted
+dutchman convert "My export.zip" --out converted
+```
+
+A single `.f3d` converts the same way when its folder (or a folder above it, up to eight levels)
+holds the `manifest.json`: `dutchman "My export/Gauge Assembly v14.f3d"`.
+
+- Dutchman reads only the manifest's JSON listing. It never reads a design file itself: every
+  inserted design is read through the same decoder as any other `.f3d`, and placed where the
+  assembly's insertion puts it, like the components the assembly holds itself. Designs inserted
+  into inserted designs are placed in turn.
+- Each insertion is matched to a listed design by what cadmpeg states about it. When the reader
+  states the identity of the design an insertion places (its document id, and version when
+  stated), that identity is matched to the reference's `id` (and `version`). Otherwise the
+  insertion's name (`<design> v<version>:<instance>`) is matched to the listed design's name and
+  version. A stated identity that fits no listed design, a name that fits none, or one that fits
+  more than one, matches none, and that insertion is reported as missing (below), never guessed.
+  Some files state an insertion only by a kind label or a role identifier and no design identity;
+  those cannot be matched until the reader states which design each insertion places, and they
+  stay missing, with a note saying how many designs the manifest lists for the assembly.
+- A listed design is placed once however often it is inserted. A reference whose file is not in the
+  export, or a path that leaves the export folder, is left out and reported; so is a listed design
+  that cannot be read, with its reason.
+- In a folder or zip, a design that an assembly references is placed inside that assembly and not
+  converted again as a result of its own; designs nothing references convert as before. When the
+  export also holds a rebuilt `.f3z` beside an assembly's `.f3d`, the `.f3z` is converted (it
+  carries the inserted designs) and the `.f3d` is not converted a second time.
+- Limits: a manifest over 256 MB or listing over 200,000 designs is refused; an assembly inserts at
+  most 1,000 designs; designs nest at most 32 deep.
 
 ## Hidden parts with `--import-only`
 

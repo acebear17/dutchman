@@ -598,6 +598,26 @@ fn plan_with_limit(
             ));
             continue;
         }
+        // A bulk export may write a rebuilt .f3z beside an assembly's .f3d: it carries the
+        // inserted designs, so it is the one converted.
+        if root.is_dir() {
+            let archives: BTreeSet<_> = found
+                .iter()
+                .filter(|(path, _)| extension_of(path) == "f3z")
+                .map(|(path, _)| path.with_extension("").to_string_lossy().to_lowercase())
+                .collect();
+            let exported = |path: &Path| {
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|folder| folder.starts_with(root))
+                    .any(|folder| folder.join(dutchman_core::EXPORT_MANIFEST).is_file())
+            };
+            found.retain(|(path, _)| {
+                extension_of(path) != "f3d"
+                    || !archives.contains(&path.with_extension("").to_string_lossy().to_lowercase())
+                    || !exported(path)
+            });
+        }
         let natives: BTreeSet<_> = found
             .iter()
             .filter(|(path, _)| !is_step(path))
@@ -669,10 +689,12 @@ fn plan_with_limit(
 fn project_roots(jobs: &mut Vec<Job>) {
     let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut edges = BTreeMap::new();
-    for job in jobs
-        .iter()
-        .filter(|job| Format::from_path(&job.input).is_some_and(Format::is_assembly))
-    {
+    for job in jobs.iter().filter(|job| {
+        Format::from_path(&job.input).is_some_and(|format| {
+            format.is_assembly()
+                || matches!(format, Format::FusionArchive | Format::FusionMultiDocument)
+        })
+    }) {
         if let Ok(references) = dutchman_core::assembly_references(&job.input, &job.search) {
             edges.insert(
                 canonical(&job.input),
@@ -1544,6 +1566,100 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A synthetic export: an assembly that inserts a screw and a plate, a rebuilt archive for
+    /// a second assembly, and a lone design nothing references.
+    fn export_entries() -> Vec<(&'static str, Vec<u8>)> {
+        let entry = |id: &str, name: &str, references: serde_json::Value| {
+            serde_json::json!({"id": id, "name": name, "version": 1, "references": references,
+                "files": [{"path": format!("{name} v1.f3d")}]})
+        };
+        let manifest = serde_json::json!({"schema": 2, "entries": [
+            entry("urn:x:asm", "Asm", serde_json::json!([{"id": "urn:x:screw"}, {"id": "urn:x:plate"}])),
+            entry("urn:x:screw", "Screw", serde_json::json!([])),
+            entry("urn:x:plate", "Plate", serde_json::json!([])),
+            entry("urn:x:big", "Big", serde_json::json!([{"id": "urn:x:screw"}])),
+            entry("urn:x:lone", "Lone", serde_json::json!([])),
+        ]});
+        let mut files = vec![("manifest.json", serde_json::to_vec(&manifest).unwrap())];
+        for name in [
+            "Asm v1.f3d",
+            "Screw v1.f3d",
+            "Plate v1.f3d",
+            "Big v1.f3d",
+            "Lone v1.f3d",
+            "Big v1.f3z",
+        ] {
+            files.push((name, b"placeholder".to_vec()));
+        }
+        files
+    }
+
+    fn converted_names(planned: &Plan) -> Vec<String> {
+        let mut names: Vec<_> = planned
+            .jobs
+            .iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn an_export_folder_converts_each_top_level_assembly_with_its_inserted_designs() {
+        let dir = tempfile::tempdir().unwrap();
+        let export = dir.path().join("export");
+        std::fs::create_dir(&export).unwrap();
+        for (name, bytes) in export_entries() {
+            std::fs::write(export.join(name), bytes).unwrap();
+        }
+        let planned = plan(std::slice::from_ref(&export), &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        // The screw and the plate are placed inside the assemblies that insert them; the
+        // rebuilt archive stands for its design's .f3d; the unreferenced design converts.
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn an_export_zip_converts_the_same_designs_as_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("export.zip");
+        let entries = export_entries();
+        let borrowed: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(name, bytes)| (*name, bytes.as_slice()))
+            .collect();
+        project_zip(&archive, &borrowed);
+        let planned = plan(&[archive], &dir.path().join("out"));
+        assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+        assert_eq!(
+            converted_names(&planned),
+            ["Asm v1.f3d", "Big v1.f3z", "Lone v1.f3d"]
+        );
+    }
+
+    #[test]
+    fn a_folder_without_a_manifest_converts_every_design_and_both_archive_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("plain");
+        std::fs::create_dir(&folder).unwrap();
+        for (name, bytes) in export_entries() {
+            if name != "manifest.json" {
+                std::fs::write(folder.join(name), bytes).unwrap();
+            }
+        }
+        let planned = plan(std::slice::from_ref(&folder), &dir.path().join("out"));
+        assert_eq!(planned.jobs.len(), 6);
     }
 
     #[test]

@@ -6,12 +6,15 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+/// The file name of a bulk export's manifest.
+pub const EXPORT_MANIFEST: &str = export_folder::MANIFEST;
 pub mod camtools;
 mod companion;
 pub mod contents;
 mod decode;
 mod error;
 pub mod estimate;
+mod export_folder;
 mod format;
 mod hidden;
 mod input_edges;
@@ -232,6 +235,17 @@ pub fn assembly_references(
     input: &Path,
     search: &PartSearch,
 ) -> Result<Vec<std::path::PathBuf>, Error> {
+    // A Fusion assembly from a bulk export: the designs its manifest says it inserts. Only the
+    // manifest's JSON is read, never a design file.
+    if matches!(
+        Format::from_path(input),
+        Some(Format::FusionArchive | Format::FusionMultiDocument)
+    ) {
+        return Ok(export_folder::inserted(input, search.project.as_deref())
+            .and_then(Result::ok)
+            .map(|inserted| inserted.references.into_iter().map(|r| r.file).collect())
+            .unwrap_or_default());
+    }
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
@@ -360,11 +374,8 @@ pub fn read_with_progress(
     }
     let read = std::sync::Mutex::new(std::collections::BTreeSet::new());
     let finder = locate::Finder::new(search);
-    let mut model = assembly::read(
-        format,
-        input,
-        report,
-        &|format, path, report| {
+    let decode_design =
+        |format: Format, path: &Path, report: &mut Report| -> Result<Model, Error> {
             let model = decode_file(format, path, report, progress)?;
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
@@ -381,7 +392,12 @@ pub fn read_with_progress(
                 }
             }
             Ok(model)
-        },
+        };
+    let mut model = assembly::read(
+        format,
+        input,
+        report,
+        &decode_design,
         &finder,
         &mut Vec::new(),
     )?;
@@ -391,7 +407,33 @@ pub fn read_with_progress(
     if let Some(searched) = finder.searched_note() {
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
-    local_components(&mut model, finder.threads, search.part_positions, report);
+    // A Fusion assembly from a bulk export: the designs it inserts are in the export folder.
+    let inserted = if format == Format::FusionArchive {
+        if let (Some(progress), Some(Ok(listing))) = (
+            progress,
+            export_folder::inserted(input, search.project.as_deref()),
+        ) {
+            progress.designs_total(1 + listing.references.len() as u64);
+        }
+        assembly::resolve_inserted(
+            &model,
+            input,
+            search.project.as_deref(),
+            report,
+            &decode_design,
+            &finder,
+            &mut Vec::new(),
+        )
+    } else {
+        assembly::ExternalParts::new()
+    };
+    local_components_with(
+        &mut model,
+        &inserted,
+        finder.threads,
+        search.part_positions,
+        report,
+    );
     report.note_part_positions(search.part_positions);
     Ok(model)
 }
@@ -404,8 +446,26 @@ fn local_components(
     positions: PartPositions,
     report: &mut Report,
 ) {
+    local_components_with(
+        model,
+        &assembly::ExternalParts::new(),
+        threads,
+        positions,
+        report,
+    );
+}
+
+/// [`local_components`], with the inserted designs read from a bulk export's folder, by the
+/// id of the insertion they fill.
+fn local_components_with(
+    model: &mut Model,
+    inserted: &assembly::ExternalParts,
+    threads: usize,
+    positions: PartPositions,
+    report: &mut Report,
+) {
     if model.assembly.is_none() {
-        match assembly::local(model, threads, positions, report) {
+        match assembly::local(model, inserted, threads, positions, report) {
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.
@@ -435,7 +495,7 @@ fn local_components(
     } else if let Some(completeness) = assembly::flattened_completeness(model, report) {
         report.set_completeness(completeness);
     }
-    let missing = missing_linked_components(model);
+    let missing = missing_linked_components(model, inserted);
     let fusion_f3d = model
         .source_file
         .as_deref()
@@ -450,7 +510,7 @@ fn local_components(
 
 /// Occurrences whose design is a linked document the file doesn't contain: the reader states
 /// their prototype as unresolved.
-fn missing_linked_components(model: &Model) -> Vec<String> {
+fn missing_linked_components(model: &Model, inserted: &assembly::ExternalParts) -> Vec<String> {
     let (Ok(definitions), Ok(occurrences)) = (
         serde_json::to_value(&model.ir.model.product_definitions),
         serde_json::to_value(&model.ir.model.occurrences),
@@ -477,6 +537,12 @@ fn missing_linked_components(model: &Model) -> Vec<String> {
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|row| {
+            // An insertion the export folder filled is placed, or left out with its own reason.
+            !row.get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| inserted.contains_key(id))
+        })
         .filter_map(|row| {
             // The reader states the prototype as unresolved, or (newer readers) as an empty
             // placeholder definition named for the unresolved occurrence.
@@ -980,7 +1046,9 @@ mod tests {
         assert_eq!(dropped.len(), 3, "{dropped:?}");
         assert!(dropped[2].detail.starts_with(
             "2 inserted components come from other Fusion designs that this .f3d doesn't \
-             contain; export the assembly as a Fusion Archive (.f3z) to bring them along."
+             contain; convert the whole export folder (or its zip) so the inserted designs \
+             come along, or export the assembly as a Fusion Archive (.f3z) from Fusion's \
+             File > Export."
         ));
     }
 
@@ -1019,7 +1087,7 @@ mod tests {
                 "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
             }]))
             .unwrap();
-            let names = missing_linked_components(&model);
+            let names = missing_linked_components(&model, &assembly::ExternalParts::new());
             assert_eq!(names, if missing { vec!["Component"] } else { vec![] });
             let mut report = Report::default();
             report.set_completeness(Completeness {
