@@ -295,3 +295,44 @@ fn a_mask_opacity_and_every_part_colour_reach_the_design_looks() {
         "{names:?} for {imports} imports"
     );
 }
+
+#[test]
+fn an_island_inside_a_pours_hole_is_written_as_its_own_face() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("part.step"), cube_step()).unwrap();
+    let hole = json!([[0.1, 0.1], [0.1, 0.9], [0.9, 0.9], [0.9, 0.1]]);
+    let island = json!([[0.3, 0.3], [0.6, 0.3], [0.6, 0.6], [0.3, 0.6]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "cube", "file": "part.step"}],
+        "parts": [{"name": "Board", "model": "cube"}],
+        "overlays": [{
+            "name": "Pour", "kind": "copper", "part": "Board", "z": 1.0,
+            "areas": [
+                {"outer": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], "holes": [hole]},
+                {"outer": island, "holes": []},
+            ],
+        }],
+    });
+    let (bytes, report) = write(dir.path(), manifest.to_string().as_bytes());
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|l| l.severity != dutchman_core::Severity::Dropped),
+        "{:?}",
+        report.losses()
+    );
+    let doc = document(&bytes);
+    let pour = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Pour")
+        .unwrap();
+    let blob = pour["step_blob"].as_str().unwrap();
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name(blob).unwrap(), &mut text).unwrap();
+    assert_eq!(text.matches("ADVANCED_FACE").count(), 2, "{text}");
+}

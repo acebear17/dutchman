@@ -2299,6 +2299,26 @@ mod tests {
     }
 
     #[test]
+    fn an_island_inside_another_areas_hole_is_its_own_face() {
+        let dir = package("island");
+        write_models(&dir);
+        let hole = json!([[1.0, 1.0], [1.0, 4.0], [4.0, 4.0], [4.0, 1.0]]);
+        let island = json!([[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 3.0]]);
+        let m = one_area_overlay(json!([
+            {"outer": square(5.0), "holes": [hole]},
+            {"outer": island, "holes": []},
+        ]));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(sheet_faces(&assembly, "Copper top"), 2);
+        assert!(!mentions(&report, Severity::Degraded, "area(s) left out"));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
     fn loops_sharing_part_of_an_edge_are_refused_by_name() {
         let dir = package("overlap");
         write_models(&dir);
