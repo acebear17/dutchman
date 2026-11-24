@@ -69,6 +69,32 @@ producer has one declared result body and one named output. Ambiguous generated
 results, historical selections and native body references remain blockers.
 Targets before 0.44 keep the previous output.
 
+## Install the Fusion exporter
+
+Export from Fusion in the desktop app asks an add-in, the Fusion exporter, to export designs
+from inside your Fusion. The add-in is [Lifeboat's Fusion exporter](https://github.com/cad-lifeboat/fusion-bulk-export).
+It runs only in Fusion, so the entry appears on Windows and macOS.
+
+1. Open **Export from Fusion**. Dutchman looks for the running add-in every few seconds. It
+   reads the small file the add-in keeps in `.cad-export/agents` in your home folder, and
+   counts the add-in as running while that file was updated in the last minute. A stale file with
+   Fusion's process still alive shows "Fusion is busy" and keeps waiting (Fusion can take
+   minutes over one large design); a stale file with the process gone means Fusion closed.
+2. If it is not found, choose **Install the Fusion exporter**. Dutchman downloads one pinned
+   release, checks its SHA-256 before writing anything, and puts it in Fusion's Add-Ins folder
+   (macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns`; Windows:
+   `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns`), replacing an older
+   `FusionBulkExport` folder. It never installs while the exporter is exporting, and never puts an
+   older version over a newer one.
+3. Switch it on once in Fusion. No program can do this for you: press Shift+S (Utilities,
+   Add-Ins, Scripts and Add-Ins), find FusionBulkExport, tick **Run on Startup**, then switch
+   **Run** on. Dutchman keeps waiting and updates when the add-in starts. Fusion keeps the
+   setting when the folder is replaced by a newer version, which takes effect when Fusion next
+   starts.
+
+When the exporter's project has published a newer release than the one Dutchman installs, the
+window says so and links to it; Dutchman never installs that one by itself.
+
 ## Public Fusion shares
 
 The desktop app accepts pasted `a360.co` and `*.autodesk360.com` links and dropped

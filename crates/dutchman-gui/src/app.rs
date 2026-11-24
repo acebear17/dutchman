@@ -150,6 +150,7 @@ pub struct App {
     download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     onshape: crate::onshape::Panel,
+    fusion: crate::fusion_export::panel::Panel,
     intake: crate::paste::Inbox,
     output_picker: Box<dyn Fn(Sender<Message>, egui::Context)>,
     clipboard: Box<dyn Fn() -> (Vec<PathBuf>, String)>,
@@ -471,6 +472,7 @@ impl App {
             download_root: None,
             doctor: None,
             onshape: crate::onshape::Panel::new(&cc.egui_ctx),
+            fusion: crate::fusion_export::panel::Panel::new(),
             intake: crate::paste::Inbox::new(),
             output_picker: Box::new(|sender, ctx| worker::pick(Pick::Output, sender, ctx)),
             clipboard: Box::new(crate::paste::clipboard),
@@ -641,6 +643,18 @@ impl App {
 
     /// Supplies a saved account for UI previews without contacting Onshape.
     #[doc(hidden)]
+    /// Shows the Export from Fusion window in a given state, for tests and screenshots.
+    #[doc(hidden)]
+    pub fn preview_fusion(
+        &mut self,
+        offered: bool,
+        presence: crate::fusion_export::agent::Presence,
+        installed: Option<&str>,
+        step: crate::fusion_export::panel::Install,
+    ) {
+        self.fusion.preview(offered, presence, installed, step);
+    }
+
     pub fn preview_onshape(&mut self, user: Option<&str>) {
         self.onshape.preview(user);
     }
@@ -2185,6 +2199,7 @@ impl App {
         {
             self.queue_link(crate::paste::Source::Onshape(link), ctx);
         }
+        self.fusion.window(ctx, self.header_bottom);
         self.download_window(ctx);
         self.approval_window(ctx);
         let can_restart =
@@ -2671,6 +2686,14 @@ impl App {
                 {
                     let (_, clipboard) = (self.clipboard)();
                     self.onshape.toggle(ui.ctx(), &clipboard);
+                }
+                if self.fusion.offered()
+                    && ui
+                        .button("Export from Fusion")
+                        .on_hover_text("Find the Fusion exporter in your Fusion, or install it")
+                        .clicked()
+                {
+                    self.fusion.toggle(ui.ctx());
                 }
             });
             if self.downloading {
