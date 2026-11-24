@@ -5180,6 +5180,28 @@ fn a_converted_angle_drives_the_geometry_in_solidcraft() {
     );
 }
 
+/// Where the entity with this key sits among entities with these keys once cadmpeg has written
+/// them in id order (a plain string order, so key 10 sorts between 1 and 2). The writer emits a
+/// sketch's curves in that order.
+fn id_order_index(keys: &[u32], key: u32) -> usize {
+    let mut by_id: Vec<u32> = keys.to_vec();
+    by_id.sort_by_key(|key| format!("f3d:model:sketch-entity#{key}"));
+    by_id.iter().position(|k| *k == key).unwrap()
+}
+
+/// The names the writer gives line entities with these keys: `l1`, `l2`, ... in the order the
+/// sketch's entities are read back, which is cadmpeg's id order (a plain string order, so key 10
+/// sorts between 1 and 2).
+fn written_lines(keys: &[u32]) -> std::collections::BTreeMap<u32, String> {
+    let mut by_id: Vec<u32> = keys.to_vec();
+    by_id.sort_by_key(|key| format!("f3d:model:sketch-entity#{key}"));
+    by_id
+        .into_iter()
+        .enumerate()
+        .map(|(at, key)| (key, format!("l{}", at + 1)))
+        .collect()
+}
+
 /// A square crossed by both diagonals, whose source loop retraces those diagonals,
 /// beside a second square which the extrude deliberately leaves out.
 fn crossed_profile_history(region: bool) -> Model {
@@ -5240,15 +5262,18 @@ fn a_selected_crossed_loop_maps_to_its_atomic_regions() {
             ring.sort();
         }
         loops.sort();
-        assert_eq!(
-            loops,
-            vec![
-                vec!["l1", "l5", "l6"],
-                vec!["l2", "l5", "l6"],
-                vec!["l3", "l5", "l6"],
-                vec!["l4", "l5", "l6"],
-            ]
-        );
+        // cadmpeg writes the sketch entities in id order, so entity key 10 sorts between 1 and 2
+        // and the writer numbers its lines by that order.
+        let written = written_lines(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let name = |key: u32| written[&key].clone();
+        let mut expected: Vec<Vec<String>> = (1..=4)
+            .map(|side| vec![name(side), name(5), name(6)])
+            .collect();
+        for ring in &mut expected {
+            ring.sort();
+        }
+        expected.sort();
+        assert_eq!(loops, expected);
         // The source curves and their ids survive: constraints and later references
         // still address the same geometry. SolidCraft splits their pieces on replay.
         let curves = document["features"][0]["sketch"]["curves"]
@@ -6051,10 +6076,12 @@ fn a_list_of_profile_loops_leaves_unused_curves_construction() {
     );
     // The circles and the line to their centre bound nothing the extrude takes; the square's
     // four sides stay solid. (Written curves are numbered by kind: circles c*, lines l*.)
+    // The line to the centre is entity 13, which cadmpeg's id order puts second of the lines.
+    let centre_line = written_lines(&[1, 2, 3, 4, 13])[&13].clone();
     let flags = construction_flags(&document);
     assert_eq!(flags.len(), 7, "{flags:?}");
     for (id, construction) in &flags {
-        let unused = id.starts_with('c') || id == "l5";
+        let unused = id.starts_with('c') || *id == centre_line;
         assert_eq!(*construction, unused, "{flags:?}");
     }
 }
@@ -6295,8 +6322,16 @@ fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
         curves.iter().filter(|c| c["construction"] == true).count(),
         4
     );
-    assert!(curves[4..8].iter().all(|c| c["construction"] == true));
-    assert!(curves[8..].iter().all(|c| c["construction"] == false));
+    // Entities 5 to 8 are the layout lines; 9 to 28 are the hole circles. The writer emits the
+    // curves in cadmpeg's id order, not in key order.
+    let keys: Vec<u32> = (1..=28).collect();
+    for key in 5..=28 {
+        assert_eq!(
+            curves[id_order_index(&keys, key)]["construction"] == true,
+            key <= 8,
+            "entity {key}"
+        );
+    }
     assert!(report
         .losses()
         .iter()
@@ -11603,7 +11638,8 @@ fn fixed_curves_hold_the_radius_and_ellipse_radius_dimensions_use_the_minor_radi
             .iter()
             .any(|loss| loss.detail.contains("constraints not carried")));
         assert_eq!(
-            document["features"][0]["sketch"]["curves"][key - 1]["fixed"],
+            document["features"][0]["sketch"]["curves"]
+                [id_order_index(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], key)]["fixed"],
             true
         );
         if let Some(cli) = solidcraft() {
