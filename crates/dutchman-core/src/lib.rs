@@ -20,6 +20,7 @@ mod memory;
 mod names;
 #[cfg(feature = "onshape")]
 mod onshape;
+pub mod package;
 pub mod parallel;
 mod part_positions;
 pub mod parts;
