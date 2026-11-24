@@ -1421,7 +1421,7 @@ Per-member records appear when the decoder reports them. The pinned Fusion decod
 actual `.f3z` member decode attempts, including re-decodes during composition; these are
 not unique design completion counts. Error categories are `wrong_format`, `malformed`,
 `invalid_input`, `truncated`, `resource_limit`, `unsupported_dialect`, `unsupported_target`,
-`insufficient_depth`, `not_implemented`, `io`, or `other`. They contain no exception text.
+`not_implemented`, `io`, or `other`. They contain no exception text.
 `member_decodes` tracks at most 100,000 distinct ids per conversion.
 
 ```json
