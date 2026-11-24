@@ -100,7 +100,9 @@ pub(crate) fn encode(report: &Report) -> Result<String, dutchman_core::Error> {
 }
 
 fn status(report: &Report) -> &'static str {
-    if report.completeness().is_some_and(|c| !c.is_complete()) {
+    if report.missing_links_message().is_some()
+        || report.completeness().is_some_and(|c| !c.is_complete())
+    {
         return "Incomplete";
     }
     match report.outcome() {
@@ -114,6 +116,9 @@ fn status(report: &Report) -> &'static str {
     }
 }
 fn summary(report: &Report) -> String {
+    if let Some(why) = report.missing_links_message() {
+        return format!("Incomplete. {why}");
+    }
     if let Some(message) = report
         .completeness()
         .and_then(dutchman_core::Completeness::unplaced_message)
@@ -159,6 +164,7 @@ pub(crate) fn readable(report: &Report) -> Value {
         "result": status(report),
         "help": crate::notice::help(),
         "shape_check": report.outcome().map(|o| verification(&o.check)),
+        "editable_part": report.outcome().filter(|o| o.mode == Mode::PartialHistory).and_then(|o| dutchman_core::RestImported::of(&o.features)).map(|rest| crate::notice::plain(&rest.sentence())),
         "features": report.outcome().map(|o| o.features.iter().map(|f| json!({
             "name": f.name.as_deref().map(crate::notice::plain),
             "feature": crate::notice::plain(&f.kind.replace('_', " ")),
@@ -202,6 +208,19 @@ mod tests {
             value["details"]["assembly"]["unplaced_parts"][0]["part"],
             "Panel"
         );
+    }
+
+    #[test]
+    fn missing_inserted_designs_make_the_import_report_incomplete() {
+        let mut report = Report::default();
+        report.record_missing_inserted_designs(&["Washer".into()]);
+        let value = host(&report);
+        assert_eq!(
+            value["summary"],
+            "Incomplete. 1 inserted component comes from other Fusion designs that this .f3d \
+             doesn't contain; export the assembly as a Fusion Archive (.f3z) to bring it along."
+        );
+        assert_eq!(value["details"]["result"], "Incomplete");
     }
 
     #[test]

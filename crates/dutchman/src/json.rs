@@ -67,6 +67,9 @@ pub(crate) fn repro_anonymous(
 
 /// The input file as the reports describe it.
 pub fn input(path: &Path) -> Value {
+    if crate::tool_library::is_library(path) {
+        return crate::tool_library::input(path);
+    }
     let format = Format::from_path(path);
     json!({
         "path": path.display().to_string(),
@@ -81,6 +84,11 @@ pub fn input(path: &Path) -> Value {
 /// A conversion's input capability, before its result.
 pub fn status_line(report: &Value) -> Option<String> {
     let input = report.get("input")?;
+    if crate::tool_library::is_report(report) {
+        return Some(crate::tool_library::status_text(
+            input.get("extension")?.as_str()?,
+        ));
+    }
     Some(format!(
         "{} .{}: {}",
         input.get("program")?.as_str()?,
@@ -491,9 +499,14 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
         .completeness()
         .and_then(Completeness::unplaced_message)
     {
+        // Designs missing from the file are the larger cause: say so first.
+        let reason = match report.missing_links_message() {
+            Some(why) => format!("{why} {message}"),
+            None => message,
+        };
         out.insert(
             "verification".to_owned(),
-            json!({"status": "partial", "reason": message}),
+            json!({"status": "partial", "reason": reason}),
         );
     }
     if !report.joints().is_empty() {
@@ -535,6 +548,18 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
         "placements": completeness.placements(),
         "left_out": left_out,
     })
+}
+
+/// The sentence saying a Fusion `.f3d` places components inserted from designs it doesn't
+/// contain, when its completeness records them as left out.
+pub fn inserted_designs_message(report: &Value) -> Option<String> {
+    report
+        .pointer("/completeness/left_out")?
+        .as_array()?
+        .iter()
+        .filter_map(|cause| cause.get("reason")?.as_str())
+        .find(|reason| reason.contains(" from other Fusion designs that this .f3d doesn't contain"))
+        .map(str::to_owned)
 }
 
 /// Plain explanation shared by CLI and app results.
@@ -804,11 +829,17 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         "verification".to_owned(),
         json!({"status": status, "reason": reason}),
     );
-    out.insert(
-        "history".to_owned(),
-        json!({"mapped": mapped, "total": total, "rebuilt": rebuilt, "needing": needing,
-            "reapplied": reapplied, "features": features}),
-    );
+    let mut history = json!({"mapped": mapped, "total": total, "rebuilt": rebuilt,
+        "needing": needing, "reapplied": reapplied, "features": features});
+    // The first feature not converted: from it on, the design is one imported body.
+    if let (Mode::PartialHistory, Some(rest), Some(fields)) = (
+        outcome.mode,
+        dutchman_core::RestImported::of(&outcome.features),
+        history.as_object_mut(),
+    ) {
+        fields.insert("rest_imported_from".to_owned(), json!(rest.from));
+    }
+    out.insert("history".to_owned(), history);
     out
 }
 
@@ -1724,6 +1755,35 @@ mod tests {
     }
 
     #[test]
+    fn missing_inserted_designs_lead_the_report_and_every_summary() {
+        let mut source = Report::default();
+        source.set_completeness(Completeness {
+            placed: 1,
+            unplaced: [("Panel".into(), 1)].into(),
+            ..Completeness::default()
+        });
+        source.record_missing_inserted_designs(&["Washer".into(), "Nut".into()]);
+        let report = Value::Object(success(CONVERT, json!({"path":"assembly.f3d"}), &source));
+        let sentence = "2 inserted components come from other Fusion designs that this .f3d \
+                        doesn't contain; export the assembly as a Fusion Archive (.f3z) to \
+                        bring them along.";
+        assert!(report["verification"]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with(sentence));
+        assert_eq!(report["completeness"]["left_out"][0]["reason"], sentence);
+        assert!(completeness_lines(&report)
+            .iter()
+            .any(|line| line.contains(sentence)));
+        assert!(crate::present::incomplete(&report));
+        let view = crate::present::FileView::from_report(&report);
+        assert_eq!(view.status_word, "Incomplete");
+        assert!(view
+            .outcome
+            .contains("export the assembly as a Fusion Archive (.f3z)"));
+    }
+
+    #[test]
     fn unproven_positions_make_reports_partial_and_summaries_plain() {
         let mut source = Report::default();
         source.set_completeness(Completeness {
@@ -1881,6 +1941,29 @@ mod tests {
             final_body: false,
             inferred: None,
         }
+    }
+
+    #[test]
+    fn a_partial_history_names_the_first_feature_not_converted() {
+        let mut blocked = feature("hole", FeatureStatus::Blocked);
+        blocked.name = Some("Hole 1".to_owned());
+        let rows = vec![feature("sketch", FeatureStatus::Mapped), blocked];
+        let history = |mode| {
+            let fields = outcome_fields(&Outcome {
+                mode,
+                check: Check::Partial("x".to_owned()),
+                features: rows.clone(),
+            });
+            Value::Object(fields)
+        };
+        assert_eq!(
+            history(Mode::PartialHistory).pointer("/history/rest_imported_from"),
+            Some(&json!("Hole 1"))
+        );
+        assert_eq!(
+            history(Mode::History).pointer("/history/rest_imported_from"),
+            None
+        );
     }
 
     #[test]

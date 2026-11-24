@@ -189,6 +189,8 @@ including countersunk entries. Fusion measures Extents To to the cylindrical sho
 the conical point extends beyond the selected face. Dutchman resolves that distance
 along the drilling direction and keeps the countersink at the entry. Unresolved,
 offset, tilted, or unproven terminating faces retain a specific history blocker.
+A terminating face with arcs, circles or inner loops in its outline is mapped when SolidCraft's
+replay before the hole contains exactly that face.
 Later features rebuild when the hole maps. A refused hole still stops body-building
 history; independently resolved reference sketches remain available.
 
@@ -701,6 +703,21 @@ relations remain reported losses. One sketch carries at most 400,000 wire constr
 additional relations are reported and their solved geometry is retained. An unresolved sketch binding cannot be replaced
 by guessed geometry. A nonplanar historical face boundary remains a separate face
 selection blocker. Targets before 0.44 keep their existing output and refusals.
+
+## A .f3d whose inserted designs are missing
+
+A Fusion assembly saved as one `.f3d` can hold components inserted from other Fusion designs. The
+`.f3d` keeps the placements but not those designs, so only its own parts convert. cadmpeg states
+each such insertion's prototype as unresolved (`f3d/assembly.component-insert-container-assumed`,
+`f3d/feature.component-insert-membership-assumed`). Dutchman reports one Dropped loss per missing
+design (subject `inserted design <name>`) and one summary (subject `linked components`):
+
+> N inserted components come from other Fusion designs that this .f3d doesn't contain; export the
+> assembly as a Fusion Archive (.f3z) to bring them along.
+
+The summary is also the `completeness.left_out` reason, the status line of the command line and the
+app, and the plugin's `missing_parts` reason. The design is never marked verified. In Fusion, use
+File > Export > Fusion Archive (`.f3z`), which carries the inserted designs inside it.
 
 ## Hidden parts with `--import-only`
 

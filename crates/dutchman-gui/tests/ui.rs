@@ -200,6 +200,89 @@ fn header_screenshots() {
     }
 }
 
+/// The baseline of a one-line label: its bottom edge, less the font's descent below the baseline.
+fn baseline_of(h: &Harness<'_, App>, label: &str, style: egui::TextStyle) -> f32 {
+    let rect = h.get_by_label(label).rect();
+    let font = style.resolve(&h.ctx.style());
+    let below = h.ctx.fonts_mut(|fonts| {
+        let galley = fonts.layout_no_wrap(label.to_owned(), font, egui::Color32::WHITE);
+        let row = &galley.rows[0];
+        row.size.y - row.glyphs[0].pos.y
+    });
+    rect.bottom() - below
+}
+
+#[test]
+fn the_version_sits_on_the_titles_baseline_in_one_line() {
+    let version = dutchman_gui::version_label();
+    for (width, title_style) in [
+        (1400.0, dutchman_gui::theme::title()),
+        (1100.0, egui::TextStyle::Heading),
+        (520.0, egui::TextStyle::Heading),
+    ] {
+        for theme in [ThemePreference::Light, ThemePreference::Dark] {
+            let h = header_harness(width, theme, false);
+            let title = baseline_of(&h, "Dutchman Convert", title_style.clone());
+            let small = baseline_of(&h, &version, egui::TextStyle::Small);
+            assert!(
+                (title - small).abs() <= 1.0,
+                "{width}: title baseline {title}, version baseline {small}"
+            );
+            let name = h.get_by_label("Dutchman Convert").rect();
+            let tag = h.get_by_label(&version).rect();
+            assert!(tag.left() >= name.right() && tag.height() < name.height());
+        }
+    }
+}
+
+/// The main window's header at 1280x800: the version on the title's line, in English and with a
+/// long German subtitle (the app has no German text yet), Day and Night.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the header; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn header_version_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, subtitle) in [
+        ("english", None),
+        (
+            "german",
+            Some("Wandelt native CAD-Konstruktionen in SolidCraft-Konstruktionen um.".to_owned()),
+        ),
+    ] {
+        *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = subtitle;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 800.0))
+                .build_eframe(|cc| test_app(cc));
+            harness.ctx.set_theme(theme);
+            harness.state_mut().preview_solidcraft(Some("0.46.2"));
+            harness.run_steps(8);
+            let title = baseline_of(&harness, "Dutchman Convert", dutchman_gui::theme::title());
+            let small = baseline_of(
+                &harness,
+                &dutchman_gui::version_label(),
+                egui::TextStyle::Small,
+            );
+            assert!((title - small).abs() <= 1.0, "{language} {name}");
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("header-version-{language}"),
+                name,
+                "The version is on the title's line, on its baseline.",
+            );
+        }
+    }
+    *dutchman_gui::SUBTITLE_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("header-version.md"), index).unwrap();
+}
+
 #[test]
 fn designs_convert_from_the_window() {
     let out = tempfile::tempdir().unwrap();
@@ -2904,6 +2987,182 @@ fn converted_report_screenshots() {
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
 
+/// A synthetic Fusion tool library: `kinds` are the Fusion tool types, one tool each.
+#[cfg(feature = "test-support")]
+fn synthetic_tool_library(kinds: &[&str]) -> String {
+    let tools: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            serde_json::json!({
+                "BMC": "carbide", "description": format!("Tool {}", i + 1), "type": kind,
+                "unit": "millimeters",
+                "geometry": {"DC": 6.0, "LCF": 12.0, "LB": 40.0, "SFDM": 6.0, "NOF": 2},
+                "post-process": {"number": i + 1},
+                "start-values": {"presets": [{"n": 9000.0, "v_f": 1500.0,
+                    "material": {"category": "all"}}]}
+            })
+        })
+        .collect();
+    serde_json::json!({"version": 22, "data": tools}).to_string()
+}
+
+/// A synthetic library converted for real in a temporary folder, as the row a finished card shows,
+/// with neutral paths. Returns the row, its input path and the Designs summary the real planner
+/// makes for the library.
+#[cfg(feature = "test-support")]
+fn converted_tool_library(kinds: &[&str]) -> (dutchman_gui::app::Row, PathBuf, String) {
+    let work = tempfile::tempdir().unwrap();
+    let source = work.path().join("Shop tools.json");
+    std::fs::write(&source, synthetic_tool_library(kinds)).unwrap();
+    let made = work.path().join("Shop tools.camtools");
+    let summary = dutchman::batch::plan(&[source.clone()], work.path()).description;
+    let mut report = dutchman::tool_library::convert(&source, &made, true);
+    let docs = PathBuf::from("/Users/demo/Documents");
+    let input = docs.join("Shop tools.json");
+    let output = docs.join("Converted").join("Shop tools.camtools");
+    report["input"]["path"] = serde_json::json!(input);
+    let ok = report["ok"] == true;
+    if ok {
+        report["output"]["path"] = serde_json::json!(output);
+    }
+    let row = dutchman_gui::app::Row {
+        input: input.clone(),
+        output: ok.then_some(output),
+        status: if ok {
+            Status::Converted
+        } else {
+            Status::Failed
+        },
+        progress: None,
+        job: None,
+        size: None,
+        report: Some(report),
+    };
+    (row, input, summary)
+}
+
+/// A converted Fusion tool library is shown as one, not as a design.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_tool_library_card_uses_tool_wording_and_no_design_buttons() {
+    for (kinds, word, body) in [
+        (
+            &["flat end mill", "ball end mill", "reamer"][..],
+            "Converted, some tools left out",
+            "2 of 3 tools written to CamCraft's tool library",
+        ),
+        (
+            &["flat end mill", "ball end mill"][..],
+            "Converted",
+            "2 of 2 tools written to CamCraft's tool library",
+        ),
+    ] {
+        let (row, input, summary) = converted_tool_library(kinds);
+        let mut harness = harness();
+        harness.state_mut().add_inputs([input]);
+        harness.state_mut().preview_result_for_test(row);
+        harness.run_steps(16);
+        assert_eq!(summary, "1 tool library");
+        harness.state_mut().set_project_summary_for_test(&summary);
+        harness.run_steps(8);
+        harness.get_by_label(word);
+        harness.get_by_label(body);
+        harness.get_by_label("Show in folder");
+        harness.get_by_label_contains("Fusion tool library (.json)");
+        harness.get_by_label_contains("1 tool library");
+        harness.get_by_label(dutchman::present::SEND_TOOLS_INTRO);
+        harness.get_by_label("Please add the same library as .tools");
+        harness.get_by_label(dutchman::present::SEND_TOOLS_STEP_NOTE);
+        // The Designs list shows the file's name; its full path is in the tooltip.
+        assert!(harness
+            .query_by_label_contains("/Users/demo/Documents/Shop tools.json")
+            .is_none());
+        assert!(
+            harness
+                .query_all_by_label_contains("Shop tools.json")
+                .count()
+                >= 1
+        );
+        assert!(harness.query_by_label_contains("for the design").is_none());
+        for absent in [
+            "Open in SolidCraft",
+            "Add matching STEP",
+            "Converted, no history",
+            dutchman::present::SEND_CONVERTED_INTRO,
+            dutchman::present::SEND_STEP_TITLE,
+        ] {
+            assert!(
+                harness.query_by_label(absent).is_none(),
+                "{absent} is shown for a tool library"
+            );
+        }
+        assert!(harness
+            .query_by_label_contains("Geometry without history")
+            .is_none());
+    }
+}
+
+/// A Fusion tool library converted to CamCraft's `.camtools`: converted with a tool that cannot
+/// be written, and one where no tool can be written. Synthetic libraries, built here.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots of the tool library flow; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn tool_library_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, titles) in [
+        ("english", None),
+        (
+            "german",
+            Some([
+                "Unserem Discord-Server beitreten".to_owned(),
+                "Dutchy eine Direktnachricht senden".to_owned(),
+                "Bitte dieselbe Werkzeugbibliothek als .tools hinzufügen".to_owned(),
+            ]),
+        ),
+    ] {
+        *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = titles;
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            for (case, kinds) in [
+                (
+                    "tool-library-partial",
+                    &["flat end mill", "ball end mill", "reamer"][..],
+                ),
+                ("tool-library-none", &["reamer", "reamer"][..]),
+            ] {
+                let docs = PathBuf::from("/Users/demo/Documents");
+                let (row, input, summary) = converted_tool_library(kinds);
+                let mut harness = screenshot_harness(theme);
+                harness.set_size(egui::vec2(1280.0, 800.0));
+                harness.state_mut().set_checker_for_test(true);
+                harness.state_mut().preview_solidcraft(Some("0.46.2"));
+                harness.state_mut().add_inputs([input.clone()]);
+                harness.state_mut().set_out_dir(docs.join("Converted"));
+                harness.state_mut().set_project_summary_for_test(&summary);
+                harness.run_steps(8);
+                harness.state_mut().preview_result_for_test(row);
+                harness.state_mut().set_project_summary_for_test(&summary);
+                harness.run_steps(16);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("{case}-{language}"),
+                    name,
+                    "The result after converting the library.",
+                );
+            }
+        }
+    }
+    *dutchman_gui::report_panel::TITLES_FOR_TEST.lock().unwrap() = None;
+    std::fs::write(dir.join("tool-library.md"), index).unwrap();
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders GPU screenshots of a card with unchecked extrude regions"]
@@ -3300,6 +3559,28 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
         assert_failed_card_in_view(&h, monitor);
         h.get_by_label("Open invite");
     }
+}
+
+/// People use a square or wider window, so the window never opens taller than wide, on any
+/// landscape monitor and at the smallest size the app allows.
+#[test]
+fn the_default_window_is_never_taller_than_wide() {
+    let fit = dutchman_gui::FIT_SIZE;
+    assert!(fit[1] <= fit[0], "the fitted size {fit:?} is tall");
+    for monitor in [
+        [1280.0, 720.0],
+        [1366.0, 768.0],
+        [1440.0, 900.0],
+        [1920.0, 1080.0],
+        [2560.0, 1440.0],
+        [1024.0, 1024.0],
+    ] {
+        let size = dutchman_gui::fit_size(monitor);
+        assert!(size[1] <= size[0], "{size:?} on {monitor:?} is tall");
+    }
+    // The smallest window the app allows is landscape too.
+    let smallest = dutchman_gui::fit_size([100.0, 100.0]);
+    assert!(smallest[1] <= smallest[0], "{smallest:?} is tall");
 }
 
 #[test]
@@ -3972,6 +4253,37 @@ mod paste_inputs {
         assert!(h.query_by_label("Your Onshape API keys").is_some());
     }
 
+    /// The startup estimate reports free memory from a background thread. Its line appearing in
+    /// the frame that handles a click must not lose the click.
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn a_late_free_memory_line_does_not_drop_a_click_below_it() {
+        let mut h = window(true);
+        let started = Instant::now();
+        // Let the real startup estimate land first, so only the test changes the line below.
+        while h.query_by_label_contains("of memory free").is_none()
+            && started.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+            h.step();
+        }
+        let input = fixture("generated_unit_cube.f3d");
+        let sizes = dutchman::choices::read_sizes(&input).unwrap();
+        h.state_mut().set_sizes_for_test(input.clone(), sizes, 0);
+        h.run_steps(2);
+        assert!(h.query_by_label_contains("of memory free").is_none());
+        h.get_by_label("Onshape connected ✓").click_accesskit();
+        let sizes = dutchman::choices::read_sizes(&input).unwrap();
+        h.state_mut()
+            .set_sizes_for_test(input, sizes, 8_000_000_000);
+        h.step();
+        h.run_steps(3);
+        assert!(h.query_by_label_contains("of memory free").is_some());
+        assert!(h
+            .query_by_label("Paste your Onshape Part Studio link")
+            .is_some());
+    }
+
     #[test]
     fn onshape_open_enables_only_for_a_document_link_and_keeps_text_paste_in_the_field() {
         let mut h = window(true);
@@ -4295,6 +4607,10 @@ mod paste_inputs {
         wait_for_conversion(&mut h);
     }
 
+    /// The design name [`named_held_fetch`] reports.
+    #[cfg(feature = "test-support")]
+    static SHOT_TITLE: std::sync::Mutex<&str> = std::sync::Mutex::new("Bracket - Part Studio 1");
+
     #[cfg(feature = "test-support")]
     /// Names the design, then holds until the screenshot is taken.
     fn named_held_fetch(
@@ -4303,7 +4619,8 @@ mod paste_inputs {
         progress: &mut dyn dutchman::onshape::FetchProgress,
     ) -> Result<PathBuf, String> {
         progress.calls(12, Some(51));
-        progress.named("Bracket - Part Studio 1");
+        let title = *SHOT_TITLE.lock().unwrap();
+        progress.named(title);
         let started = Instant::now();
         while !SHOT_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
             assert!(started.elapsed() < Duration::from_secs(60), "never shot");
@@ -4318,36 +4635,48 @@ mod paste_inputs {
     fn onshape_title_screenshots() {
         let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
         std::fs::create_dir_all(&dir).unwrap();
-        for (theme, name) in [
-            (ThemePreference::Light, "day"),
-            (ThemePreference::Dark, "night"),
+        // English, and a long simulated German design name (the app has no translations yet).
+        for (language, title) in [
+            ("english", "Bracket - Part Studio 1"),
+            (
+                "german",
+                "Getriebegehäuse Rückseite mit Befestigungsflansch - Teilestudio Lagerdeckel 1",
+            ),
         ] {
-            SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
-            let mut h = window(true);
-            h.ctx.set_theme(theme);
-            h.state_mut().set_checker_for_test(true);
-            h.state_mut().preview_solidcraft(Some("0.46.2"));
-            h.state_mut()
-                .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
-            h.state_mut().set_verify(false);
-            h.state_mut()
-                .set_link_transport_for_test(Arc::new(MockNetwork::default()), named_held_fetch);
-            paste(&mut h, LINK);
-            let started = Instant::now();
-            while h
-                .query_by_label("Bracket - Part Studio 1.onshape-bundle")
-                .is_none()
-            {
-                assert!(started.elapsed() < Duration::from_secs(30), "no title");
-                std::thread::sleep(Duration::from_millis(10));
-                h.step();
+            *SHOT_TITLE.lock().unwrap() = title;
+            for (theme, name) in [
+                (ThemePreference::Light, "day"),
+                (ThemePreference::Dark, "night"),
+            ] {
+                SHOT_TAKEN.store(false, std::sync::atomic::Ordering::SeqCst);
+                let mut h = window(true);
+                h.ctx.set_theme(theme);
+                h.state_mut().set_checker_for_test(true);
+                h.state_mut().preview_solidcraft(Some("0.46.2"));
+                h.state_mut()
+                    .set_out_dir(PathBuf::from("/Users/demo/Documents/Converted"));
+                h.state_mut().set_verify(false);
+                h.state_mut().set_link_transport_for_test(
+                    Arc::new(MockNetwork::default()),
+                    named_held_fetch,
+                );
+                paste(&mut h, LINK);
+                let started = Instant::now();
+                while h
+                    .query_by_label(&format!("{title}.onshape-bundle"))
+                    .is_none()
+                {
+                    assert!(started.elapsed() < Duration::from_secs(30), "no title");
+                    std::thread::sleep(Duration::from_millis(10));
+                    h.step();
+                }
+                h.run_steps(3);
+                h.render()
+                    .unwrap()
+                    .save(dir.join(format!("onshape-title-fetching-{language}-{name}.png")))
+                    .unwrap();
+                SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            h.run_steps(3);
-            h.render()
-                .unwrap()
-                .save(dir.join(format!("onshape-title-fetching-{name}.png")))
-                .unwrap();
-            SHOT_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
