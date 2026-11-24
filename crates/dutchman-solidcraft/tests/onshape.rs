@@ -7,10 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dutchman_core::{Check, FeatureStatus, Format, Model, Report, Writer};
-use dutchman_solidcraft::{
-    solidcraft_version, SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification,
-    VersionGate,
-};
+#[cfg(feature = "onshape")]
+use dutchman_solidcraft::{solidcraft_version, VersionGate};
+use dutchman_solidcraft::{SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification};
 use serde_json::{json, Value};
 
 fn model(name: &str) -> (Model, Report) {
@@ -1152,6 +1151,8 @@ fn part_studio_variables_drive_the_sketch_dimension_and_extrude_depth() {
     assert_eq!(driven, ["span"]);
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_design_writes_insert_design_links_and_keeps_boolean_editable() {
     for (target, linked) in [
@@ -1201,6 +1202,8 @@ fn derived_design_writes_insert_design_links_and_keeps_boolean_editable() {
     }
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_boolean_requires_captured_results() {
     let (mut source, mut report) = model("derived");
@@ -1225,6 +1228,8 @@ fn derived_boolean_requires_captured_results() {
     );
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     let (mut source, mut report) = model("derived");
@@ -1260,6 +1265,8 @@ fn derived_companion_conversion_losses_are_reported_under_the_insert() {
     );
 }
 
+// The reference reader is behind the crate's `onshape` feature.
+#[cfg(feature = "onshape")]
 #[test]
 fn derived_file_conversion_publishes_companion_and_cli_replays_the_cut() {
     let dir = tempfile::tempdir().unwrap();
