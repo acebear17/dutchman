@@ -245,7 +245,7 @@ pub fn assembly_references(
     let model = decode_file(format, input, &mut Report::default(), None)?;
     let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
