@@ -33,7 +33,7 @@ def generate(cli):
     files = {}
     def studio(folder, eid, features, states, step):
         prefix = f"{folder}partstudios/{eid}"
-        files[f"{prefix}/features.json"] = {"sourceMicroversion": MID, "features": features}
+        files[f"{prefix}/features.json"] = {"sourceMicroversion": MID, "features": features, "rollbackIndex": len(features)}
         files[f"{prefix}/bodydetails/index.json"] = list(states)
         for i, parts in states.items():
             files[f"{prefix}/bodydetails/{i}.json"] = {"microversionId": MID, "bodies": [
