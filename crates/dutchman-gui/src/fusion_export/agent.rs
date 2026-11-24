@@ -160,7 +160,7 @@ fn read_agent(path: &Path) -> Option<(Agent, Option<i64>)> {
             })
             .unwrap_or_default(),
         version: text("version").unwrap_or_default(),
-        busy: text("busy"),
+        busy: busy_of(&value),
         job: text("job"),
         fusion_version: text("fusion_version"),
         pid: value
@@ -172,6 +172,17 @@ fn read_agent(path: &Path) -> Option<(Agent, Option<i64>)> {
     };
     let updated = text("updated").and_then(|t| parse_time(&t));
     Some((agent, updated))
+}
+
+/// What the add-in is busy with: any value but `null` (or missing) means busy; a string says
+/// what, anything else is kept as its JSON text.
+fn busy_of(value: &Value) -> Option<String> {
+    match value.get("busy")? {
+        Value::Null => None,
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::String(_) => Some("busy".into()),
+        other => Some(other.to_string()),
+    }
 }
 
 /// Seconds since the Unix epoch.
@@ -333,6 +344,26 @@ mod tests {
         );
         assert_eq!(agent.features, ["export", "cancel"]);
         assert!(!agent.fusion_busy);
+    }
+
+    #[test]
+    fn any_value_but_null_for_busy_means_busy() {
+        let d = dir();
+        for (value, expect) in [
+            (serde_json::json!(true), Some("true")),
+            (serde_json::json!(1), Some("1")),
+            (serde_json::json!("job"), Some("job")),
+            (serde_json::json!(""), Some("busy")),
+            (serde_json::Value::Null, None),
+        ] {
+            file(d.path(), "fusion-bulk-export.json", 1, 1, |v| {
+                v["busy"] = value.clone()
+            });
+            let Presence::Running(agent) = look(d.path(), true) else {
+                panic!("running");
+            };
+            assert_eq!(agent.busy.as_deref(), expect, "{value}");
+        }
     }
 
     #[test]

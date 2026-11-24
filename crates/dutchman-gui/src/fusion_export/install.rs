@@ -34,18 +34,32 @@ pub const PIN: Pin = Pin {
 /// Where the exporter announces its newest release; only used to say a newer one exists.
 pub const LATEST_RELEASE_JSON: &str = "https://github.com/cad-lifeboat/fusion-bulk-export/releases/latest/download/FusionBulkExport-release.json";
 
+const STAGING_PREFIX: &str = ".FusionBulkExport-install-";
 /// The add-in's folder name.
 pub const ADDIN: &str = "FusionBulkExport";
 /// How long to wait to connect to the download host.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a download may stall before it is given up.
 pub const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// The whole download, however slowly it trickles.
+pub const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const MAX_ZIP_BYTES: u64 = 64 << 20;
+const MAX_ENTRIES: usize = 5000;
 const MAX_UNPACKED_BYTES: u64 = 256 << 20;
 
 /// Whether this computer can run Fusion, so the install is offered: Windows and macOS.
 pub fn supported() -> bool {
-    cfg!(any(windows, target_os = "macos"))
+    cfg!(any(windows, target_os = "macos", test))
+        || FORCED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static FORCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Offers the entry on any computer, so UI tests lay out the same window on Linux as on
+/// Windows and macOS. Test use only.
+#[doc(hidden)]
+pub fn offer_everywhere_for_tests() {
+    FORCED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Fusion's AddIns folder for this person.
@@ -75,6 +89,10 @@ pub struct Options {
     pub addins: PathBuf,
     pub connect_timeout: Duration,
     pub stall_timeout: Duration,
+    /// The most time the whole download may take.
+    pub deadline: Duration,
+    /// Allow a plain `http` address (loopback test servers only); otherwise only `https`.
+    pub allow_http: bool,
 }
 
 impl Options {
@@ -87,6 +105,8 @@ impl Options {
             addins: addins_dir().ok_or(Failure::Unsupported)?,
             connect_timeout: CONNECT_TIMEOUT,
             stall_timeout: STALL_TIMEOUT,
+            deadline: DOWNLOAD_DEADLINE,
+            allow_http: false,
         })
     }
 }
@@ -182,6 +202,35 @@ pub fn install(
     busy: &dyn Fn() -> bool,
     progress: &mut dyn FnMut(Step),
 ) -> Result<Installed, Failure> {
+    install_with(options, busy, progress, &|from, to| {
+        std::fs::rename(from, to)
+    })
+}
+
+/// Staging folders a crashed install left in `addins`. One that still holds the previous add-in
+/// (`old`) is kept: it may be the only copy.
+fn remove_stale_staging(addins: &Path) {
+    let Ok(entries) = std::fs::read_dir(addins) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let stale = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| n.starts_with(STAGING_PREFIX));
+        if stale && path.is_dir() && !path.join("old").exists() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+fn install_with(
+    options: &Options,
+    busy: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(Step),
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<Installed, Failure> {
     if busy() {
         return Err(Failure::Busy);
     }
@@ -190,6 +239,7 @@ pub fn install(
             return Err(Failure::Newer(have));
         }
     }
+    remove_stale_staging(&options.addins);
     progress(Step::Downloading);
     let zip = download(options)?;
     progress(Step::Checking);
@@ -201,11 +251,11 @@ pub fn install(
     let write = |e: &dyn fmt::Display| Failure::Write(e.to_string());
     std::fs::create_dir_all(&options.addins).map_err(|e| write(&e))?;
     let staging = tempfile::Builder::new()
-        .prefix(".FusionBulkExport-install-")
+        .prefix(STAGING_PREFIX)
         .tempdir_in(&options.addins)
         .map_err(|e| write(&e))?;
     let staged = staging.path().join(ADDIN);
-    unpack(&zip, &staged).map_err(|e| write(&e))?;
+    unpack(&zip, &staged, &options.version, MAX_UNPACKED_BYTES).map_err(|e| write(&e))?;
     if !staged.join("FusionBulkExport.manifest").is_file() {
         return Err(Failure::Write("the download holds no add-in".into()));
     }
@@ -216,11 +266,19 @@ pub fn install(
     let old = staging.path().join("old");
     let had_old = target.exists();
     if had_old {
-        std::fs::rename(&target, &old).map_err(|e| write(&e))?;
+        rename(&target, &old).map_err(|e| write(&e))?;
     }
-    if let Err(e) = std::fs::rename(&staged, &target) {
+    if let Err(e) = rename(&staged, &target) {
         if had_old {
-            let _ = std::fs::rename(&old, &target);
+            if let Err(back) = rename(&old, &target) {
+                // The previous add-in is only in the staging folder now: keep it.
+                let kept = staging.keep().join("old");
+                return Err(Failure::Write(format!(
+                    "{e}; putting the previous add-in back failed too ({back}). \
+                     It is kept in {}",
+                    kept.display()
+                )));
+            }
         }
         return Err(write(&e));
     }
@@ -231,32 +289,68 @@ pub fn install(
     })
 }
 
+fn https_only(url: &str, allow_http: bool) -> Result<(), Failure> {
+    if url.starts_with("https://") || (allow_http && url.starts_with("http://")) {
+        Ok(())
+    } else {
+        Err(Failure::Download("the address is not https".into()))
+    }
+}
+
 fn download(options: &Options) -> Result<Vec<u8>, Failure> {
+    let fail = |e: &dyn fmt::Display| Failure::Download(short(&e.to_string()));
+    // Redirects are followed by hand, so every hop is checked.
     let agent = ureq::AgentBuilder::new()
+        .redirects(0)
         .timeout_connect(options.connect_timeout)
         .timeout_read(options.stall_timeout)
         .build();
-    let response = agent
-        .get(&options.zip_url)
-        .set(
-            "User-Agent",
-            concat!(
-                "Dutchman-fusion-exporter-install/",
-                env!("CARGO_PKG_VERSION")
-            ),
-        )
-        .call()
-        .map_err(|e| Failure::Download(short(&e.to_string())))?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(MAX_ZIP_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| Failure::Download(short(&e.to_string())))?;
-    if bytes.len() as u64 > MAX_ZIP_BYTES {
-        return Err(Failure::Download("the file is too large".into()));
+    let started = std::time::Instant::now();
+    let mut url = options.zip_url.clone();
+    for _ in 0..6 {
+        https_only(&url, options.allow_http)?;
+        let response = agent
+            .get(&url)
+            .set(
+                "User-Agent",
+                concat!(
+                    "Dutchman-fusion-exporter-install/",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            )
+            .call()
+            .map_err(|e| fail(&e))?;
+        if matches!(response.status(), 301 | 302 | 303 | 307 | 308) {
+            url = response
+                .header("Location")
+                .ok_or_else(|| fail(&"a redirect without an address"))?
+                .to_owned();
+            continue;
+        }
+        if response.status() != 200 {
+            return Err(fail(&format!("status {}", response.status())));
+        }
+        // Read in pieces: each read may stall for `stall_timeout` at most, and the whole
+        // download for `deadline`.
+        let mut reader = response.into_reader().take(MAX_ZIP_BYTES + 1);
+        let mut bytes = Vec::new();
+        let mut chunk = vec![0u8; 64 << 10];
+        loop {
+            if started.elapsed() > options.deadline {
+                return Err(fail(&"the download took too long"));
+            }
+            let n = reader.read(&mut chunk).map_err(|e| fail(&e))?;
+            if n == 0 {
+                break;
+            }
+            bytes.extend_from_slice(chunk.get(..n).unwrap_or_default());
+        }
+        if bytes.len() as u64 > MAX_ZIP_BYTES {
+            return Err(Failure::Download("the file is too large".into()));
+        }
+        return Ok(bytes);
     }
-    Ok(bytes)
+    Err(fail(&"too many redirects"))
 }
 
 fn short(text: &str) -> String {
@@ -267,22 +361,36 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Unpacks `<top>/FusionBulkExport/...` from the zip into `dest`.
-fn unpack(zip: &[u8], dest: &Path) -> Result<(), String> {
+/// Unpacks `FusionBulkExport-<version>/FusionBulkExport/...` from the zip into `dest`. Every
+/// entry must sit under that release folder, with a name that stays inside it and no symlinks;
+/// at most `cap` bytes are written in all, counted as they are written.
+fn unpack(zip: &[u8], dest: &Path, version: &str, cap: u64) -> Result<(), String> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| e.to_string())?;
-    let mut total = 0u64;
+    if archive.len() > MAX_ENTRIES {
+        return Err("the download holds too many files".into());
+    }
+    let top = format!("FusionBulkExport-{version}");
+    let mut left = cap;
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let Some(path) = entry.enclosed_name() else {
-            continue;
-        };
+        let bad = |why: &str| format!("the download is not the expected release ({why})");
+        let path = entry
+            .enclosed_name()
+            .ok_or_else(|| bad("an entry leaves its folder"))?;
         let parts: Vec<_> = path.components().collect();
-        // Only the add-in folder inside the release folder.
-        let (Some(first), true) = (parts.get(1), parts.len() >= 2) else {
-            continue;
-        };
-        if first.as_os_str() != ADDIN {
+        if parts.first().map(|c| c.as_os_str()) != Some(std::ffi::OsStr::new(&top)) {
+            return Err(bad("wrong top folder"));
+        }
+        if entry
+            .unix_mode()
+            .is_some_and(|m| m & 0o170_000 == 0o120_000)
+        {
+            return Err(bad("a symbolic link"));
+        }
+        // Only the add-in folder inside the release folder; the rest (README, installers) is
+        // not installed.
+        if parts.get(1).map(|c| c.as_os_str()) != Some(std::ffi::OsStr::new(ADDIN)) {
             continue;
         }
         let relative: PathBuf = parts.iter().skip(2).collect();
@@ -294,13 +402,13 @@ fn unpack(zip: &[u8], dest: &Path) -> Result<(), String> {
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        total += entry.size();
-        if total > MAX_UNPACKED_BYTES {
+        let mut file = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        let written = std::io::copy(&mut (&mut entry).take(left + 1), &mut file)
+            .map_err(|e| e.to_string())?;
+        if written > left {
             return Err("the add-in is larger than expected".into());
         }
-        let mut file = std::fs::File::create(&out).map_err(|e| e.to_string())?;
-        std::io::copy(&mut (&mut entry).take(MAX_UNPACKED_BYTES), &mut file)
-            .map_err(|e| e.to_string())?;
+        left -= written;
         file.flush().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -403,6 +511,8 @@ mod tests {
             addins: addins.to_path_buf(),
             connect_timeout: Duration::from_secs(2),
             stall_timeout: Duration::from_secs(2),
+            deadline: Duration::from_secs(20),
+            allow_http: true,
         }
     }
 
@@ -549,6 +659,206 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_rollback_keeps_the_only_copy_of_the_old_add_in() {
+        let zip = release_zip("0.4.0");
+        let url = serve(zip.clone());
+        let addins = tempfile::tempdir().unwrap();
+        plant(addins.path(), "0.3.5");
+        let calls = std::cell::Cell::new(0);
+        let result = install_with(
+            &options(addins.path(), url, &zip, "0.4.0"),
+            &|| false,
+            &mut |_| {},
+            &|from, to| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    std::fs::rename(from, to)
+                } else {
+                    Err(std::io::Error::other("simulated"))
+                }
+            },
+        );
+        let Err(Failure::Write(why)) = result else {
+            panic!("expected a write failure");
+        };
+        assert!(why.contains("It is kept in"), "{why}");
+        let kept = addins
+            .path()
+            .read_dir()
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with(STAGING_PREFIX)
+            })
+            .expect("staging folder kept");
+        assert!(why.contains(kept.join("old").to_str().unwrap()), "{why}");
+        assert!(kept.join("old/old-file.py").is_file());
+        // The next install leaves that folder alone: it holds the previous add-in.
+        let url = serve(zip.clone());
+        run(&options(addins.path(), url, &zip, "0.4.0"), false).unwrap();
+        assert!(kept.join("old/old-file.py").is_file());
+    }
+
+    #[test]
+    fn staging_folders_a_crash_left_are_removed() {
+        let zip = release_zip("0.4.0");
+        let url = serve(zip.clone());
+        let addins = tempfile::tempdir().unwrap();
+        let stale = addins.path().join(format!("{STAGING_PREFIX}abc123"));
+        std::fs::create_dir_all(stale.join("FusionBulkExport")).unwrap();
+        std::fs::create_dir_all(addins.path().join("Other")).unwrap();
+        run(&options(addins.path(), url, &zip, "0.4.0"), false).unwrap();
+        assert!(!stale.exists());
+        assert!(addins.path().join("Other").is_dir());
+    }
+
+    #[test]
+    fn only_https_is_downloaded_outside_tests() {
+        let zip = release_zip("0.4.0");
+        let addins = tempfile::tempdir().unwrap();
+        let mut o = options(addins.path(), serve(zip.clone()), &zip, "0.4.0");
+        o.allow_http = false;
+        assert!(matches!(run(&o, false), Err(Failure::Download(w)) if w.contains("https")));
+        assert!(entries(addins.path()).is_empty());
+        assert!(
+            Options::pinned().is_ok_and(|o| !o.allow_http && o.zip_url.starts_with("https://"))
+                || addins_dir().is_none()
+        );
+    }
+
+    #[test]
+    fn a_trickling_download_hits_the_overall_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n");
+                for _ in 0..100 {
+                    if stream.write_all(b"x").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        let addins = tempfile::tempdir().unwrap();
+        let mut o = options(
+            addins.path(),
+            format!("http://127.0.0.1:{port}/x.zip"),
+            b"",
+            "0.4.0",
+        );
+        o.deadline = Duration::from_millis(600);
+        let started = std::time::Instant::now();
+        assert!(matches!(run(&o, false), Err(Failure::Download(_))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(entries(addins.path()).is_empty());
+    }
+
+    /// A zip with the given `(name, body, unix mode)` entries.
+    fn zip_of(files: &[(&str, &str, Option<u32>)]) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        for (name, body, mode) in files {
+            let o = zip::write::SimpleFileOptions::default();
+            if *mode == Some(0o120_777) {
+                zip.add_symlink(*name, *body, o).unwrap();
+                continue;
+            }
+            let o = mode.map_or(o, |m| o.unix_permissions(m));
+            zip.start_file(*name, o).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        out.into_inner()
+    }
+
+    fn unpacked(
+        files: &[(&str, &str, Option<u32>)],
+        cap: u64,
+    ) -> (Result<(), String>, PathBuf, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("FusionBulkExport");
+        let result = unpack(&zip_of(files), &dest, "0.4.0", cap);
+        (result, dest, dir)
+    }
+
+    const MANIFEST: &str = "FusionBulkExport-0.4.0/FusionBulkExport/FusionBulkExport.manifest";
+
+    #[test]
+    fn unpacking_refuses_entries_that_leave_their_folder() {
+        for name in [
+            "FusionBulkExport-0.4.0/FusionBulkExport/../../escape.txt",
+            "../escape.txt",
+            "/etc/escape.txt",
+        ] {
+            let (result, dest, dir) =
+                unpacked(&[(MANIFEST, "{}", None), (name, "x", None)], 1 << 20);
+            assert!(result.is_err(), "{name}");
+            assert!(!dir.path().join("escape.txt").exists(), "{name}");
+            assert!(!dest.join("escape.txt").exists(), "{name}");
+        }
+    }
+
+    #[test]
+    fn unpacking_refuses_symlinks_and_the_wrong_top_folder() {
+        let link = "FusionBulkExport-0.4.0/FusionBulkExport/link";
+        let (result, _, _) = unpacked(
+            &[
+                (MANIFEST, "{}", None),
+                (link, "/etc/passwd", Some(0o120_777)),
+            ],
+            1 << 20,
+        );
+        assert!(result.is_err_and(|e| e.contains("symbolic link")));
+        let wrong = "FusionBulkExport-0.3.5/FusionBulkExport/FusionBulkExport.manifest";
+        let (result, _, _) = unpacked(&[(wrong, "{}", None)], 1 << 20);
+        assert!(result.is_err_and(|e| e.contains("top folder")));
+        let (result, _, _) = unpacked(
+            &[(MANIFEST, "{}", None), ("Other/x.txt", "x", None)],
+            1 << 20,
+        );
+        assert!(result.is_err());
+        let ok = unpacked(
+            &[
+                (MANIFEST, "{}", None),
+                ("FusionBulkExport-0.4.0/README.txt", "r", None),
+            ],
+            1 << 20,
+        );
+        assert!(ok.0.is_ok());
+        assert!(!ok.1.join("README.txt").exists());
+    }
+
+    #[test]
+    fn unpacking_caps_the_bytes_actually_written() {
+        let big = "x".repeat(600);
+        let files = [
+            (MANIFEST, "{}", None),
+            (
+                "FusionBulkExport-0.4.0/FusionBulkExport/a.bin",
+                big.as_str(),
+                None,
+            ),
+            (
+                "FusionBulkExport-0.4.0/FusionBulkExport/b.bin",
+                big.as_str(),
+                None,
+            ),
+        ];
+        let (result, _, _) = unpacked(&files, 1000);
+        assert!(result.is_err_and(|e| e.contains("larger than expected")));
+        let (result, _, _) = unpacked(&files, 1300);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn the_pin_keeps_its_parts_together() {
         assert!(PIN
             .zip_url
@@ -599,6 +909,8 @@ mod tests {
             addins: addins.path().to_path_buf(),
             connect_timeout: Duration::from_secs(5),
             stall_timeout: Duration::from_secs(5),
+            deadline: Duration::from_secs(20),
+            allow_http: true,
         };
         let done = run(&o, false).unwrap();
         assert_eq!(done.version, "0.4.0");

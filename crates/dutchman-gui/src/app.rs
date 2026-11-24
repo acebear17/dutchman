@@ -641,8 +641,6 @@ impl App {
         }
     }
 
-    /// Supplies a saved account for UI previews without contacting Onshape.
-    #[doc(hidden)]
     /// Shows the Export from Fusion window in a given state, for tests and screenshots.
     #[doc(hidden)]
     pub fn preview_fusion(
@@ -655,6 +653,8 @@ impl App {
         self.fusion.preview(offered, presence, installed, step);
     }
 
+    /// Supplies a saved account for UI previews without contacting Onshape.
+    #[doc(hidden)]
     pub fn preview_onshape(&mut self, user: Option<&str>) {
         self.onshape.preview(user);
     }
@@ -2687,14 +2687,6 @@ impl App {
                     let (_, clipboard) = (self.clipboard)();
                     self.onshape.toggle(ui.ctx(), &clipboard);
                 }
-                if self.fusion.offered()
-                    && ui
-                        .button("Export from Fusion")
-                        .on_hover_text("Find the Fusion exporter in your Fusion, or install it")
-                        .clicked()
-                {
-                    self.fusion.toggle(ui.ctx());
-                }
             });
             if self.downloading {
                 ui.horizontal(|ui| {
@@ -3148,6 +3140,14 @@ impl App {
                     ui.label(dutchman::tool_library::WORDS);
                 });
             });
+            if self.fusion.offered()
+                && ui
+                    .button("Export from Fusion")
+                    .on_hover_text("Find the Fusion exporter in your Fusion, or install it")
+                    .clicked()
+            {
+                self.fusion.toggle(ui.ctx());
+            }
         });
         if self.running() && self.diagnostic_stopped {
             ui.label(RichText::new(report_panel::STOPPING).color(p.lantern_text));

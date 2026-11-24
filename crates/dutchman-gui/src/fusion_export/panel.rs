@@ -525,6 +525,8 @@ mod tests {
             addins: addins.path().to_path_buf(),
             connect_timeout: Duration::from_secs(2),
             stall_timeout: Duration::from_secs(2),
+            deadline: Duration::from_secs(20),
+            allow_http: true,
         });
         let mut h = harness(panel);
         h.run();

@@ -24,6 +24,8 @@ use dutchman_gui::App;
 /// never the real diagnostics folder (CI runs these tests without the test-support feature).
 fn test_app(cc: &eframe::CreationContext<'_>) -> App {
     dutchman_gui::worker::convert_in_process_for_tests();
+    // The Export from Fusion button is there on Windows and macOS; lay it out on Linux too.
+    dutchman_gui::fusion_export::install::offer_everywhere_for_tests();
     static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let folder = FOLDER.get_or_init(|| {
         std::env::temp_dir().join(format!(
@@ -1342,7 +1344,7 @@ fn update_window_stays_clear_of_the_header_controls() {
     for width in [520.0, 900.0, 1440.0] {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(width, 900.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .updater
@@ -1401,7 +1403,7 @@ fn update_window_stays_clear_of_the_header_controls() {
 fn update_notes_open_at_the_top_each_time() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 760.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     let long: String = (1..=60)
         .map(|n| format!("Line number {n} of the notes.\n\n"))
         .collect();
