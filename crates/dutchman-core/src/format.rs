@@ -155,7 +155,7 @@ impl Format {
             Self::Rhino => Some("rhino"),
             Self::Acis => Some("sat"),
             Self::Step => Some("step"),
-            Self::OnshapeBundle => Some("onshape-bundle"),
+            Self::OnshapeBundle => Some("onshape"),
             Self::Iges => Some("iges"),
         }
     }

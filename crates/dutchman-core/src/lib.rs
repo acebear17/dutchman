@@ -19,8 +19,6 @@ mod input_edges;
 mod locate;
 mod memory;
 mod names;
-#[cfg(feature = "onshape")]
-mod onshape;
 pub mod parallel;
 mod part_positions;
 pub mod parts;

@@ -198,61 +198,32 @@ impl PlanningLimits {
     }
 }
 
-#[cfg(feature = "onshape")]
-pub(crate) fn onshape_failure(error: CodecError) -> Error {
-    let message = match &error {
-        CodecError::ResourceLimit(resource) => format!("{error} during {}", resource.operation),
-        _ => error.to_string(),
+/// The STEP export of an Onshape bundle's root Part Studio, the shape its history is checked
+/// against. The root is the manifest's `root_element`, or its only element.
+fn onshape_root_step(bytes: &[u8]) -> Option<String> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+    let mut text = |name: &str| -> Option<String> {
+        let member = archive.by_name(name).ok()?;
+        let mut out = String::new();
+        member.take(MAX_INPUT_BYTES).read_to_string(&mut out).ok()?;
+        Some(out)
     };
-    Error::Decode(message)
-}
-
-/// Decode a bundle's STEP member in its parent's resource session and panic guard.
-#[cfg(feature = "onshape")]
-pub(crate) fn onshape_step(
-    ctx: &DecodeContext<'_>,
-    path: &Path,
-    bytes: &[u8],
-    report: &mut Report,
-    progress: Option<&crate::Progress<'_>>,
-) -> Result<Model, Error> {
-    if let Some(progress) = progress {
-        progress.stage(Stage::Decode);
-    }
-    let catalog = InputCatalog::with_builtins();
-    let forced = forced_input("step").map_err(|error| Error::Decode(error.to_string()))?;
-    let root = View::over_retained(bytes);
-    let ResolvedSource::Native { codec, .. } = catalog
-        .resolve_source(ctx, root, forced)
-        .map_err(|error| Error::Decode(error.to_string()))?
-    else {
-        return Err(Error::Decode(
-            "Onshape STEP decoder is not available".into(),
-        ));
+    let manifest: serde_json::Value = serde_json::from_str(&text("manifest.json")?).ok()?;
+    let root = match manifest
+        .get("root_element")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(root) if !root.is_empty() => root.to_owned(),
+        _ => match manifest.get("elements")?.as_array()?.as_slice() {
+            [only] => only.get("id")?.as_str()?.to_owned(),
+            _ => return None,
+        },
     };
-    let _depth = ctx
-        .enter_nested("Onshape STEP member")
-        .map_err(|error| Error::Decode(error.to_string()))?;
-    let decoded = codec
-        .decode_with_context(ctx, root)
-        .map_err(|error| decode_failure(Format::Step, error))?;
-    let (ir, decoded_report, fidelity) = decoded.into_parts();
-    if !decoded_report.geometry_transferred() {
-        return Err(Error::Decode(
-            "no geometry could be read from the Onshape STEP member".into(),
-        ));
+    if !root.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
     }
-    report.extend_from_cadmpeg(&decoded_report.losses);
-    Ok(Model {
-        ir,
-        fidelity: Some(fidelity),
-        name: design_name(path),
-        source_file: path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned()),
-        assembly: None,
-        source_step: None,
-    })
+    text(&format!("partstudios/{root}/export.step"))
 }
 
 /// Full drawing decode uses the same detector, limits, validation and panic guard. A
@@ -334,36 +305,6 @@ fn decode_unguarded(
 ) -> Result<Model, Error> {
     if let Some(planning) = planning {
         planning.check_time()?;
-    }
-    #[cfg(feature = "onshape")]
-    if !drawings && format == Format::OnshapeBundle {
-        let failure = |error| {
-            if planning.is_some() && matches!(&error, CodecError::ResourceLimit(_)) {
-                Error::MemoryBudget(format!("planning decoder resource limit reached: {error}"))
-            } else {
-                onshape_failure(error)
-            }
-        };
-        let arena = DecodeArena::new();
-        let (ctx, _) = DecodeContext::from_root_bytes(bytes, &arena, &policy).map_err(failure)?;
-        let result = crate::onshape::read(&ctx, path, bytes, report, progress);
-        ctx.finish_session().map_err(failure)?;
-        let mut model = result?;
-        if let Some(planning) = planning {
-            planning.check_features(
-                model
-                    .ir
-                    .model
-                    .features
-                    .len()
-                    .max(model.ir.design.features.len()),
-            )?;
-        }
-        with_fallback(&mut model.ir, report, &policy, bytes.len() as u64)?;
-        if let Some(planning) = planning {
-            planning.check_time()?;
-        }
-        return Ok(model);
     }
     let catalog = InputCatalog::with_builtins();
     let selection = Phase::new(
@@ -483,9 +424,11 @@ fn decode_unguarded(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned()),
         assembly: None,
-        source_step: (format == Format::Step)
-            .then(|| String::from_utf8(bytes.to_vec()).ok())
-            .flatten(),
+        source_step: match format {
+            Format::Step => String::from_utf8(bytes.to_vec()).ok(),
+            Format::OnshapeBundle => onshape_root_step(bytes),
+            _ => None,
+        },
     };
     if let Some(sink) = progress.and_then(|p| p.members.as_ref()) {
         sink.model(&model);
@@ -1342,23 +1285,6 @@ mod tests {
         // Not STEP text, or no product: not judged empty.
         assert!(!step_holds_no_shapes(b"\x00\x01 PRODUCT("));
         assert!(!step_holds_no_shapes(b"ISO-10303-21;\nDATA;\nENDSEC;\n"));
-    }
-
-    #[cfg(feature = "onshape")]
-    #[test]
-    fn onshape_resource_refusal_keeps_the_caller_operation() {
-        let mut policy = policy();
-        policy.limits.max_entities = 2;
-        let arena = DecodeArena::new();
-        let (ctx, _) = DecodeContext::from_root_bytes(&[], &arena, &policy).unwrap();
-        assert!(ctx
-            .charge_entities(3, "synthetic Onshape asset admission")
-            .is_err());
-        let error = onshape_failure(ctx.finish_session().unwrap_err()).to_string();
-        assert!(
-            error.contains("Entities") && error.contains("synthetic Onshape asset admission"),
-            "{error}"
-        );
     }
 
     #[test]
