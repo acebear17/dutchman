@@ -10140,6 +10140,16 @@ fn polygon_attached_plate(points: &[[f64; 2]], edge: usize, top: bool) -> Model 
     model
 }
 
+/// Where the plate feature's input topology is in the arena, which cadmpeg writes in id order.
+fn plate_input_index(wire: &Value) -> usize {
+    wire["model"]["feature_input_topologies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|state| state["input_of"] == "f3d:model:feature#4")
+        .unwrap()
+}
+
 const L_BASE: [[f64; 2]; 6] = [
     [0.0, 0.0],
     [30.0, 0.0],
@@ -10304,7 +10314,8 @@ fn attached_plates_refuse_unproven_nonrectangular_base_picks() {
     ] {
         let mut model = polygon_attached_plate(&L_BASE, 3, true);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["model"]["feature_input_topologies"][0]["edge_geometry"][0][field] = point;
+        let plate = plate_input_index(&wire);
+        wire["model"]["feature_input_topologies"][plate]["edge_geometry"][0][field] = point;
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (_, report) = convert(
             &model,
@@ -10399,7 +10410,8 @@ fn attached_plates_name_curved_base_profiles_and_thickness_edge_picks() {
 
     let mut model = polygon_attached_plate(&L_BASE, 3, true);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["feature_input_topologies"][0]["edge_geometry"][0] = json!({
+    let plate = plate_input_index(&wire);
+    wire["model"]["feature_input_topologies"][plate]["edge_geometry"][0] = json!({
         "edge": "test:sheet:historical-edge#front",
         "start": {"x":10.0,"y":10.0,"z":0.0},
         "end": {"x":10.0,"y":10.0,"z":1.0},
