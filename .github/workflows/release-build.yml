@@ -236,7 +236,8 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    runs-on: macos-latest
+    # Walk branch only: macos-latest (arm64) was starved of hosted runners on 2026-11-24.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -264,7 +265,7 @@ jobs:
   # Reuse the checked archives for the universal archive and disk image; no second Rust build.
   macos:
     needs: macos-build
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
