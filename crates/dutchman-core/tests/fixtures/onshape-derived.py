@@ -23,10 +23,14 @@ def generate(cli):
     source_extrude["name"] = "Tool"
     source_extrude["parameters"][-1]["expression"] = "4 mm"
     host = [shapes.rectangle("Base sketch"), shapes.extrude(),
-            shapes.feature("importDerived", "Derived", [shapes.param(
-                "partStudio", "BTMParameterReferencePartStudio", value={
-                    "documentId": D, "versionId": V, "elementId": E})]),
-            shapes.feature("boolean", "Cut", [shapes.enum("operationType", "SUBTRACTION"),
+            shapes.feature("importDerived", "Derived", [
+                shapes.param("newUI", "BTMParameterBoolean-144", value=True),
+                # The importDerived feature specification's partStudio record, at its defaults.
+                shapes.param("partStudio", "BTMParameterReferencePartStudio-3302",
+                    documentId=D, versionId=V, elementId=E, namespace="", configuration=[],
+                    partIdentity=None, partQuery=shapes.param(
+                        "partQuery", "BTMParameterQueryList-148", queries=[]))]),
+            shapes.feature("booleanBodies", "Cut", [shapes.enum("operationType", "SUBTRACTION"),
                 shapes.query("targets", deterministicIds=["base"]),
                 shapes.query("tools", deterministicIds=["inserted"]),
                 shapes.param("keepTools", "BTMParameterBoolean", value=False)])]

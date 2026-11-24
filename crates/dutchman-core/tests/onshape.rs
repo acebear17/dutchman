@@ -212,11 +212,12 @@ fn custom_feature_stop_uses_its_id_when_the_name_is_absent() {
         }
     });
     let (_, report) = read(&bytes).unwrap();
-    assert!(report.losses().iter().any(|l| l
-        .detail
-        .ends_with("; subject: Custom feature")
-        && l.detail
-            .contains("custom FeatureScript feature Custom feature")));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|l| l.detail.ends_with("; subject: Custom feature")
+            && l.detail
+                .contains("custom FeatureScript feature Custom feature")));
 }
 
 #[test]
@@ -1734,10 +1735,8 @@ fn derived_studio_keeps_neutral_reference_and_generated_boolean_operands() {
 fn derived_resolved_parts_can_select_the_entire_referenced_studio() {
     let bytes = changed(&fixture("derived"), |path, value| {
         if path == "partstudios/studio/features.json" {
-            value["features"][2]["parameters"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"parameterId":"parts", "queries":[{"deterministicIds":["tool"]}]}));
+            value["features"][2]["parameters"][1]["partQuery"]["queries"] =
+                json!([{"deterministicIds":["tool"]}]);
         }
     });
     let (model, report) = read(&bytes).unwrap();
@@ -1758,6 +1757,14 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
         "source-final-parts",
         "configuration",
         "placement",
+        "location",
+        "mate-connectors-off",
+        "sheet-metal",
+        "old-ui",
+        "part-identity",
+        "unspecified-parameter",
+        "old-derived-type",
+        "old-boolean-type",
         "subset",
         "source-query",
         "tools",
@@ -1783,26 +1790,50 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
                         .unwrap()
                         .push(json!({"parameterId":"offset","value":true})),
                     "missing" => {
-                        value["features"][2]["parameters"][0]["value"]["elementId"] =
+                        value["features"][2]["parameters"][1]["elementId"] =
                             json!("555555555555555555555555")
                     }
                     "version" => {
-                        value["features"][2]["parameters"][0]["value"]["versionId"] =
+                        value["features"][2]["parameters"][1]["versionId"] =
                             json!("666666666666666666666666")
                     }
                     "configuration" => {
-                        value["features"][2]["parameters"][0]["configuration"] = json!("size=large")
+                        value["features"][2]["parameters"][1]["configuration"] =
+                            json!([{"parameterId":"size","value":"large"}])
                     }
                     "placement" => value["features"][2]["parameters"]
                         .as_array_mut()
                         .unwrap()
+                        .push(json!({"btType":"BTMParameterEnum-145","parameterId":"placement","value":"AT_MATE_CONNECTOR"})),
+                    "location" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"location","queries":[{"deterministicIds":["connector"]}]})),
+                    "mate-connectors-off" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"includeMateConnectors","value":false})),
+                    "sheet-metal" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"preserveActiveSheetMetal","value":true})),
+                    "old-ui" => value["features"][2]["parameters"][0]["value"] = json!(false),
+                    "part-identity" => {
+                        value["features"][2]["parameters"][1]["partIdentity"] =
+                            json!({"id":"part"})
+                    }
+                    "unspecified-parameter" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
                         .push(json!({"parameterId":"mateConnector","value":true})),
+                    "old-derived-type" => value["features"][2]["featureType"] = json!("derived"),
+                    "old-boolean-type" => value["features"][3]["featureType"] = json!("boolean"),
                     "subset" => {
-                        value["features"][2]["parameters"][0]["queries"] =
+                        value["features"][2]["parameters"][1]["partQuery"]["queries"] =
                             json!([{"deterministicIds":["another-source-part"]}])
                     }
                     "source-query" => {
-                        value["features"][2]["parameters"][0]["queries"] = json!([{"deterministicIds":["tool"],"queryString":"opaque source selection"}])
+                        value["features"][2]["parameters"][1]["partQuery"]["queries"] = json!([{"deterministicIds":["tool"],"queryString":"opaque source selection"}])
                     }
                     "tools" => {
                         value["features"][3]["parameters"][2]["queries"][0]["deterministicIds"] =
@@ -1863,15 +1894,10 @@ fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
 }
 
 #[test]
-fn derived_booleans_keep_operation_and_tools_choice_without_guessing_body_order() {
-    for (source, op, keep) in [
-        ("UNION", "join", false),
-        ("INTERSECTION", "intersect", true),
-        ("SUBTRACTION", "cut", true),
-    ] {
+fn derived_subtraction_keeps_the_tools_choice_and_reads_the_targets() {
+    for keep in [false, true] {
         let bytes = changed(&fixture("derived"), |path, value| {
             if path == "partstudios/studio/features.json" {
-                value["features"][3]["parameters"][0]["value"] = json!(source);
                 value["features"][3]["parameters"]
                     .as_array_mut()
                     .unwrap()
@@ -1883,9 +1909,95 @@ fn derived_booleans_keep_operation_and_tools_choice_without_guessing_body_order(
         let (model, report) = read(&bytes).unwrap();
         let wire = timeline(&model);
         let operation = &wire["model"]["features"][3]["definition"]["value"]["value"];
-        assert_eq!(operation["op"], op, "{:?}", report.losses());
+        assert_eq!(operation["op"], "cut", "{:?}", report.losses());
         assert_eq!(operation["keep_tools"], keep);
     }
+}
+
+#[test]
+fn derived_union_and_intersection_over_peer_tools_stay_native_and_ignore_stale_targets() {
+    for source in ["UNION", "INTERSECTION"] {
+        for stale_targets in [false, true] {
+            let bytes = changed(&fixture("derived"), |path, value| {
+                if path == "partstudios/studio/features.json" {
+                    let parameters = value["features"][3]["parameters"].as_array_mut().unwrap();
+                    parameters[0]["value"] = json!(source);
+                    if stale_targets {
+                        // `targets` is hidden unless the operation is SUBTRACTION.
+                        parameters[1]["queries"] = json!([{"deterministicIds":["absent"]}]);
+                    } else {
+                        parameters.remove(1);
+                    }
+                }
+            });
+            let (model, report) = read(&bytes).unwrap();
+            assert_eq!(
+                kinds(&model),
+                ["sketch", "extrude", "stored_geometry", "native"],
+                "{source}: {:?}",
+                report.losses()
+            );
+            assert!(
+                report.losses().iter().any(|loss| loss.code.as_deref()
+                    == Some("onshape/history.not-supported")
+                    && loss.detail.contains("as peers")),
+                "{source}: {:?}",
+                report.losses()
+            );
+        }
+    }
+}
+
+#[test]
+fn derived_boolean_operation_is_exactly_union_subtraction_or_intersection() {
+    for source in ["ADD", "REMOVE", "INTERSECT"] {
+        let bytes = changed(&fixture("derived"), |path, value| {
+            if path == "partstudios/studio/features.json" {
+                value["features"][3]["parameters"][0]["value"] = json!(source);
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(
+            kinds(&model),
+            ["sketch", "extrude", "stored_geometry", "native"],
+            "{source}"
+        );
+        assert!(
+            report.losses().iter().any(|loss| loss
+                .detail
+                .contains("this Boolean operation is not supported yet")),
+            "{source}: {:?}",
+            report.losses()
+        );
+    }
+}
+
+#[test]
+fn derived_insert_accepts_the_import_derived_parameter_set_at_its_defaults() {
+    let bytes = changed(&fixture("derived"), |path, value| {
+        if path == "partstudios/studio/features.json" {
+            let parameters = value["features"][2]["parameters"].as_array_mut().unwrap();
+            parameters.extend([
+                json!({"btType":"BTMParameterBoolean-144","parameterId":"preserveActiveSheetMetal","value":false}),
+                json!({"btType":"BTMParameterQueryList-148","parameterId":"location","queries":[]}),
+                json!({"btType":"BTMParameterEnum-145","enumName":"DerivedPlacementType","parameterId":"placement","value":"AT_ORIGIN"}),
+                json!({"btType":"BTMParameterQuantity-147","isInteger":false,"parameterId":"mateConnectorIndex","units":"","expression":"-1","value":-1.0}),
+                json!({"btType":"BTMParameterQuantity-147","isInteger":false,"parameterId":"mateConnectorId","units":"","expression":"0","value":0.0}),
+                json!({"btType":"BTMParameterQuantity-147","isInteger":false,"parameterId":"mateConnectorIndexInFeature","units":"","expression":"-1","value":-1.0}),
+                json!({"btType":"BTMParameterBoolean-144","parameterId":"includeMateConnectors","value":true}),
+                json!({"btType":"BTMParameterBoolean-144","parameterId":"includeProperties","value":true}),
+                json!({"btType":"BTMParameterQueryList-148","parameterId":"parts","queries":[]}),
+                json!({"btType":"BTMParameterDerived-864","configuration":[],"imports":[],"namespace":"","parameterId":"buildFunction"}),
+            ]);
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "stored_geometry", "combine"],
+        "{:?}",
+        report.losses()
+    );
 }
 
 #[test]
@@ -1931,11 +2043,18 @@ fn derived_studios_validate_their_own_pin_and_continue_after_a_bad_reference_rec
                 .len(),
             if bad_record { 1 } else { 2 }
         );
-        assert_eq!(
-            report
+        assert!(
+            !report
                 .losses()
                 .iter()
                 .any(|loss| loss.code.as_deref() == Some("onshape/history.not-supported")),
+            "{:?}",
+            report.losses()
+        );
+        assert_eq!(
+            report.losses().iter().any(|loss| loss.code.as_deref()
+                == Some("onshape/record.malformed")
+                && loss.detail.contains("featureId is missing")),
             bad_record,
             "{:?}",
             report.losses()
