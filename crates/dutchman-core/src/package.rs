@@ -46,7 +46,9 @@ pub const MAX_AREAS: usize = 100_000;
 /// The most points all the areas of one package may carry.
 pub const MAX_OVERLAY_POINTS: usize = 5_000_000;
 /// The most points one loop may have.
-const MAX_RING_POINTS: usize = 200_000;
+const MAX_RING_POINTS: usize = 20_000;
+/// Segment pairs the loop checks may compare for the whole package.
+const MAX_RING_WORK: u64 = 20_000_000;
 /// The farthest from the origin an overlay point may be, in mm.
 const MAX_COORDINATE: f64 = 1.0e6;
 /// The most notes taken from a manifest; the rest are counted in one note.
@@ -335,10 +337,38 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
             dropped_parts.insert(entry.name);
             continue;
         }
+        if let Err(kind) = crate::placement::rigid(&transform) {
+            left_out(
+                report,
+                &mut assembly,
+                Some(&entry.name),
+                Some(file),
+                format!(
+                    "part \"{}\" is left out: its transform is not a rigid rotation and shift ({kind})",
+                    clip(&entry.name, 64)
+                ),
+            );
+            dropped_parts.insert(entry.name);
+            continue;
+        }
         for row in &mut transform {
             if let Some(shift) = row.get_mut(3) {
                 *shift *= scale;
             }
+        }
+        if transform.iter().flatten().any(|v| !v.is_finite()) {
+            left_out(
+                report,
+                &mut assembly,
+                Some(&entry.name),
+                Some(file),
+                format!(
+                    "part \"{}\" is left out: its shift is not finite once scaled to mm",
+                    clip(&entry.name, 64)
+                ),
+            );
+            dropped_parts.insert(entry.name);
+            continue;
         }
         let name = names.unique(&entry.name);
         if name != entry.name {
@@ -352,7 +382,8 @@ pub fn read_package(dir: &Path, manifest: &[u8], report: &mut Report) -> Result<
                 ),
             );
         }
-        placed.insert(entry.name.clone(), transform);
+        // The first part of a name is the one an overlay on that name follows.
+        placed.entry(entry.name.clone()).or_insert(transform);
         assembly.placements.push(Placement {
             unproven: false,
             name: Some(name),
@@ -624,6 +655,7 @@ fn overlays(
     report: &mut Report,
 ) {
     let mut points_left = MAX_OVERLAY_POINTS;
+    let mut work_left = MAX_RING_WORK;
     for value in list {
         let entry: OverlayEntry = match serde_json::from_value(value.clone()) {
             Ok(entry) => entry,
@@ -730,7 +762,7 @@ fn overlays(
                         return Err("would pass the point limit for the package".to_owned());
                     }
                     points_left -= used;
-                    validate_area(area, scale)
+                    validate_area(area, scale, &mut work_left)
                 });
             match checked {
                 Ok(area) => areas.push(area),
@@ -775,6 +807,13 @@ fn overlays(
                 model.name = clip(&entry.name, 200);
                 model.source_file = None;
                 let index = assembly.parts.len();
+                if index >= MAX_PARTS {
+                    dropped(
+                        report,
+                        format!("the package would pass {MAX_PARTS} parts; it is left out"),
+                    );
+                    continue;
+                }
                 assembly.parts.push(model);
                 assembly.definitions.push(None);
                 assembly.identities.push(None);
@@ -821,6 +860,11 @@ fn twice_area(ring: &[[f64; 2]]) -> f64 {
         .sum()
 }
 
+/// Whether two points are closer than the shortest edge that can be written (1e-6 mm).
+fn near(a: &[f64; 2], b: &[f64; 2]) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6
+}
+
 /// A loop as drawn: finite, in range, without repeated points or a repeated closing point, with
 /// at least three points, scaled to mm.
 fn clean_ring(points: &[[f64; 2]], scale: f64, what: &str) -> Result<Vec<[f64; 2]>, String> {
@@ -845,11 +889,11 @@ fn clean_ring(points: &[[f64; 2]], scale: f64, what: &str) -> Result<Vec<[f64; 2
                 "{what} has a point that is not finite or too far out"
             ));
         }
-        if out.last() != Some(&q) {
+        if out.last().is_none_or(|last| !near(last, &q)) {
             out.push(q);
         }
     }
-    while out.len() > 1 && out.first() == out.last() {
+    while out.len() > 1 && out.first().zip(out.last()).is_some_and(|(a, b)| near(a, b)) {
         out.pop();
     }
     if out.len() < 3 {
@@ -860,7 +904,7 @@ fn clean_ring(points: &[[f64; 2]], scale: f64, what: &str) -> Result<Vec<[f64; 2
 
 /// Checks one area: finite points, at least 3 in every loop, the outer loop counter-clockwise,
 /// holes clockwise and inside it, and no loop crossing or touching itself or another.
-fn validate_area(area: AreaEntry, scale: f64) -> Result<Area, String> {
+fn validate_area(area: AreaEntry, scale: f64, work_left: &mut u64) -> Result<Area, String> {
     let outer = clean_ring(&area.outer, scale, "the outer loop")?;
     let outer_area = twice_area(&outer);
     if outer_area == 0.0 {
@@ -884,12 +928,18 @@ fn validate_area(area: AreaEntry, scale: f64) -> Result<Area, String> {
             if !inside_ring(&outer, *first) {
                 return Err(format!("{what} is not inside the outer loop"));
             }
+            if let Some(other) = holes.iter().position(|h| inside_ring(h, *first)) {
+                return Err(format!(
+                    "{what} is inside hole {}; a hole inside a hole is not drawn",
+                    other.saturating_add(1)
+                ));
+            }
         }
         holes.push(ring);
     }
     let mut rings: Vec<&[[f64; 2]]> = vec![outer.as_slice()];
     rings.extend(holes.iter().map(Vec::as_slice));
-    if let Some(what) = crossing(&rings) {
+    if let Some(what) = crossing(&rings, work_left) {
         return Err(what);
     }
     Ok(Area { outer, holes })
@@ -950,7 +1000,7 @@ struct Segment {
 
 /// Why two segments of `rings` cross or touch where they should not, found by sweeping the
 /// segments in x order.
-fn crossing(rings: &[&[[f64; 2]]]) -> Option<String> {
+fn crossing(rings: &[&[[f64; 2]]], work_left: &mut u64) -> Option<String> {
     let mut segments = Vec::new();
     for (ring_index, ring) in rings.iter().enumerate() {
         for (index, (a, b)) in ring.iter().zip(ring.iter().cycle().skip(1)).enumerate() {
@@ -973,6 +1023,12 @@ fn crossing(rings: &[&[[f64; 2]]]) -> Option<String> {
             if t.min_x > s.max_x {
                 break;
             }
+            if *work_left == 0 {
+                return Some(
+                    "the package has more loop checking to do than the work limit allows".to_owned(),
+                );
+            }
+            *work_left = work_left.saturating_sub(1);
             if t.min_y > s.max_y || s.min_y > t.max_y {
                 continue;
             }
@@ -1680,6 +1736,214 @@ mod tests {
             Severity::Dropped,
             "overlay \"Copper top\""
         ));
+    }
+
+    fn one_area_overlay(areas: Value) -> Value {
+        manifest(json!({"overlays": [overlay("Copper top", areas)]}))
+    }
+
+    #[test]
+    fn a_comb_ring_passes_the_work_limit_and_the_area_is_refused_by_name() {
+        let dir = package("comb");
+        write_models(&dir);
+        let teeth = 4_990;
+        let mut ring = vec![json!([0.0, 0.0])];
+        for k in 0..teeth {
+            let y = f64::from(2 * k);
+            ring.push(json!([1000.0, y]));
+            ring.push(json!([1000.0, y + 1.0]));
+            ring.push(json!([1.0, y + 1.0]));
+            ring.push(json!([1.0, y + 2.0]));
+        }
+        ring.push(json!([0.0, f64::from(2 * teeth)]));
+        assert!(ring.len() <= MAX_RING_POINTS);
+        let m = one_area_overlay(json!([
+            {"outer": ring, "holes": []},
+            {"outer": square(5.0), "holes": []},
+        ]));
+        let started = std::time::Instant::now();
+        let (model, report) = read(&dir, &m);
+        assert!(started.elapsed().as_secs() < 30);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(&report, Severity::Degraded, "work limit"));
+        assert!(mentions(&report, Severity::Degraded, "area 1"));
+        // Placements still convert; the overlay survives only if an area was drawable.
+        assert!(assembly.placements.len() >= 3);
+    }
+
+    #[test]
+    fn a_ring_over_the_point_limit_is_refused() {
+        let points: Vec<Value> = (0..=MAX_RING_POINTS)
+            .map(|i| json!([f64::from(i as u32) * 0.001, 0.0]))
+            .collect();
+        let area = AreaEntry {
+            outer: serde_json::from_value(json!(points)).unwrap(),
+            holes: Vec::new(),
+        };
+        let err = validate_area(area, 1.0, &mut 1_000).unwrap_err();
+        assert!(err.contains("the limit is"), "{err}");
+    }
+
+    #[test]
+    fn a_hole_inside_another_hole_is_refused_by_name() {
+        let dir = package("holehole");
+        write_models(&dir);
+        let big = json!([[2.0, 2.0], [2.0, 12.0], [12.0, 12.0], [12.0, 2.0]]);
+        let small = json!([[4.0, 4.0], [4.0, 6.0], [6.0, 6.0], [6.0, 4.0]]);
+        let m = one_area_overlay(json!([
+            {"outer": square(20.0), "holes": [big, small]},
+            {"outer": square(5.0), "holes": []},
+        ]));
+        let (model, report) = read(&dir, &m);
+        assert!(model.is_ok());
+        assert!(mentions(&report, Severity::Degraded, "hole 2 is inside hole 1"));
+    }
+
+    #[test]
+    fn the_first_part_of_a_duplicate_name_is_the_one_an_overlay_follows() {
+        let dir = package("dupname");
+        write_models(&dir);
+        let mut m = manifest(json!({"overlays": [overlay(
+            "Copper top",
+            json!([{"outer": square(5.0), "holes": []}]),
+        )]}));
+        m["parts"].as_array_mut().unwrap().push(json!(
+            {"name": "Board", "model": "board", "transform": [[1,0,0,77],[0,1,0,0],[0,0,1,0]], "notes": []}
+        ));
+        let (model, _) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        let copper = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Copper top"))
+            .unwrap();
+        assert_eq!(copper.transform[0][3], 0.0);
+    }
+
+    #[test]
+    fn a_shift_that_overflows_once_scaled_is_left_out_by_name() {
+        let dir = package("overflow");
+        write_models(&dir);
+        let mut m = manifest(json!({"units": "m"}));
+        m["parts"][1]["transform"] = json!([[1,0,0,1.0e308],[0,1,0,0],[0,0,1,0]]);
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(&report, Severity::Dropped, "part \"C1\""));
+        assert!(mentions(&report, Severity::Dropped, "not finite once scaled"));
+        assert!(assembly
+            .placements
+            .iter()
+            .all(|p| p.transform.iter().flatten().all(|v| v.is_finite())));
+    }
+
+    #[test]
+    fn a_rotation_that_is_not_rigid_is_left_out_by_name() {
+        let dir = package("notrigid");
+        write_models(&dir);
+        let mut m = manifest(json!({}));
+        m["parts"][1]["transform"] = json!([[2,0,0,0],[0,1,0,0],[0,0,1,0]]);
+        m["parts"][2]["transform"] = json!([[1,0.5,0,0],[0,1,0,0],[0,0,1,0]]);
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(assembly.placements.len(), 1);
+        assert!(mentions(&report, Severity::Dropped, "part \"C1\""));
+        assert!(mentions(&report, Severity::Dropped, "part \"C2\""));
+        assert!(mentions(&report, Severity::Dropped, "not a rigid"));
+    }
+
+    #[test]
+    fn near_coincident_points_are_dropped_and_a_ring_left_too_small_is_refused_alone() {
+        let dir = package("near");
+        write_models(&dir);
+        let m = one_area_overlay(json!([
+            {"outer": [[0.0, 0.0], [5.0, 0.0], [5.0, 1e-8], [5.0, 5.0], [0.0, 5.0], [1e-8, 5.0]],
+             "holes": []},
+            {"outer": [[0.0, 0.0], [5.0, 0.0], [5.0, 1e-8]], "holes": []},
+        ]));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        let sheet = assembly
+            .placements
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Copper top"))
+            .expect("the good area is drawn");
+        let step = assembly.parts[sheet.part].source_step.as_deref().unwrap();
+        assert!(!step.contains("NaN") && !step.contains("inf"));
+        assert!(mentions(&report, Severity::Degraded, "1 area(s) left out"));
+        assert!(mentions(&report, Severity::Degraded, "fewer than 3 different"));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.severity != Severity::Dropped));
+    }
+
+    #[test]
+    fn overlay_sheets_count_toward_the_part_limit() {
+        let dir = package("partcap");
+        write_models(&dir);
+        let models: Vec<Value> = (0..MAX_PARTS - 1)
+            .map(|i| json!({"id": format!("m{i}"), "file": "cube.step"}))
+            .collect();
+        let parts: Vec<Value> = (0..MAX_PARTS - 1)
+            .map(|i| json!({"name": format!("P{i}"), "model": format!("m{i}"), "notes": []}))
+            .collect();
+        let sheet = |name: &str| {
+            let mut o = overlay(name, json!([{"outer": square(1.0), "holes": []}]));
+            o["part"] = json!("P0");
+            o
+        };
+        let m = manifest(json!({
+            "models": models, "parts": parts, "overlays": [sheet("S1"), sheet("S2")],
+        }));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert_eq!(assembly.parts.len(), MAX_PARTS);
+        assert!(mentions(&report, Severity::Dropped, "overlay \"S2\""));
+        assert!(mentions(&report, Severity::Dropped, "parts"));
+    }
+
+    #[test]
+    fn too_many_overlays_are_refused() {
+        let dir = package("manyoverlays");
+        write_models(&dir);
+        let list: Vec<Value> = (0..=MAX_OVERLAYS)
+            .map(|i| overlay(&format!("O{i}"), json!([])))
+            .collect();
+        let (model, _) = read(&dir, &manifest(json!({"overlays": list})));
+        assert!(matches!(model, Err(Error::Assembly(ref why)) if why.contains("overlays")));
+    }
+
+    #[test]
+    fn too_many_areas_drop_that_overlay_only() {
+        let dir = package("manyareas");
+        write_models(&dir);
+        let areas: Vec<Value> = (0..=MAX_AREAS).map(|_| json!(null)).collect();
+        let m = manifest(json!({"overlays": [
+            overlay("Huge", json!(areas)),
+            overlay("Fine", json!([{"outer": square(1.0), "holes": []}])),
+        ]}));
+        let (model, report) = read(&dir, &m);
+        let assembly = model.unwrap().assembly.unwrap();
+        assert!(mentions(&report, Severity::Dropped, "overlay \"Huge\""));
+        assert!(assembly
+            .placements
+            .iter()
+            .any(|p| p.name.as_deref() == Some("Fine")));
+    }
+
+    #[test]
+    fn windows_form_and_nul_file_names_are_refused() {
+        let dir = package("winpaths");
+        write_models(&dir);
+        for file in ["C:\\x.step", "\\\\server\\share\\x.step", "a\\b.step", "a\0b.step"] {
+            let mut m = manifest(json!({}));
+            m["models"][1]["file"] = json!(file);
+            let (model, _) = read(&dir, &m);
+            assert!(
+                matches!(model, Err(Error::Assembly(ref why)) if why.contains("refused")),
+                "{file:?}: {model:?}"
+            );
+        }
     }
 
     #[test]
