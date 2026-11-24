@@ -99,13 +99,14 @@ fn choose<'a>(insert: &Insert, references: &'a [Reference]) -> Option<&'a Refere
     // The reader states which design the insertion places: that identity (and version) is the
     // key. A stated identity that fits no listed design matches none, never a guess by name.
     if let Some(document_id) = insert.document_id.as_deref() {
-        let version = insert
-            .version
-            .as_deref()
-            .and_then(|version| version.trim().trim_start_matches('v').parse::<u64>().ok());
+        // A stated version that doesn't read as a number is no match, never "any version".
+        let version = match insert.version.as_deref() {
+            None => None,
+            Some(stated) => Some(stated.trim().trim_start_matches('v').parse::<u64>().ok()?),
+        };
         let mut found = references.iter().filter(|reference| {
             reference.id.as_deref() == Some(document_id)
-                && version.is_none_or(|stated| reference.version.is_none_or(|own| own == stated))
+                && version.is_none_or(|stated| reference.version == Some(stated))
         });
         return match (found.next(), found.next()) {
             (Some(only), None) => Some(only),
@@ -138,6 +139,29 @@ fn choose<'a>(insert: &Insert, references: &'a [Reference]) -> Option<&'a Refere
 
 type Loaded = Result<(usize, std::rc::Rc<Model>), (Stage, String)>;
 
+/// The most inserted design files read for one assembly, all levels together.
+const MAX_TOTAL_READS: usize = 4 * MAX_PARTS;
+
+/// The designs read so far for one assembly and everything nested in it: a design inserted by
+/// many parents, at any level, is decoded once.
+struct Reads {
+    files: BTreeMap<PathBuf, Loaded>,
+    /// The most files this may read in all.
+    cap: usize,
+    /// Files read so far; the next one's key in the placements.
+    read: usize,
+}
+
+impl Reads {
+    fn new(cap: usize) -> Self {
+        Self {
+            files: BTreeMap::new(),
+            cap,
+            read: 0,
+        }
+    }
+}
+
 /// Reads the designs an export folder holds for the insertions in `model` (read from
 /// `input`), found through its manifest: each insertion that matches a listed design, by the
 /// insertion's id. An insertion with no manifest, no match, or a design that cannot be read is
@@ -151,6 +175,83 @@ pub(crate) fn resolve(
     decode: &Decode,
     finder: &Finder,
     open: &mut Vec<PathBuf>,
+) -> ExternalParts {
+    resolve_in(
+        model,
+        input,
+        top,
+        report,
+        decode,
+        finder,
+        open,
+        &mut Reads::new(MAX_TOTAL_READS),
+    )
+}
+
+/// The files `model` (read from `input`) places from its export folder, one level down, that
+/// can be read: what a batch drops from its own results because an assembly places them. A
+/// design the manifest lists for the assembly but no insertion matches, or that cannot be
+/// read, is not among them.
+pub(crate) fn placed_files(
+    model: &Model,
+    input: &Path,
+    top: Option<&Path>,
+    decode: &Decode,
+) -> Vec<PathBuf> {
+    let inserts = unresolved_inserts(model);
+    let Some(Ok(listing)) = (!inserts.is_empty())
+        .then(|| export_folder::inserted(input, top))
+        .flatten()
+    else {
+        return Vec::new();
+    };
+    let mut placed: Vec<PathBuf> = Vec::new();
+    for insert in &inserts {
+        if let Some(reference) = choose(insert, &listing.references) {
+            if !placed.contains(&reference.file) && readable(&reference.file, decode) {
+                placed.push(reference.file.clone());
+            }
+        }
+    }
+    placed
+}
+
+/// Whether the decoder reads `file`, remembered until the file changes.
+fn readable(file: &Path, decode: &Decode) -> bool {
+    type Memo =
+        std::sync::Mutex<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64, bool)>>;
+    static MEMO: std::sync::OnceLock<Memo> = std::sync::OnceLock::new();
+    let memo = MEMO.get_or_init(Default::default);
+    let stamp = std::fs::metadata(file)
+        .ok()
+        .map(|meta| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len()));
+    if let (Some((when, len)), Ok(memo)) = (stamp, memo.lock()) {
+        if let Some((seen, size, ok)) = memo.get(file) {
+            if *seen == when && *size == len {
+                return *ok;
+            }
+        }
+    }
+    let ok = decode(Format::FusionArchive, file, &mut Report::default()).is_ok();
+    if let (Some((when, len)), Ok(mut memo)) = (stamp, memo.lock()) {
+        if memo.len() > 4096 {
+            memo.clear();
+        }
+        memo.insert(file.to_path_buf(), (when, len, ok));
+    }
+    ok
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_in(
+    model: &Model,
+    input: &Path,
+    top: Option<&Path>,
+    report: &mut Report,
+    decode: &Decode,
+    finder: &Finder,
+    open: &mut Vec<PathBuf>,
+    reads: &mut Reads,
 ) -> ExternalParts {
     let mut external = ExternalParts::new();
     let inserts = unresolved_inserts(model);
@@ -189,11 +290,29 @@ pub(crate) fn resolve(
         );
     }
     let key = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
-    if open.contains(&key) || open.len() >= MAX_DEPTH {
+    if open.contains(&key) {
+        report.push_at(
+            Stage::Input,
+            Severity::Info,
+            "export manifest",
+            "this design inserts itself, directly or through the designs it inserts; the \
+             insertion is not placed again",
+        );
+        return external;
+    }
+    if open.len() >= MAX_DEPTH {
+        report.push_at(
+            Stage::Input,
+            Severity::Info,
+            "export manifest",
+            format!(
+                "inserted designs nest over {MAX_DEPTH} deep; the designs inserted below this \
+                 level are not read"
+            ),
+        );
         return external;
     }
     open.push(key);
-    let mut files: BTreeMap<PathBuf, Loaded> = BTreeMap::new();
     for insert in &inserts {
         let Some(reference) = choose(insert, &listing.references) else {
             continue;
@@ -202,24 +321,39 @@ pub(crate) fn resolve(
             .file
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-        let count = files.len();
-        let loaded = files
-            .entry(reference.file.clone())
-            .or_insert_with(|| {
-                if count >= MAX_PARTS {
-                    return Err((
-                        Stage::Input,
-                        format!("over Dutchman's limit of {MAX_PARTS} part files"),
-                    ));
-                }
+        let loaded = match reads.files.get(&reference.file) {
+            Some(loaded) => loaded.clone(),
+            None if open.contains(&reference.file) => Err((
+                Stage::Input,
+                "the design inserts itself, directly or through the designs it inserts".to_owned(),
+            )),
+            None if reads.read >= reads.cap => Err((
+                Stage::Input,
+                format!(
+                    "over Dutchman's limit of {} inserted design files read for one assembly",
+                    reads.cap
+                ),
+            )),
+            None => {
+                let index = reads.read;
+                reads.read += 1;
                 let mut part_report = Report::default();
-                let read = read_design(reference, top, &mut part_report, decode, finder, open)
-                    .map(|part| (count, std::rc::Rc::new(part)))
-                    .map_err(|err| (err.stage(), err.to_string()));
+                let read = read_design(
+                    reference,
+                    top,
+                    &mut part_report,
+                    decode,
+                    finder,
+                    open,
+                    reads,
+                )
+                .map(|part| (index, std::rc::Rc::new(part)))
+                .map_err(|err| (err.stage(), err.to_string()));
                 report.append_prefixed(part_report, &file);
+                reads.files.insert(reference.file.clone(), read.clone());
                 read
-            })
-            .clone();
+            }
+        };
         let name = Some(insert.name.clone()).filter(|name| !name.is_empty());
         external.insert(
             insert.id.clone(),
@@ -265,13 +399,23 @@ fn read_design(
     decode: &Decode,
     finder: &Finder,
     open: &mut Vec<PathBuf>,
+    reads: &mut Reads,
 ) -> Result<Model, Error> {
     crate::names::saw_path(&reference.file, report);
     let mut part = decode(Format::FusionArchive, &reference.file, report)?;
     if let Some(name) = &reference.name {
         part.name.clone_from(name);
     }
-    let nested = resolve(&part, &reference.file, top, report, decode, finder, open);
+    let nested = resolve_in(
+        &part,
+        &reference.file,
+        top,
+        report,
+        decode,
+        finder,
+        open,
+        reads,
+    );
     match local_components_with_threads(
         &part,
         &nested,
@@ -533,5 +677,306 @@ mod tests {
             &mut Vec::new(),
         );
         assert!(external.is_empty());
+    }
+
+    fn at(key: usize, name: &str, transform: Value) -> Value {
+        json!({"id": format!("synthetic:assembly:occurrence#{key}"), "ordinal": key, "name": name,
+               "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+               "transform": transform, "scale": [1.0, 1.0, 1.0]})
+    }
+
+    /// A cube that inserts the designs in `inserts`.
+    fn inserting(inserts: Vec<Value>) -> Model {
+        let mut model = cube();
+        model.ir.model.occurrences = serde_json::from_value(Value::Array(inserts)).unwrap();
+        model.ir.model.product_definitions = Vec::new();
+        model
+    }
+
+    /// An export folder with the designs `names` (each `<name> v1.f3d`) and a manifest in
+    /// which each lists the designs after `->` as references.
+    fn folder_of(listing: &[(&str, &[&str])]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let entries: Vec<Value> = listing
+            .iter()
+            .map(|(name, inserts)| {
+                std::fs::write(dir.path().join(format!("{name} v1.f3d")), b"x").unwrap();
+                let references: Vec<Value> = inserts
+                    .iter()
+                    .map(|child| json!({"id": format!("urn:x:{child}"), "version": 1}))
+                    .collect();
+                json!({"id": format!("urn:x:{name}"), "name": name, "version": 1,
+                       "references": references, "files": [{"path": format!("{name} v1.f3d")}]})
+            })
+            .collect();
+        std::fs::write(
+            dir.path().join(export_folder::MANIFEST),
+            serde_json::to_vec(&json!({"entries": entries})).unwrap(),
+        )
+        .unwrap();
+        dir
+    }
+
+    const SHIFT: [[f64; 4]; 3] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+
+    #[test]
+    fn a_stated_version_that_does_not_read_is_no_match() {
+        let listed = [reference("Screw", 2)];
+        let stated = |version: &str| Insert {
+            id: "i".into(),
+            name: String::new(),
+            document_id: Some("urn:x:Screw".into()),
+            version: Some(version.into()),
+        };
+        assert!(choose(&stated("2"), &listed).is_some());
+        assert!(choose(&stated("v2"), &listed).is_some());
+        for version in ["", "two", "2.1", "-2", "latest"] {
+            assert!(choose(&stated(version), &listed).is_none(), "{version:?}");
+        }
+    }
+
+    #[test]
+    fn nested_insertions_compose_child_inside_parent_inside_root() {
+        // Root places Mid turned a quarter turn about Z at x = 100; Mid places Leaf at x = 10.
+        let dir = folder_of(&[("Asm", &["Mid"]), ("Mid", &["Leaf"]), ("Leaf", &[])]);
+        let turn = json!([
+            [0.0, -1.0, 0.0, 100.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ]);
+        let leaf = json!([
+            [1.0, 0.0, 0.0, 10.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ]);
+        let root = inserting(vec![at(1, "Mid v1:1", turn)]);
+        let decode = |_: Format, path: &Path, _: &mut Report| -> Result<Model, Error> {
+            Ok(match path.file_name().unwrap().to_str().unwrap() {
+                "Mid v1.f3d" => inserting(vec![at(1, "Leaf v1:1", leaf.clone())]),
+                _ => cube(),
+            })
+        };
+        let mut report = Report::default();
+        let external = resolve(
+            &root,
+            &dir.path().join("Asm v1.f3d"),
+            None,
+            &mut report,
+            &decode,
+            &Finder::default(),
+            &mut Vec::new(),
+        );
+        let (assembly, _) = local_components_with_threads(
+            &root,
+            &external,
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        let index = |assembly: &Assembly, name: &str| {
+            assembly
+                .placements
+                .iter()
+                .position(|placement| placement.name.as_deref() == Some(name))
+                .unwrap()
+        };
+        let mid = index(&assembly, "Mid v1:1");
+        let inner = assembly.parts[assembly.placements[mid].part]
+            .assembly
+            .as_ref()
+            .unwrap();
+        let leaf = index(inner, "Leaf v1:1");
+        // The leaf's own placement is stored relative to Mid, untouched.
+        assert_eq!(inner.placements[leaf].transform[0][3], 10.0);
+        // In the world: turned by Mid, then moved by Mid: (100, 10, 0), not (110, 0, 0).
+        let world = world_at(&assembly, &[mid, leaf]).unwrap();
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(near(world[0][3], 100.0), "{world:?}");
+        assert!(near(world[1][3], 10.0), "{world:?}");
+        assert!(near(world[2][3], 0.0), "{world:?}");
+        assert!(
+            near(world[1][0], 1.0) && near(world[0][1], -1.0),
+            "{world:?}"
+        );
+    }
+
+    #[test]
+    fn a_design_inserted_by_many_parents_is_read_once_across_levels() {
+        let dir = folder_of(&[
+            ("Asm", &["A", "B"]),
+            ("A", &["Screw"]),
+            ("B", &["Screw"]),
+            ("Screw", &[]),
+        ]);
+        let root = inserting(vec![
+            at(1, "A v1:1", json!(SHIFT)),
+            at(2, "B v1:1", json!(SHIFT)),
+        ]);
+        let reads = std::cell::RefCell::new(Vec::new());
+        let decode = |_: Format, path: &Path, _: &mut Report| -> Result<Model, Error> {
+            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+            reads.borrow_mut().push(name.clone());
+            Ok(match name.as_str() {
+                "A v1.f3d" | "B v1.f3d" => inserting(vec![at(1, "Screw v1:1", json!(SHIFT))]),
+                _ => cube(),
+            })
+        };
+        let external = resolve(
+            &root,
+            &dir.path().join("Asm v1.f3d"),
+            None,
+            &mut Report::default(),
+            &decode,
+            &Finder::default(),
+            &mut Vec::new(),
+        );
+        assert_eq!(external.len(), 2);
+        let mut got = reads.borrow().clone();
+        got.sort();
+        assert_eq!(got, ["A v1.f3d", "B v1.f3d", "Screw v1.f3d"]);
+    }
+
+    #[test]
+    fn the_total_of_files_read_is_capped_across_levels_with_a_clear_message() {
+        let dir = folder_of(&[("Asm", &["A", "B"]), ("A", &["C"]), ("B", &[]), ("C", &[])]);
+        let root = inserting(vec![
+            at(1, "A v1:1", json!(SHIFT)),
+            at(2, "B v1:1", json!(SHIFT)),
+        ]);
+        let decode = |_: Format, path: &Path, _: &mut Report| -> Result<Model, Error> {
+            Ok(match path.file_name().unwrap().to_str().unwrap() {
+                "A v1.f3d" => inserting(vec![at(1, "C v1:1", json!(SHIFT))]),
+                _ => cube(),
+            })
+        };
+        let mut report = Report::default();
+        let external = resolve_in(
+            &root,
+            &dir.path().join("Asm v1.f3d"),
+            None,
+            &mut report,
+            &decode,
+            &Finder::default(),
+            &mut Vec::new(),
+            &mut Reads::new(2),
+        );
+        // A (1) and C (2) are read; B would be the third.
+        assert!(external["synthetic:assembly:occurrence#1"].is_ok());
+        let Err(left) = &external["synthetic:assembly:occurrence#2"] else {
+            panic!("B should be left out");
+        };
+        assert!(
+            left.reason
+                .contains("over Dutchman's limit of 2 inserted design files read for one assembly"),
+            "{}",
+            left.reason
+        );
+    }
+
+    #[test]
+    fn nesting_stops_at_max_depth_and_says_so() {
+        let total = MAX_DEPTH + 8;
+        let names: Vec<String> = (0..total).map(|n| format!("N{n}")).collect();
+        let listing: Vec<(&str, Vec<&str>)> = names
+            .iter()
+            .enumerate()
+            .map(|(n, name)| {
+                (
+                    name.as_str(),
+                    names.get(n + 1).map(String::as_str).into_iter().collect(),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(&str, &[&str])> = listing
+            .iter()
+            .map(|(name, inserts)| (*name, inserts.as_slice()))
+            .collect();
+        let dir = folder_of(&borrowed);
+        let root = inserting(vec![at(1, "N1 v1:1", json!(SHIFT))]);
+        let reads = std::cell::Cell::new(0);
+        let decode = |_: Format, path: &Path, _: &mut Report| -> Result<Model, Error> {
+            reads.set(reads.get() + 1);
+            let name = path.file_stem().unwrap().to_str().unwrap();
+            let next: usize = name[1..name.len() - 3].parse::<usize>().unwrap() + 1;
+            Ok(inserting(vec![at(
+                1,
+                &format!("N{next} v1:1"),
+                json!(SHIFT),
+            )]))
+        };
+        let mut report = Report::default();
+        resolve(
+            &root,
+            &dir.path().join("N0 v1.f3d"),
+            None,
+            &mut report,
+            &decode,
+            &Finder::default(),
+            &mut Vec::new(),
+        );
+        assert_eq!(reads.get(), MAX_DEPTH);
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.contains(&format!("nest over {MAX_DEPTH} deep"))),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn a_design_that_inserts_itself_is_left_out_not_read_again() {
+        let dir = folder_of(&[("Asm", &["A"]), ("A", &["A"])]);
+        let root = inserting(vec![at(1, "A v1:1", json!(SHIFT))]);
+        let reads = std::cell::Cell::new(0);
+        let decode = |_: Format, _: &Path, _: &mut Report| -> Result<Model, Error> {
+            reads.set(reads.get() + 1);
+            Ok(inserting(vec![at(1, "A v1:1", json!(SHIFT))]))
+        };
+        let external = resolve(
+            &root,
+            &dir.path().join("Asm v1.f3d"),
+            None,
+            &mut Report::default(),
+            &decode,
+            &Finder::default(),
+            &mut Vec::new(),
+        );
+        assert_eq!(reads.get(), 1);
+        assert!(external["synthetic:assembly:occurrence#1"].is_ok());
+    }
+
+    #[test]
+    fn only_matched_readable_designs_count_as_placed() {
+        let dir = folder_of(&[
+            ("Asm", &["Good", "Broken", "Unplaced"]),
+            ("Good", &[]),
+            ("Broken", &[]),
+            ("Unplaced", &[]),
+        ]);
+        let root = inserting(vec![
+            at(1, "Good v1:1", json!(SHIFT)),
+            at(2, "Broken v1:1", json!(SHIFT)),
+            at(3, "0f1e2d3c-0000-4000-8000-000000000000", json!(SHIFT)),
+        ]);
+        let decode = |_: Format, path: &Path, _: &mut Report| -> Result<Model, Error> {
+            if path.ends_with("Broken v1.f3d") {
+                Err(Error::Decode("not a Fusion design".to_owned()))
+            } else {
+                Ok(cube())
+            }
+        };
+        let placed = placed_files(&root, &dir.path().join("Asm v1.f3d"), None, &decode);
+        let names: Vec<_> = placed
+            .iter()
+            .map(|file| file.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names, ["Good v1.f3d"]);
     }
 }

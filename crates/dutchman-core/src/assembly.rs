@@ -16,6 +16,7 @@ mod sketch_instance;
 mod slicing;
 mod solidworks;
 
+pub(crate) use export::placed_files;
 pub(crate) use export::resolve as resolve_inserted;
 pub(crate) use poses::flattened_completeness;
 

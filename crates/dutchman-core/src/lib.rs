@@ -236,12 +236,33 @@ pub fn assembly_references(
     input: &Path,
     search: &PartSearch,
 ) -> Result<Vec<std::path::PathBuf>, Error> {
-    // A Fusion assembly from a bulk export: the designs its manifest says it inserts. Only the
-    // manifest's JSON is read, never a design file.
-    if matches!(
-        Format::from_path(input),
-        Some(Format::FusionArchive | Format::FusionMultiDocument)
-    ) {
+    // A Fusion assembly from a bulk export: the designs it inserts that conversion will place,
+    // that is, the ones an insertion of the file matches and that can be read. A design the
+    // manifest lists that nothing matches, or that cannot be read, is not placed inside the
+    // assembly, so it stays a result of its own.
+    if Format::from_path(input) == Some(Format::FusionArchive) {
+        // Only an assembly the manifest lists designs for is read.
+        let lists = export_folder::inserted(input, search.project.as_deref())
+            .and_then(Result::ok)
+            .is_some_and(|inserted| !inserted.references.is_empty());
+        if !lists {
+            return Ok(Vec::new());
+        }
+        let decode = |format: Format, path: &Path, report: &mut Report| {
+            decode_file(format, path, report, None)
+        };
+        let Ok(model) = decode(Format::FusionArchive, input, &mut Report::default()) else {
+            return Ok(Vec::new());
+        };
+        return Ok(assembly::placed_files(
+            &model,
+            input,
+            search.project.as_deref(),
+            &decode,
+        ));
+    }
+    // A rebuilt .f3z carries the designs its manifest entry lists inside it.
+    if Format::from_path(input) == Some(Format::FusionMultiDocument) {
         return Ok(export_folder::inserted(input, search.project.as_deref())
             .and_then(Result::ok)
             .map(|inserted| inserted.references.into_iter().map(|r| r.file).collect())
