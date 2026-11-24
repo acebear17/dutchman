@@ -970,15 +970,24 @@ mod tests {
             Some("generated_unit_cube.f3d")
         );
         // Synthetic: two insertions whose source designs the reader states as unresolved.
-        model.ir.model.occurrences = serde_json::from_value(json!([
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // On this CADIR, an insertion whose design is not in the file is a part definition
+        // with no bodies, as in `missing_links_are_reported_but_embedded_components_are_complete`.
+        wire["model"]["product_definitions"] = json!([{
+            "id": "synthetic:assembly:component#part/unresolved", "kind": "part",
+            "bodies": [], "sketches": [], "bom_properties": {}
+        }]);
+        let prototype =
+            json!({"kind": "local", "definition": "synthetic:assembly:component#part/unresolved"});
+        wire["model"]["occurrences"] = json!([
             {"id": "synthetic:assembly:occurrence#1", "ordinal": 1, "name": "Component Insert",
-             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "parent": {"kind": "root"}, "prototype": prototype,
              "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]},
             {"id": "synthetic:assembly:occurrence#2", "ordinal": 2, "name": "Component Insert",
-             "parent": {"kind": "root"}, "prototype": {"kind": "unresolved"},
+             "parent": {"kind": "root"}, "prototype": prototype,
              "transform": [[1,0,0,0],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]}
-        ]))
-        .unwrap();
+        ]);
+        model.ir = crate::test_products::read(&wire);
         let mut report = Report::default();
         local_components(&mut model, 1, PartPositions::FirstPlaced, &mut report);
         let dropped: Vec<_> = report
