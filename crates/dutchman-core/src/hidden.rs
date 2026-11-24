@@ -884,7 +884,17 @@ mod tests {
             shown(&model).unwrap().is_none(),
             "the shown insertion keeps its shared geometry"
         );
-        let _ = model.ir.model.product_definitions[0].occurrences.pop();
+        // The document states its arenas in id order, so the root is found by its id.
+        let root = definition("root");
+        let _ = model
+            .ir
+            .model
+            .product_definitions
+            .iter_mut()
+            .find(|row| row.id == root)
+            .unwrap()
+            .occurrences
+            .pop();
         model
             .ir
             .model
@@ -902,7 +912,18 @@ mod tests {
             2,
             "the decoded source stays intact"
         );
-        assert_eq!(model.ir.model.occurrences[1].visible, Some(true));
+        let child = occurrence("child");
+        assert_eq!(
+            model
+                .ir
+                .model
+                .occurrences
+                .iter()
+                .find(|row| row.id == child)
+                .unwrap()
+                .visible,
+            Some(true)
+        );
     }
 
     #[test]

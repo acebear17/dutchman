@@ -18,6 +18,7 @@ native geometry, the plugin checks bounded archive indexes and the desktop app's
 memory/time estimate. It retains a conservative 520 MB peak-memory estimate ceiling and
 a five-minute time estimate ceiling, and links to the [Dutchman app download](https://github.com/dutchman-cad/dutchman/releases/latest).
 The guest's actual memory limit is 2048 MiB; the lower estimate ceiling also bounds conversion work.
+The module itself declares that 2048 MiB maximum and reserves a 16 MiB stack, so hosts that cannot impose a limit, such as web browsers, enforce the same ceiling.
 The app can convert larger designs and save a `.sc` to open in SolidCraft. Compressed inner archive checks are bounded to 16 MiB in total; larger checks also
 direct you to the app. The estimate is
 approximate; it is not a guarantee that every smaller design fits. SolidCraft 0.45's importer
@@ -191,8 +192,11 @@ All generated guest and harness bindings are in `src/adapter.rs`, from
   any other path is relative to its folder. `source.size(path)` gives member sizes and
   `source.resolve(path)` the folder's case-preserving name for a member.
 - `design.write(bytes)` appends the converted SolidCraft design, at most 1 MiB per call.
-- `control.progress` reports reading and writing; `control.cancelled` is checked before
-  each member read and before the design is written.
+- `control.progress` reports the main file read, each part read (5-35%), each SolidCraft
+  history check (40-90%) and writing, in steps of at least 1% and never going back, so
+  SolidCraft 0.48's operations row shows how far a conversion has got. `control.cancelled` is
+  checked before each member read, each history check and before the design is written;
+  mapping runs without host calls, so Cancel takes effect at the next of those steps.
 - The result is the loss report below. Errors: a file that is not supported yet or cannot be read
   is `invalid-input` with field `file` (`options` and `entry` for bad options or entry
   names); size budgets are `limit-exceeded`; an error returned by a host import is passed

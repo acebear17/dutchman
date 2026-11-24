@@ -31,6 +31,7 @@ pub mod progress_words;
 mod refusal;
 pub mod source;
 mod source_errors;
+mod source_version;
 #[cfg(test)]
 mod test_products;
 pub mod time;
@@ -244,7 +245,7 @@ pub fn assembly_references(
     let model = decode_file(format, input, &mut Report::default(), None)?;
     let value = assembly::products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let finder = locate::Finder::new(search);
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = assembly::input_folder(input);
     let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
@@ -363,6 +364,7 @@ pub fn read_with_progress(
         report,
         &|format, path, report| {
             let model = decode_file(format, path, report, progress)?;
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {

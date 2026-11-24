@@ -156,7 +156,7 @@ pub(crate) fn preserve(document: &mut Value, ir: &cadmpeg_ir::CadIr) {
             .filter_map(|edge| sample(ir, edge.as_str()?, body))
             .collect();
         let bodies: Vec<&str> = if path { vec![body] } else { Vec::new() };
-        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "vertices": []});
+        let state = json!({"id": state_id, "input_of": id, "edges": edges, "edge_geometry": geometry, "bodies": bodies, "faces": [], "face_owners": [], "vertices": []});
         let selection = json!({"kind": if path { "historical_edges" } else { "historical" }, "value": {
             "state": state_id, "edges": edges, "native": native}});
         changes.push((index, state, selection, path));

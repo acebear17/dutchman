@@ -55,7 +55,7 @@ pub(super) fn resolve(
             "the assembly places over {MAX_PLACEMENTS} components"
         )));
     }
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = input_folder(input);
     let wire = products::occurrences(&model.ir.model).map_err(Error::Assembly)?;
     let rows = wire.as_array().map_or(&[][..], Vec::as_slice);
     let mut external = ExternalParts::new();
