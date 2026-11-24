@@ -324,13 +324,14 @@ fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
     assert_eq!(outcome.features[2].status, FeatureStatus::Blocked);
     assert_eq!(outcome.features[2].name.as_deref(), Some("Custom shape"));
     // The format-neutral writer gives native rows a generic reason; the reader's
-    // named diagnostic must survive in the shared loss report.
+    // named diagnostic must survive in the shared loss report. cadmpeg carries the code as
+    // the loss subject and ends the detail with the feature name.
     let loss = report
         .losses()
         .iter()
         .find(|loss| {
-            loss.subject == "Custom shape"
-                && loss.code.as_deref() == Some("onshape/history.not-supported")
+            loss.code.as_deref() == Some("onshape/history.not-supported")
+                && loss.detail.ends_with("; subject: Custom shape")
         })
         .unwrap();
     assert!(loss
