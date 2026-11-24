@@ -33,6 +33,7 @@ pub mod progress_words;
 mod refusal;
 pub mod source;
 mod source_errors;
+mod source_version;
 pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
@@ -377,6 +378,7 @@ pub fn read_with_progress(
     let decode_design =
         |format: Format, path: &Path, report: &mut Report| -> Result<Model, Error> {
             let model = decode_file(format, path, report, progress)?;
+            source_version::record(report, path, input, &model.ir.native);
             // The codec owns Fusion archive members; do not count the whole archive as one.
             if format != Format::FusionMultiDocument {
                 if let Some(progress) = progress {

@@ -144,6 +144,7 @@ refuses the choice rather than failing the replay):
 | Proof | Allowed difference |
 |---|---|
 | Fillet and chamfer input edge | Exactly one rebuilt edge passes through the edge midpoint within 1e-6 mm, with ends and length within 1e-6 (of the larger, at least 1 mm), and direction within 1e-6 of parallel. A refusal says the nearest rebuilt edge is farther than 0.01 mm when the rebuilt body, not the tolerance, differs. |
+| Inferred fillet and chamfer edges | When the midpoint proof finds no edge, each nearby straight rebuilt edge is a candidate and is picked at its own midpoint; a pick that also lies on another straight rebuilt edge is dropped, so two close parallel edges are never picked between. |
 | Profile face the source names | Positions within 1e-5 mm; directions within 1e-5 of parallel; the face's plane within 1e-4 mm of the sketch plane; area within 1e-4 (2e-2 when an edge is curved, as SolidCraft measures those from a mesh) of the face's, at least 1 mm². Its edges are covered within 1e-4 of a straight edge's length, within 1e-3 of the radius (at least 1 mm) from the circle, and within 2e-3 rad of a curved edge's turn. |
 | Extrude end cap | The swept profile's area within the larger of 1 mm² and 3% of the cap's area; a face's plane within 1e-4 mm of the end plane. |
 
@@ -517,7 +518,9 @@ from the sheet's outer face. The unchanged base can be a single simple polygon, 
 L-shaped or notched sheet: attachment uses the actual profile edge, including a concave edge,
 rather than the edge of a bounding rectangle. Curved, open, crossing, disconnected, or
 collinear base edges and base profiles with holes or partial regions are not supported yet
-by this attachment proof. Any other plate, or a bend without its plate, keeps the geometry
+by this attachment proof. A plate attached along several edges is the same flange on every edge when each further
+edge is as long as the first, parallel to it and on the same face of the sheet; the flange lists
+all of them. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
@@ -553,11 +556,11 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.46 by default with the writer capabilities available in 0.45 and
-keeps design format 23, as for earlier targets. SolidCraft 0.46 opens every earlier
-design format. Saving in SolidCraft 0.46 upgrades a design to format 64 (drawing format 3);
-SolidCraft 0.45 asks to update before opening that saved design. Dutchman does not write
-drawings or require format 64. Explicit older targets keep their existing output.
+Dutchman targets SolidCraft 0.48 by default with the writer capabilities available in 0.47 and
+keeps design format 23, as for earlier targets. SolidCraft 0.48 opens every earlier
+design format. Saving in SolidCraft 0.48 upgrades a design to format 66;
+SolidCraft 0.47 warns about a design saved in 0.48, opens what it can read and keeps the rest.
+Dutchman does not write drawings or require format 66. Explicit older targets keep their existing output.
 
 Converted assemblies embed their parts and STEP blobs in the design container; they do
 not link back to the source part files. SolidCraft's requirement (since 0.45) to use Update Links

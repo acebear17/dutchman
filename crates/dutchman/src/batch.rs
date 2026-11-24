@@ -937,9 +937,7 @@ fn search(
             search(root, &path, depth + 1, out, skipped, include, left);
         } else if meta.is_file()
             && Format::from_path(&path).is_none()
-            && !path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("tools"))
+            && !crate::tool_library::is_library(&path)
         {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
@@ -1130,6 +1128,10 @@ impl Journal {
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(io(err)),
+        }
+        // The journal may sit in the output folder, which this run has not made yet.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io)?;
         }
         let file = std::fs::OpenOptions::new()
             .create(true)
