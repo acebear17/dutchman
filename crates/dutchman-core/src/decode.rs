@@ -374,6 +374,8 @@ fn decode_unguarded(
         && !decode_report.geometry_transferred()
         && !format.is_assembly()
         && !(format == Format::FreeCadDocument && !ir.model.occurrences.is_empty())
+        // A bundle without a readable STEP export still carries its stored history.
+        && !(format == Format::OnshapeBundle && !ir.model.features.is_empty())
     {
         if format == Format::Step && step_holds_no_shapes(bytes) {
             return Err(Error::EmptyExport(EMPTY_STEP_MESSAGE.to_owned()));
