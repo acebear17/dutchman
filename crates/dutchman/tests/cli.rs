@@ -956,7 +956,11 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     assert_eq!(text.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
+    // The notes are in plain words, so the report ends by saying `--verbose` prints them in full.
+    assert!(
+        stdout.ends_with("1 converted, 0 failed\n(notes are summarised in plain words, repeated ones grouped and long ones shortened; --verbose prints every note in full)\n"),
+        "{stdout}"
+    );
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
     // SolidCraft version it targets.
     let lines = without_target_line(&stdout);
@@ -965,13 +969,13 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(lines[0], "Fusion .f3d: reads geometry");
     assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
-        lines[2..lines.len() - 1]
+        lines[2..lines.len() - 2]
             .iter()
             .all(|line| line.starts_with("           ") && line.contains(": ")),
         "{stdout}"
     );
     assert!(
-        stdout.contains("Degraded: f3d/material.not-transferred"),
+        stdout.contains("Degraded: The design's materials and appearances weren't carried over"),
         "{stdout}"
     );
 
@@ -992,7 +996,10 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
             .unwrap(),
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
-    assert!(stdout.ends_with("2 converted, 1 failed\n"), "{stdout}");
+    assert!(
+        without_notes_hint(&stdout).ends_with("2 converted, 1 failed\n"),
+        "{stdout}"
+    );
     let text = dutchman(&[
         "convert-all",
         "--quiet",
@@ -1003,7 +1010,8 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     ]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(
-        stdout.ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
+        without_notes_hint(&stdout)
+            .ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
         "{stdout}"
     );
 }
@@ -1029,16 +1037,9 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         )
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(
-            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
-        ),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
-        "{stderr}"
-    );
+    // Records STEP has no place for change nothing the person sees: they wait for --verbose.
+    assert!(!stderr.contains("step/native."), "{stderr}");
+    assert!(!stderr.contains("source-native record(s)"), "{stderr}");
     assert!(
         stderr.contains("so no declared identity was verified. …\n"),
         "{stderr}"
@@ -1059,6 +1060,16 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Agreement is consistency, not a declaration."),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
         "{stderr}"
     );
     assert!(!stderr.contains("--verbose prints"), "{stderr}");
@@ -2757,6 +2768,15 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
 }
 
 /// Conversion lines without the target line and optional installed-version notice.
+/// The report with its closing "notes are summarised ... --verbose" line removed.
+fn without_notes_hint(stdout: &str) -> String {
+    stdout
+        .lines()
+        .filter(|line| !(line.starts_with("(notes are summarised in plain words")))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
 fn without_target_line(stdout: &str) -> Vec<&str> {
     let (target, rest): (Vec<&str>, Vec<&str>) = stdout
         .lines()
