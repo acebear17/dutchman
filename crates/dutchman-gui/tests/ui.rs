@@ -5825,6 +5825,128 @@ fn notes_card_screenshots() {
     }
 }
 
+/// Import-note screenshots for the plain-sentence change: one finished conversion with several
+/// notes (some that matter, some that change nothing), English names and long German names, Day
+/// and Night, 1280x800. Run once per build under test with DUTCHMAN_SHOT_PREFIX=before|after.
+/// Needs a GPU renderer; set DUTCHMAN_GUI_SCREENSHOTS to a folder.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_SHOT_PREFIX"]
+fn import_notes_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let prefix = std::env::var("DUTCHMAN_SHOT_PREFIX").unwrap_or_else(|_| "after".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (variant, file, part, bolt) in [
+        (
+            "english",
+            "Bracket.f3d",
+            "Cover plate",
+            "Cylinder head screw",
+        ),
+        (
+            "german",
+            "Getriebegehäuse_Abdeckplatte_Rückseite_Ausführung_B.f3d",
+            "Getriebegehäuse_Abdeckplatte_Rückseite_Ausführung_B",
+            "Schraubenverbindung Zylinderkopfschraube",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness.state_mut().preview_solidcraft(Some("0.48.1"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let output = docs.join("Converted").join(file.replace(".f3d", ".sc"));
+            let report = serde_json::json!({
+                "ok": true, "mode": "history",
+                "history": {"mapped": 5, "total": 6},
+                "losses": [
+                {"level": "Degraded", "code": "history/body-fallback-imported",
+                 "subject": format!("{part}: Extrude 3"), "stage": "map",
+                 "message": format!("Extrude 3 of {part} could not be rebuilt from its sketch; the stored body was imported")},
+                {"level": "Degraded", "code": "f3d/material.not-transferred",
+                 "subject": bolt, "stage": "map",
+                 "message": format!("Materials and appearances of {bolt} were not transferred")},
+                {"level": "Degraded", "code": "history/rebuild-failed",
+                 "subject": format!("{bolt}: Fillet 1"), "stage": "verify",
+                 "message": "SolidCraft could not rebuild the feature"},
+                {"level": "Info", "code": "dutchman/appearance.redundant-face",
+                 "subject": part, "stage": "map",
+                 "message": "A face colour equal to its body colour was not written"},
+                {"level": "Info", "code": "history/body-scope-confirmed",
+                 "subject": format!("{part}: Extrude 3"), "stage": "map",
+                 "message": "The bodies this feature acts on were confirmed"},
+                {"level": "Info", "code": "f3d/source.unindexed-records-retained",
+                 "subject": "f3d/source.unindexed-records-retained", "stage": "decode",
+                 "message": "Retained 3 unindexed record(s) without record semantics."},
+                {"level": "Info", "code": null, "subject": "part positions", "stage": "map",
+                 "message": "0 parts placed as last shown in the original program (0 directly bound), 0 at current poses, 0 as first placed (smart); 0 holder conflicts"},
+                {"level": "Info", "code": "step/attribute.source-record-not-written",
+                 "subject": "step/attribute.source-record-not-written", "stage": "write",
+                 "message": "7 source attribute record(s) were not written to STEP"},
+                {"level": "Info", "code": "step/native.source-record-omitted",
+                 "subject": "step/native.source-record-omitted", "stage": "write",
+                 "message": "67 source-native record(s) were not represented in STEP"}
+            ]});
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join(file),
+                    output: Some(output),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            if harness.query_by_label_contains("Losses:").is_some() {
+                harness.get_by_label_contains("Losses:").click_accesskit();
+                harness.run_steps(8);
+            }
+            if harness
+                .query_by_label_contains("Report this file")
+                .is_some()
+            {
+                harness
+                    .get_by_label_contains("Report this file")
+                    .scroll_to_me();
+                harness.run_steps(8);
+            }
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("import-notes-{prefix}-{variant}"),
+                name,
+                "Results card, Details closed.",
+            );
+            // Only the new card has a Details toggle.
+            if harness.query_by_label("Details").is_some() {
+                harness.get_by_label("Details").click_accesskit();
+                harness.run_steps(8);
+                // The card's header and buttons stay in view: scroll the panel to the top.
+                harness.get_by_label("Open in SolidCraft").scroll_to_me();
+                harness.run_steps(8);
+                shot(
+                    &mut harness,
+                    &dir,
+                    &mut index,
+                    &format!("import-notes-{prefix}-{variant}-details"),
+                    name,
+                    "Results card, Details open.",
+                );
+            }
+        }
+    }
+    std::fs::write(dir.join(format!("import-notes-{prefix}.md")), index).unwrap();
+}
+
 #[cfg(feature = "test-support")]
 #[path = "../../dutchman/tests/support/net.rs"]
 mod test_support;
