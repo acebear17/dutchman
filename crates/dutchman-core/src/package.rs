@@ -505,14 +505,34 @@ fn colour_variant(
     copy.source_step = None;
     copy.fidelity = None;
     let hex = text.trim_start_matches('#').to_ascii_lowercase();
-    let appearance = format!("dutchman:parts:appearance#{hex}");
-    copy.ir.model.appearance_bindings.retain(|binding| {
+    bind_body_colour(&mut copy, rgb, 1.0, &hex)?;
+    let at = assembly.parts.len();
+    assembly.parts.push(copy);
+    assembly.definitions.push(None);
+    assembly
+        .identities
+        .push(Some(format!("{PARTS_SCHEMA}:{model}:{hex}")));
+    Ok(at)
+}
+
+/// Gives every body of `part` the colour `rgb` with opacity `alpha` as one appearance and a
+/// binding per body, replacing its other body bindings, so the writer records the look by body.
+/// The faces' own colours take the same opacity, so a STEP restated from them keeps it. `key`
+/// names the appearance and its bindings.
+fn bind_body_colour(part: &mut Model, rgb: [f64; 3], alpha: f64, key: &str) -> Result<(), String> {
+    let key = if alpha < 1.0 {
+        format!("{key}-a{}", (alpha * 1000.0).round())
+    } else {
+        key.to_owned()
+    };
+    let appearance = format!("dutchman:parts:appearance#{key}");
+    part.ir.model.appearance_bindings.retain(|binding| {
         !matches!(
             binding.target.entity,
             cadmpeg_ir::appearance::AppearanceTarget::Body(_)
         )
     });
-    if !copy
+    if !part
         .ir
         .model
         .appearances
@@ -521,16 +541,16 @@ fn colour_variant(
     {
         let made = serde_json::from_value(json!({
             "id": appearance,
-            "base_color": {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": 1.0},
+            "base_color": {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": alpha},
             "properties": {},
             "textures": [],
         }));
         match made {
-            Ok(made) => copy.ir.model.appearances.push(made),
+            Ok(made) => part.ir.model.appearances.push(made),
             Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
         }
     }
-    let ids: Vec<Value> = copy
+    let ids: Vec<Value> = part
         .ir
         .geometry
         .bodies
@@ -539,23 +559,30 @@ fn colour_variant(
         .collect();
     for (n, id) in ids.into_iter().enumerate() {
         let binding = serde_json::from_value(json!({
-            "id": format!("dutchman:parts:binding#{hex}-{n}"),
+            "id": format!("dutchman:parts:binding#{key}-{n}"),
             "target": {"entity": {"kind": "body", "value": id}},
             "appearance": appearance,
             "channels": {},
         }));
         match binding {
-            Ok(binding) => copy.ir.model.appearance_bindings.push(binding),
+            Ok(binding) => part.ir.model.appearance_bindings.push(binding),
             Err(err) => return Err(format!("its colour cannot be recorded: {err}")),
         }
     }
-    let at = assembly.parts.len();
-    assembly.parts.push(copy);
-    assembly.definitions.push(None);
-    assembly
-        .identities
-        .push(Some(format!("{PARTS_SCHEMA}:{model}:{hex}")));
-    Ok(at)
+    if alpha < 1.0 {
+        for face in &mut part.ir.geometry.faces {
+            face.color = face.color.and_then(|c| c.with_alpha(alpha)).or(face.color);
+        }
+        for body in &mut part.ir.geometry.bodies {
+            body.color = body.color.and_then(|c| c.with_alpha(alpha)).or(body.color);
+        }
+    }
+    Ok(())
+}
+
+/// One colour component in 0 to 1 as two hex digits.
+fn rgb_hex(c: f64) -> String {
+    format!("{:02x}", (c.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
 fn refuse(message: String) -> Error {
@@ -959,6 +986,17 @@ fn overlays(
             Ok(mut model) => {
                 model.name = clip(&entry.name, 200);
                 model.source_file = None;
+                // The look goes in as body bindings, which the writer reads when it restates the part.
+                let opacity = transparency.map_or(1.0, |t| 1.0 - t);
+                let hex = format!(
+                    "{}{}{}",
+                    rgb_hex(color[0]),
+                    rgb_hex(color[1]),
+                    rgb_hex(color[2])
+                );
+                if let Err(why) = bind_body_colour(&mut model, color, opacity, &hex) {
+                    report.push_at(Stage::Input, Severity::Degraded, subject.clone(), why);
+                }
                 let index = assembly.parts.len();
                 if index >= MAX_PARTS {
                     dropped(

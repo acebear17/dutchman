@@ -235,3 +235,63 @@ fn a_part_colour_reaches_the_design_as_a_body_look() {
         doc["appearances"]
     );
 }
+
+#[test]
+fn a_mask_opacity_and_every_part_colour_reach_the_design_looks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("part.step"), cube_step()).unwrap();
+    let square = json!([[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]);
+    let manifest = json!({
+        "schema": PARTS_SCHEMA,
+        "models": [{"id": "cube", "file": "part.step"}],
+        "parts": [
+            {"name": "Board", "model": "cube", "color": "#c8b27a"},
+            {"name": "Plain", "model": "cube", "transform": [[1,0,0,5],[0,1,0,0],[0,0,1,0]]},
+        ],
+        "overlays": [
+            {"name": "Mask", "kind": "mask", "part": "Board", "z": 1.0, "opacity": 0.85,
+             "color": "#1f7a3d", "areas": [{"outer": square, "holes": []}]},
+            {"name": "Silk", "kind": "silkscreen", "part": "Board", "z": 1.0,
+             "areas": [{"outer": square, "holes": []}]},
+            {"name": "Copper", "kind": "copper", "part": "Board", "z": 1.0,
+             "areas": [{"outer": square, "holes": []}]},
+        ],
+    });
+    let (bytes, _) = write(dir.path(), manifest.to_string().as_bytes());
+    let doc = document(&bytes);
+    let bodies = doc["appearances"]["bodies"].as_object().unwrap();
+    let look = |colour: [u64; 3]| -> Vec<&Value> {
+        bodies
+            .values()
+            .filter(|look| look["color"] == json!(colour))
+            .collect()
+    };
+    let mask = look([0x1f, 0x7a, 0x3d]);
+    assert_eq!(mask.len(), 1, "{bodies:?}");
+    assert!((mask[0]["opacity"].as_f64().unwrap() - 0.85).abs() < 0.005);
+    let board = look([0xc8, 0xb2, 0x7a]);
+    assert_eq!(board.len(), 1, "{bodies:?}");
+    assert_eq!(board[0]["opacity"].as_f64().unwrap(), 1.0);
+    // The silkscreen and the copper have a look of their own, opaque.
+    assert!(bodies.len() >= 4, "{bodies:?}");
+    // No two imports share a default body name, so a look cannot land on another part's body.
+    let mut names = Vec::new();
+    for feature in doc["features"].as_array().unwrap() {
+        if let Some(listed) = feature["body_names"].as_array() {
+            names.extend(listed.iter().map(|n| n.as_str().unwrap().to_owned()));
+        }
+    }
+    let unique: std::collections::BTreeSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "{names:?}");
+    // Every uncoloured part's import names its body too, not only the coloured one.
+    let imports = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "import")
+        .count();
+    assert!(
+        names.len() >= imports - 1,
+        "{names:?} for {imports} imports"
+    );
+}
