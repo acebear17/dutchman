@@ -652,7 +652,11 @@ fn railed_sweep_history(whole_sketch: bool) -> Model {
     rail["sketch"] = json!(RAIL);
     model["sketch_entities"].as_array_mut().unwrap().push(rail);
     let features = model["features"].as_array_mut().unwrap();
-    let sweep = features.last_mut().unwrap();
+    // The arena is written in id order, so the sweep (feature #2) is found by id, not as the last.
+    let sweep = features
+        .iter_mut()
+        .find(|f| f["id"] == "f3d:model:feature#2")
+        .unwrap();
     sweep["ordinal"] = json!(3);
     sweep["dependencies"]
         .as_array_mut()
@@ -1052,8 +1056,8 @@ fn pointed_loft(vertex: bool, first: bool) -> Model {
             "id": "synthetic:apex:vertex#0", "point": "synthetic:apex:point#0",
         }));
     let index = if first { 0 } else { 1 };
-    wire["model"]["features"][2]["definition"]["value"]["value"]["sections"][index] =
-        loft_section(json!({"kind": "vertex", "value": "synthetic:apex:vertex#0"}));
+    feature_row(&mut wire, "f3d:model:feature#2")["definition"]["value"]["value"]["sections"]
+        [index] = loft_section(json!({"kind": "vertex", "value": "synthetic:apex:vertex#0"}));
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1090,8 +1094,8 @@ fn resolved_loft_point_ends_become_sketch_points() {
 fn generated_loft_apex_names_do_not_shadow_source_features() {
     let model = pointed_loft(false, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["name"] = json!("Loft apex 3");
-    wire["model"]["features"][2]["name"] = json!("Loft apex 3 (2)");
+    feature_row(&mut wire, "f3d:model:feature#3")["name"] = json!("Loft apex 3");
+    feature_row(&mut wire, "f3d:model:feature#2")["name"] = json!("Loft apex 3 (2)");
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1305,7 +1309,13 @@ fn railed_loft(top: f64) -> Model {
         2,
         json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Rail sketch", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": RAIL}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}),
     );
-    features[3]["ordinal"] = json!(3);
+    // The loft (feature #2) now follows the rail sketch in time; cadmpeg writes the arena by id,
+    // so find it by id rather than by position.
+    let loft = features
+        .iter_mut()
+        .find(|f| f["id"] == "f3d:model:feature#2")
+        .unwrap();
+    loft["ordinal"] = json!(3);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1318,7 +1328,13 @@ fn whole_sketch_railed_loft(split: bool) -> Model {
     let model = railed_loft(10.0);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
-    m["features"][3]["definition"]["value"]["value"]["guidance"]["value"] =
+    let loft = m["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["id"] == "f3d:model:feature#2")
+        .unwrap();
+    loft["definition"]["value"]["value"]["guidance"]["value"] =
         json!([{"kind": "sketch", "value": RAIL}]);
     let entities = m["sketch_entities"].as_array_mut().unwrap();
     if split {
@@ -1906,14 +1922,25 @@ fn a_symmetric_through_all_extent_is_mapped() {
 }
 
 /// The final cube with a blocked feature between two otherwise mapped sketch features.
+/// The wire row of the feature with this id. cadmpeg writes every arena sorted by id, so a
+/// fixture that edits a feature after serializing a model finds it by id, never by position.
+fn feature_row<'a>(wire: &'a mut Value, id: &str) -> &'a mut Value {
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["id"] == id)
+        .unwrap_or_else(|| panic!("no feature {id}"))
+}
+
 fn reference_sketch_history() -> Model {
     let mut model = loft_history(10.0, |definition| {
         *definition =
             json!({"kind": "native", "value": {"kind": "Reference blocker", "parameters": {}}});
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["ordinal"] = json!(2);
-    wire["model"]["features"][2]["ordinal"] = json!(1);
+    feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(2);
+    feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(1);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -2012,7 +2039,7 @@ fn flattened_history_leaves_out_a_sketch_that_does_not_map() {
 fn reference_sketches_preserve_duplicate_source_names() {
     let mut model = reference_sketch_history();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["name"] = json!("Base sketch");
+    feature_row(&mut wire, "f3d:model:feature#3")["name"] = json!("Base sketch");
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, _) = convert(
         &model,
@@ -4161,7 +4188,7 @@ fn historical_hole(round: bool, placement: Value) -> Model {
             .unwrap();
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["feature_input_topologies"] = json!([{"id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE], "edge_geometry": input["edge_geometry"], "bodies": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": HOLE_INPUT, "input_of": "f3d:model:feature#4", "edges": [], "faces": [HOLE_FACE], "edge_geometry": input["edge_geometry"], "bodies": [], "face_owners": [], "vertices": []}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -5233,7 +5260,7 @@ fn a_selected_crossed_loop_maps_to_its_atomic_regions() {
         // curves stay solid.
         for curve in curves {
             let id = curve["id"].as_str().unwrap();
-            let unused = ["l7", "l8", "l9", "l10"].contains(&id);
+            let unused = (7..=10).any(|key| name(key) == id);
             assert_eq!(curve["construction"] == true, unused, "{region} {id}");
         }
         assert!(!document["features"][0]["sketch"]["constraints"]
@@ -5591,8 +5618,9 @@ fn merged_centre_annulus_history(width: f64) -> Model {
     entities.retain(|e| {
         e["id"] != "f3d:model:sketch-entity#5" && e["id"] != "f3d:model:sketch-entity#6"
     });
+    // Key 0 so that cadmpeg's id order puts the point before the circles (keys 5 and 6).
     let mut point = entity(
-        7,
+        0,
         json!({"kind": "point",
         "position": {"u": 20.0000009, "v": 0.0}}),
     );
@@ -7158,10 +7186,15 @@ fn path_pattern(whole_sketch: bool) -> Model {
         }
     }
     let features = wire["model"]["features"].as_array_mut().unwrap();
-    features[2] = serde_json::to_value(&cube_with_history(10.0, first_profile(), None).ir).unwrap()
+    // The arena is written in id order, so the sweep is found by its id, not by position.
+    let block = features
+        .iter_mut()
+        .find(|f| f["id"] == "f3d:model:feature#2")
+        .unwrap();
+    *block = serde_json::to_value(&cube_with_history(10.0, first_profile(), None).ir).unwrap()
         ["model"]["features"][1]
         .clone();
-    features[2]["ordinal"] = json!(2);
+    block["ordinal"] = json!(2);
     let path = if whole_sketch {
         json!({"kind": "sketch", "value": PATH})
     } else {
@@ -9526,7 +9559,7 @@ fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Mod
             "supports": [], "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
-    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": []}]);
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -9866,7 +9899,7 @@ fn attached_plate_on(near: f64, radius: f64, extra: bool, attached: usize) -> Mo
             "supports": [], "tangent": point(1.0, 0.0, 0.0), "faces": faces,
         })
     });
-    let state = |name: &str, owner: &str| json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner, "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []});
+    let state = |name: &str, owner: &str| json!({"id": format!("test:sheet:feature-input#{name}"), "input_of": owner, "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": []});
     m["feature_input_topologies"] = json!([
         state("plate", "f3d:model:feature#4"),
         state("bend", "f3d:model:feature#5"),
@@ -11727,12 +11760,17 @@ fn static_pattern_and_projected_copy_relations_map_to_point_and_radius_associati
         let kind = definition["kind"].as_str().unwrap();
         let mut model = sketch_relation_history(definition.clone());
         let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // Entity 6, found by id: the arena is written in id order, so it is not the sixth row.
+        let entity6 = wire["model"]["sketch_entities"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|e| e["id"] == id(6))
+            .unwrap();
         if kind == "rectangular_pattern" {
-            wire["model"]["sketch_entities"][5]["geometry"]["center"] =
-                json!({"u": 30.0, "v": 20.0});
+            entity6["geometry"]["center"] = json!({"u": 30.0, "v": 20.0});
         } else if kind == "circular_pattern" {
-            wire["model"]["sketch_entities"][5]["geometry"]["center"] =
-                json!({"u": -10.0, "v": -10.0});
+            entity6["geometry"]["center"] = json!({"u": -10.0, "v": -10.0});
         }
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (document, report) = convert(
@@ -12436,7 +12474,7 @@ fn split_by_face(lift: f64, selection: Option<Value>) -> Model {
     faces.push(face.to_owned());
     wire["model"]["feature_input_topologies"] = json!([{
         "id": state, "input_of": "f3d:model:feature#4", "edges": edges, "faces": faces,
-        "edge_geometry": geometry, "bodies": [], "vertices": [],
+        "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": [],
     }]);
     let selection = selection.unwrap_or_else(|| {
         json!({"kind": "historical", "value": {
@@ -12500,7 +12538,7 @@ fn split_by_two_faces(second: f64) -> Model {
     }
     wire["model"]["feature_input_topologies"] = json!([{
         "id": state, "input_of": "f3d:model:feature#4", "edges": edges, "faces": faces,
-        "edge_geometry": geometry, "bodies": [], "vertices": [],
+        "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": [],
     }]);
     let features = wire["model"]["features"].as_array_mut().unwrap();
     let split = features.iter_mut().find(|f| f["name"] == "Split").unwrap();
@@ -12973,7 +13011,7 @@ fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) 
             "faces": if edge == "near" { json!(["front", "left"]) } else { json!(["back", "right"]) },
         })
     };
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"], "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)], "bodies": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["near", "opposite"], "faces": ["front", "left", "back", "right"], "edge_geometry": [sample("near", 0.0), sample("opposite", 10.0)], "bodies": [], "face_owners": [], "vertices": []}]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -13045,7 +13083,7 @@ fn closed_circle_blend_from(hole: bool, seam: f64, sketch_based: bool) -> Model 
     let point = |a: f64| json!({"x": c + r * a.cos(), "y": c + r * a.sin(), "z": 10.0});
     m["feature_input_topologies"] = json!([{
         "id": "synthetic:closed:feature-input-topology#0", "input_of": "synthetic:closed:feature#0",
-        "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "vertices": [],
+        "edges": ["synthetic:closed:edge#0"], "faces": [], "bodies": [], "face_owners": [], "vertices": [],
         "edge_geometry": [{"edge": "synthetic:closed:edge#0", "start": point(seam), "end": point(seam),
             "interior": point(seam + std::f64::consts::PI),
             "supports": [], "tangent": {"x": seam.sin(), "y": -seam.cos(), "z": 0.0}, "faces": [],
@@ -14161,7 +14199,7 @@ fn chamfered_cube(spec: Value, cut: Option<(f64, f64)>) -> Model {
         "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
         "start": {"x": 0.0, "y": 0.0, "z": 10.0}, "end": {"x": 10.0, "y": 0.0, "z": 10.0},
         "faces": ["front", "top"]});
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "vertices": []}]);
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -14314,7 +14352,7 @@ fn chamfered_stack() -> Model {
             "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
             "faces": faces})
     };
-    m["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front", "bottom-front"], "faces": ["front", "top", "lower-front", "bottom"], "edge_geometry": [sample("top-front", 10.0, ["front", "top"]), sample("bottom-front", -10.0, ["lower-front", "bottom"])], "bodies": [], "vertices": []}]);
+    m["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front", "bottom-front"], "faces": ["front", "top", "lower-front", "bottom"], "edge_geometry": [sample("top-front", 10.0, ["front", "top"]), sample("bottom-front", -10.0, ["lower-front", "bottom"])], "bodies": [], "face_owners": [], "vertices": []}]);
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -14434,7 +14472,7 @@ fn blended_hole(kind: &str, dimension: Value, circles: &[(f64, f64)]) -> Model {
         "carrier": {"range": [0.0, std::f64::consts::TAU], "curve": {"kind": "circle",
             "center": xyz(5.0, 5.0, 10.0), "axis": xyz(0.0, 0.0, 1.0),
             "ref_direction": xyz(0.0, 1.0, 0.0), "radius": BORE}}});
-    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#5", "edges": ["synthetic:rim:edge#hole-top"], "faces": ["synthetic:rim:face#hole-wall", "synthetic:rim:face#top"], "edge_geometry": [sample], "bodies": [], "face_owners": [], "vertices": []}]);
     // Exact input carrier belongs to an earlier hidden result, independently of final edges.
     let source = "synthetic:rim:body#0";
     for feature in wire["model"]["features"].as_array_mut().unwrap() {
@@ -15154,8 +15192,8 @@ fn helper_info_survives_mapping_and_replay_fallbacks() {
 fn partial_history_model() -> Model {
     let mut model = reference_sketch_history();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["ordinal"] = json!(3);
-    wire["model"]["features"][2]["ordinal"] = json!(2);
+    feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(3);
+    feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(2);
     let cube = cube_with_history(10.0, first_profile(), None);
     let cube = serde_json::to_value(&cube.ir).unwrap();
     let mut extrude = cube["model"]["features"][1].clone();
@@ -16330,8 +16368,8 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
         let mut model = partial_history_model();
         if before_blocker {
             let mut wire = serde_json::to_value(&model.ir).unwrap();
-            wire["model"]["features"][1]["ordinal"] = json!(2);
-            wire["model"]["features"][2]["ordinal"] = json!(3);
+            feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(2);
+            feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(3);
             model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         }
         let (document, report) = convert(&model, &writer);
@@ -16498,7 +16536,7 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
         .collect();
     let mut faces: Vec<String> = (0..4).map(side).collect();
     faces.push(face.to_owned());
-    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "vertices": []}]);
+    wire["model"]["feature_input_topologies"] = json!([{"id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces, "edge_geometry": geometry, "bodies": [], "face_owners": [], "vertices": []}]);
     let mut definition = json!({"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "historical_faces", "value": {
             "state": state, "faces": [face], "native": ["synthetic profile group"],
         }}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}}, "op": "join"}});
@@ -17070,7 +17108,7 @@ fn face_extrude_then_chamfer(up: bool) -> Model {
                 "supports": [], "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
                 "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
                 "faces": ["front", "end"],
-            }], "bodies": [], "vertices": []}));
+            }], "bodies": [], "face_owners": [], "vertices": []}));
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -19132,7 +19170,7 @@ fn spatial_044_extrude(lift: f64) -> Model {
         {"id":"f3d:model:sketch-constraint#4447", "sketch":SPATIAL, "definition":{"kind":"parallel_to_direction","entity":spatial_id(3),"direction":xyz([-1.0,0.0,0.0])}},
         {"id":"f3d:model:sketch-constraint#4448", "sketch":SPATIAL, "definition":{"kind":"parallel_to_direction","entity":spatial_id(4),"direction":xyz([0.0,-1.0,0.0])}},
     ]);
-    wire["model"]["features"][2]["definition"]["value"] = json!({"kind":"extrude", "value": {"profile": {"kind": "spatial_sketch_profiles", "value": {"sketch": SPATIAL, "profiles": [0]}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 10.0}}}, "op": "new_body"}});
+    feature_row(&mut wire, "f3d:model:feature#2")["definition"]["value"] = json!({"kind":"extrude", "value": {"profile": {"kind": "spatial_sketch_profiles", "value": {"sketch": SPATIAL, "profiles": [0]}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 10.0}}}, "op": "new_body"}});
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
@@ -19267,8 +19305,8 @@ fn spatial_044_constraints_and_extrude_replay_against_the_source_cube() {
         .as_array_mut()
         .unwrap()
         .retain(|c| c["definition"]["kind"] != "tangent");
-    wire["model"]["features"][2]["definition"]["value"]["value"]["path"]["value"]["curves"] =
-        json!([spatial_id(1)]);
+    feature_row(&mut wire, "f3d:model:feature#2")["definition"]["value"]["value"]["path"]
+        ["value"]["curves"] = json!([spatial_id(1)]);
     let entities = wire["model"]["spatial_sketch_entities"]
         .as_array_mut()
         .unwrap();
@@ -19327,7 +19365,13 @@ fn spatial_044_failed_constraint_replay_retries_the_solved_geometry() {
     ] {
         wire["model"][key] = spatial["model"][key].clone();
     }
-    let mut feature = spatial["model"]["features"][1].clone();
+    let mut feature = spatial["model"]["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "f3d:model:feature#3")
+        .unwrap()
+        .clone();
     feature["ordinal"] = json!(2);
     wire["model"]["features"]
         .as_array_mut()
@@ -19384,8 +19428,8 @@ fn spatial_044_failed_constraint_replay_retries_the_solved_geometry() {
 fn spatial_044_independent_sketches_survive_an_earlier_blocker() {
     let base = spatial_044_model();
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    wire["model"]["features"][1]["ordinal"] = json!(2);
-    wire["model"]["features"][2]["ordinal"] = json!(3);
+    feature_row(&mut wire, "f3d:model:feature#3")["ordinal"] = json!(2);
+    feature_row(&mut wire, "f3d:model:feature#2")["ordinal"] = json!(3);
     wire["model"]["features"].as_array_mut().unwrap().push(json!({"id":"f3d:model:feature#44", "ordinal":1, "name":"Earlier blocker", "suppressed":false,"definition":{"kind":"operation","value":{"kind":"native","value":{"kind":"Synthetic unsupported operation","parameters":{}}}},"dependencies":[],"source_properties":{},"source_content":[],"outputs":[]}));
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -21113,7 +21157,7 @@ fn unresolved_revolve_before_trimmed_cuts(explicit_all: bool) -> Model {
             "edges":{"kind":"historical","value":{"state":"synthetic:shared:input#0",
             "edges":["synthetic:shared:edge#0"],"native":"synthetic corner"}}}]}}}}));
     m["feature_input_topologies"] = json!([{"id":"synthetic:shared:input#0",
-        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"vertices":[],
+        "input_of":"synthetic:shared:feature#fillet", "bodies":[],"faces":[],"face_owners":[],"vertices":[],
         "edges":["synthetic:shared:edge#0"], "edge_geometry":[{"edge":"synthetic:shared:edge#0",
             "start":{"x":10,"y":8,"z":0},"end":{"x":10,"y":8,"z":26},
             "interior":{"x":10,"y":8,"z":13},"supports": [], "tangent":{"x":0,"y":0,"z":1},"faces":[]}]}]);
@@ -21793,7 +21837,7 @@ fn body_moves_rebuild_from_a_captured_base_with_two_identity_aliases() {
         let body = format!("synthetic:history-input:body#{id}");
         let owner = format!("f3d:model:feature#{id}");
         inputs.push(json!({"id": state, "input_of": owner, "bodies": [body],
-            "faces": [], "edges": [], "vertices": [], "edge_geometry": []}));
+            "faces": [], "face_owners": [], "edges": [], "vertices": [], "edge_geometry": []}));
         let mut feature = wire["model"]["features"][1].clone();
         feature["id"] = json!(owner);
         feature["ordinal"] = json!(id);
