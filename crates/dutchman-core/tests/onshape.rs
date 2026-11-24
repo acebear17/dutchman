@@ -1131,9 +1131,35 @@ fn missing_step_does_not_bypass_body_history_validation() {
         output.write_all(&data).unwrap();
     }
     let bytes = output.finish().unwrap().into_inner();
-    let (model, _) = read(&bytes).unwrap();
+    let (model, report) = read(&bytes).unwrap();
     assert_eq!(kinds(&model), ["sketch", "extrude", "fillet"]);
     assert!(model.source_step.is_none());
+    // The unchecked history is visible: the note names the missing root export.
+    let notes: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "history check")
+        .collect();
+    assert_eq!(notes.len(), 1, "{:?}", report.losses());
+    assert_eq!(notes[0].severity, Severity::Degraded);
+    assert!(
+        notes[0]
+            .detail
+            .contains("without a check against the final Onshape shape")
+            && notes[0].detail.contains("export.step"),
+        "{}",
+        notes[0].detail
+    );
+}
+
+#[test]
+fn a_full_bundle_has_its_root_step_and_no_unchecked_history_note() {
+    let (model, report) = read(&fixture("plate-fillet")).unwrap();
+    assert!(model.source_step.is_some());
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.subject != "history check"));
 }
 
 #[test]

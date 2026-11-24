@@ -199,31 +199,70 @@ impl PlanningLimits {
 }
 
 /// The STEP export of an Onshape bundle's root Part Studio, the shape its history is checked
-/// against. The root is the manifest's `root_element`, or its only element.
-fn onshape_root_step(bytes: &[u8]) -> Option<String> {
+/// against. The root is the manifest's `root_element`, or its only element. `Ok(None)` is a
+/// bundle whose manifest names no root (cadmpeg reports that itself); `Err` says why a named
+/// root has no usable STEP export.
+fn onshape_root_step(bytes: &[u8]) -> Result<Option<String>, String> {
     use std::io::Read;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-    let mut text = |name: &str| -> Option<String> {
-        let member = archive.by_name(name).ok()?;
-        let mut out = String::new();
-        member.take(MAX_INPUT_BYTES).read_to_string(&mut out).ok()?;
-        Some(out)
+    let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        return Ok(None);
     };
-    let manifest: serde_json::Value = serde_json::from_str(&text("manifest.json")?).ok()?;
+    let mut text = |name: &str| -> Result<String, String> {
+        let member = archive
+            .by_name(name)
+            .map_err(|_| format!("the bundle has no {name}"))?;
+        let mut out = String::new();
+        member
+            .take(MAX_INPUT_BYTES)
+            .read_to_string(&mut out)
+            .map_err(|error| format!("{name} cannot be read: {error}"))?;
+        Ok(out)
+    };
+    let Some(manifest) = text("manifest.json")
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    else {
+        return Ok(None);
+    };
     let root = match manifest
         .get("root_element")
         .and_then(serde_json::Value::as_str)
     {
         Some(root) if !root.is_empty() => root.to_owned(),
-        _ => match manifest.get("elements")?.as_array()?.as_slice() {
-            [only] => only.get("id")?.as_str()?.to_owned(),
-            _ => return None,
+        _ => match manifest
+            .get("elements")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::as_slice)
+        {
+            Some([only]) => match only.get("id").and_then(serde_json::Value::as_str) {
+                Some(id) => id.to_owned(),
+                None => return Ok(None),
+            },
+            _ => return Ok(None),
         },
     };
     if !root.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        return None;
+        return Err(format!(
+            "the manifest's root element id {root:?} is not an Onshape element id"
+        ));
     }
-    text(&format!("partstudios/{root}/export.step"))
+    text(&format!("partstudios/{root}/export.step")).map(Some)
+}
+
+/// The root STEP export of an Onshape bundle. Without one the stored history is still kept,
+/// unchecked; the report says so.
+fn onshape_source_step(bytes: &[u8], report: &mut Report) -> Option<String> {
+    onshape_root_step(bytes).unwrap_or_else(|why| {
+        report.push_at(
+            Stage::Decode,
+            Severity::Degraded,
+            "history check",
+            format!(
+                "the stored history is kept without a check against the final Onshape shape: {why}"
+            ),
+        );
+        None
+    })
 }
 
 /// Full drawing decode uses the same detector, limits, validation and panic guard. A
@@ -289,6 +328,12 @@ fn with_fallback(
 
 /// How a failure of cadmpeg's checks begins.
 const CHECKS: &str = "cadmpeg's model of it fails its checks ";
+/// How cadmpeg's refusal of a JSON or XML tree over the per-expansion allowance ends
+/// (`cadmpeg_core::decode::tree`). A test pins it against the pinned cadmpeg.
+const TREE_OVER_ALLOWANCE: &str = "per-expansion allowance";
+/// cadmpeg's Onshape loss for a bundle member it omits as too large to expand. A test pins
+/// it against the pinned cadmpeg.
+const ONSHAPE_MEMBER_TOO_LARGE: &str = "onshape/member.too-large";
 
 #[allow(clippy::too_many_arguments)]
 fn decode_unguarded(
@@ -350,7 +395,7 @@ fn decode_unguarded(
         // NotImplemented (cadmpeg_core::decode::tree); under planning limits that is the limit.
         let over_allowance = planning.is_some()
             && matches!(&err, DecodeFailure::Codec(CodecError::NotImplemented(message))
-                if message.ends_with("per-expansion allowance"));
+                if message.ends_with(TREE_OVER_ALLOWANCE));
         if over_allowance
             || depth == DecodeDepth::Design
                 && matches!(&err, DecodeFailure::Codec(CodecError::ResourceLimit(_)))
@@ -367,7 +412,7 @@ fn decode_unguarded(
         if let Some(note) = decode_report
             .losses
             .iter()
-            .find(|note| note.code.to_string() == "onshape/member.too-large")
+            .find(|note| note.code.to_string() == ONSHAPE_MEMBER_TOO_LARGE)
         {
             return Err(Error::MemoryBudget(format!(
                 "planning decoder resource limit reached: {}",
@@ -446,7 +491,7 @@ fn decode_unguarded(
         assembly: None,
         source_step: match format {
             Format::Step => String::from_utf8(bytes.to_vec()).ok(),
-            Format::OnshapeBundle => onshape_root_step(bytes),
+            Format::OnshapeBundle => onshape_source_step(bytes, report),
             _ => None,
         },
     };
@@ -1280,6 +1325,74 @@ pub(crate) fn preflight_codec(prefix: &[u8]) -> Option<&'static str> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// decode_unguarded reads cadmpeg's tree refusal by its wording; a cadmpeg that words it
+    /// otherwise fails here instead of reading a smaller model under planning limits.
+    #[test]
+    fn cadmpeg_words_a_tree_over_the_allowance_as_matched() {
+        let arena = DecodeArena::new();
+        let mut policy = DecodePolicy::default();
+        policy.limits.max_decompressed_bytes_per_expand = 1 << 10;
+        let (ctx, _) = DecodeContext::from_root_bytes(b"", &arena, &policy).unwrap();
+        let text = format!("[{}]", vec!["0"; 1 << 12].join(","));
+        let error = ctx.parse_json_value(&text, "JSON").unwrap_err();
+        assert!(
+            matches!(&error, CodecError::NotImplemented(message)
+                if message.ends_with(TREE_OVER_ALLOWANCE)),
+            "{error:?}"
+        );
+    }
+
+    /// decode_unguarded reads cadmpeg's omitted-member loss by its code; this pins the code
+    /// against the pinned cadmpeg.
+    #[cfg(feature = "onshape")]
+    #[test]
+    fn cadmpeg_codes_an_omitted_onshape_member_as_matched() {
+        use std::io::{Read, Write};
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/onshape-plate-fillet.onshape-bundle");
+        let source = std::fs::read(path).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(source)).unwrap();
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for index in 0..archive.len() {
+            let mut member = archive.by_index(index).unwrap();
+            let mut data = Vec::new();
+            member.read_to_end(&mut data).unwrap();
+            zip.start_file(member.name().unwrap().as_ref(), options)
+                .unwrap();
+            zip.write_all(&data).unwrap();
+        }
+        // Larger than any JSON member the Onshape codec expands.
+        zip.start_file("extra.json", options).unwrap();
+        zip.write_all(&vec![b' '; (32 << 20) + 1]).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let catalog = InputCatalog::with_builtins();
+        let policy = DecodePolicy::default();
+        let codec = select_codec(
+            &catalog,
+            &policy,
+            Format::OnshapeBundle,
+            Format::OnshapeBundle.codec_id().unwrap(),
+            &bytes,
+        )
+        .unwrap();
+        let options = DecodeOptions {
+            depth: DecodeDepth::Design,
+            policy,
+        };
+        let decoded = codec.decode(&mut Cursor::new(&bytes), &options).unwrap();
+        let (_, report, _) = decoded.into_parts();
+        assert!(
+            report
+                .losses
+                .iter()
+                .any(|note| note.code.to_string() == ONSHAPE_MEMBER_TOO_LARGE),
+            "{:?}",
+            report.losses
+        );
+    }
 
     #[test]
     fn step_shape_scan_tells_empty_from_geometry() {

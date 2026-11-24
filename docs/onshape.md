@@ -281,6 +281,8 @@ and compare boxes, area and volume against `export.step`. Existing tolerances an
 SolidCraft version gates apply unchanged. Fillets and chamfers need a usable
 SolidCraft CLI (or host evaluator) for their input-edge proof. An absent evaluator,
 failed proof or differing replay is reported and preserves the final geometry.
+When the root Part Studio's `export.step` is missing or cannot be read, the stored
+history is kept without this check, and the report says so with the reason.
 
 Synthetic offline coverage includes the generic deterministic plane and region
 query shapes returned by the REST API. Feature-library parameter drift and rollback
