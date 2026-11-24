@@ -90,8 +90,12 @@ pub struct FileView {
     /// The notes the default view lists, by component, each leading with its plain sentence.
     /// Notes that change nothing the person sees are left out.
     pub components: Vec<ComponentView>,
-    /// Every note, raw (subject, code-bearing message), for the "Details" toggle.
+    /// The raw subject, code and message of the notes the card lists that lead with a plain
+    /// sentence, for the "Details" toggle. A note with no plain sentence that changes nothing
+    /// the person sees is in neither list.
     pub details: Vec<LossLine>,
+    /// Whether the report has any note, so the full log is worth saving.
+    pub has_log: bool,
     pub can_report: bool,
     /// Converted reports start collapsed; failed reports offer help immediately.
     pub report_case: Option<ReportCase>,
@@ -464,7 +468,12 @@ impl FileView {
             loss_summary: loss_counts(&raw),
             losses,
             components,
-            details: every_note.into_iter().map(raw_loss_line).collect(),
+            details: raw
+                .iter()
+                .filter(|loss| json::plain_view(loss).rewritten)
+                .map(|loss| raw_loss_line(loss))
+                .collect(),
+            has_log: !every_note.is_empty(),
         }
     }
 }
@@ -1539,10 +1548,11 @@ mod plain_note_tests {
             .text
             .starts_with("This part's feature history couldn't be read"));
         assert!(!lines[0].text.contains("delta_state"));
-        // The details are raw and complete.
-        assert_eq!(view.details.len(), 3);
+        // Details hold the raw words of the listed note only; the notes that change nothing
+        // are in the full log alone.
+        assert_eq!(view.details.len(), 1);
         assert!(view.details[0].text.contains("delta_state"));
-        assert!(view.details[2].text.contains("67 source-native record(s)"));
+        assert!(view.has_log);
     }
 
     #[test]
@@ -1553,7 +1563,8 @@ mod plain_note_tests {
         let view = FileView::from_report(&report);
         assert_eq!(view.status, Status::Converted);
         assert!(view.components.is_empty());
-        assert_eq!(view.details.len(), 1);
+        assert!(view.details.is_empty());
+        assert!(view.has_log);
     }
 
     #[test]

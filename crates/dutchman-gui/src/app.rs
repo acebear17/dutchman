@@ -3899,8 +3899,8 @@ fn row_ui(
                 });
         }
         if !view.details.is_empty() {
-            // The raw subject, code and message of every note, for a bug report. The notes
-            // above lead with a plain sentence and leave out those that change nothing.
+            // The raw subject, code and message of the notes above that lead with a plain
+            // sentence. Notes that change nothing are only in the saved full log.
             egui::CollapsingHeader::new(RichText::new("Details").color(p.tide))
                 .id_salt(("details", index))
                 .show(ui, |ui| {
@@ -3910,7 +3910,7 @@ fn row_ui(
                 });
         }
         theme::control_row(ui, |ui| {
-            if !view.details.is_empty() && ui.button("Save the full log…").clicked() {
+            if view.has_log && ui.button("Save the full log…").clicked() {
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
             // Every finished file has the way to report it, whatever the card says: Dutchman

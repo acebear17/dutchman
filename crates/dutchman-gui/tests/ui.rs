@@ -5760,14 +5760,22 @@ fn notes_lead_with_a_plain_sentence_and_the_raw_codes_sit_behind_details() {
     assert!(harness
         .query_by_label("Losses: 1 Info, 1 Degraded")
         .is_some());
-    // Details holds every note, raw.
+    // Details holds the raw words of the listed note, and nothing else.
     harness.get_by_label("Details").click_accesskit();
     harness.run_steps(8);
     assert!(harness.query_by_label_contains("delta_state").is_some());
     assert!(harness
         .query_by_label_contains("step/native.source-record-omitted")
-        .is_some());
-    assert!(harness.query_by_label_contains("0 parts placed").is_some());
+        .is_none());
+    assert!(harness
+        .query_by_label_contains("step/attribute.source-record-not-written")
+        .is_none());
+    assert!(harness
+        .query_by_label_contains("rse.segment-pair-untyped")
+        .is_none());
+    assert!(harness.query_by_label_contains("0 parts placed").is_none());
+    // The notes that change nothing are in the full log.
+    assert!(harness.query_by_label("Save the full log…").is_some());
 }
 
 /// Before/after evidence of the Results card with these notes. Needs a GPU renderer:

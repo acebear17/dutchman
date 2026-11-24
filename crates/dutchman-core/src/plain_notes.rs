@@ -205,10 +205,12 @@ pub fn plain_view(
     message: &str,
 ) -> PlainView {
     let Some(row) = row_for(code, subject, message) else {
+        // No sentence: the note keeps its own words and stays visible, unless it is a count
+        // of nothing (every number zero), which says nothing to the person.
         return PlainView {
             summary: message.to_owned(),
             rewritten: false,
-            shown: true,
+            shown: severity != Severity::Info || !all_counts_zero(message),
         };
     };
     let shown = severity == Severity::Dropped
@@ -301,7 +303,12 @@ mod tests {
                 shown: true
             }
         );
-        assert!(view(None, "joints", "0 joints").shown);
+        assert!(view(None, "joints", "2 joints").shown);
+        // A count of nothing says nothing, whichever note it is on.
+        assert!(!view(None, "joints", "0 joints, 0 loops").shown);
+        assert!(!view(Some("f3d/something.new"), "x", "0 things").shown);
+        // Unless the note was dropped.
+        assert!(plain_view(Severity::Dropped, None, "joints", "0 joints").shown);
     }
 
     #[test]
