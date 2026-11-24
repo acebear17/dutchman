@@ -877,7 +877,6 @@ fn member_error_code(error: &CodecError) -> &'static str {
         CodecError::ResourceLimit(_) => "resource_limit",
         CodecError::UnsupportedDialect { .. } => "unsupported_dialect",
         CodecError::UnsupportedTarget(_) => "unsupported_target",
-        CodecError::InsufficientDepth { .. } => "insufficient_depth",
         CodecError::NotImplemented(_) => "not_implemented",
         CodecError::Io(_) => "io",
         _ => "other",
