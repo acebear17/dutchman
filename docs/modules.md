@@ -1,5 +1,37 @@
 # Optional modules
 
+## How Dutchman finds and runs a module
+
+A module is a separate program named `dutchman-<name>` (the electronics module is
+`dutchman-electronics`). Dutchman looks beside its own executable first, then in PATH, the same
+way it finds every other companion program. Install it from
+https://github.com/dutchman-cad/dutchman-electronics.
+
+Dutchman talks to a module with three commands, each with `--json`:
+
+1. `info --json` (`dutchman.module-info/1`) names the module, its version, its interface
+   number and every extension it reads. Dutchman remembers the answer per module file (path, modification time and size), so an
+   upgraded module is asked again and a failed `info` is retried. It refuses a module whose
+   `interface` is not 1, saying which versions to match.
+2. `detect <file> --json` (`dutchman.module-detect/1`) answers `yes`, `maybe_by_name` or `no`
+   for that file. Dutchman runs it for a file whose extension `info` lists, and treats `no` as
+   "not a board" with a note. Detection needs the extension as well as the contents, so a board
+   renamed to another extension is not read.
+3. `read <file> --out <folder> --json` writes a placed-parts package (below) into a temporary
+   folder and prints the manifest. Dutchman reads the package and deletes the folder.
+
+The conversion then goes on like any other: Results card, report, `--json`.
+
+- **Missing module.** A file with a known board extension (`.PcbDoc`) is recognised and the
+  message says to install the electronics module. It is never reported as an unknown file.
+- **Module cannot run.** If the module is found but `info` fails, a board file gets "the electronics module is installed but could not be run: <reason>".
+- **Failure.** A non-zero exit, or `{"ok": false, "message": ...}`, is an error that shows the
+  module's own message, or its stderr; its stderr also goes into the report as a note. A
+  module that finishes without writing `manifest.json` is an error too.
+- **Limits.** `read` is stopped after 10 minutes; the module may leave at most 4 GiB and
+  100,000 files in its folder, and Dutchman keeps at most 16 MiB of its output on stdout and
+  64 KiB on stderr. The package itself is limited as described below.
+
 ## The placed-parts package
 
 A module that reads a file Dutchman does not (a circuit board, for example) hands Dutchman its result as a
