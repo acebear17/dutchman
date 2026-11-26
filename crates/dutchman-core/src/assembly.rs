@@ -644,10 +644,10 @@ pub(crate) fn resolve(
         };
         match transform(occurrence) {
             Ok(transform) => {
-                let hidden = suppresses(occurrence);
-                if hidden {
+                if suppresses(occurrence) {
                     suppressed_names.push(name.clone().unwrap_or_else(|| file.to_owned()));
                 }
+                let hidden = occurrence_hidden(occurrence, parts.get(part).is_some_and(all_hidden));
                 placements.push(Placement {
                     unproven: occurrence
                         .get("id")
@@ -4101,6 +4101,26 @@ mod tests {
                 crate::locate::tests::absolute_for_tests(project.dir.path()).display()
             )]
         );
+    }
+
+    #[test]
+    fn inventor_assembly_places_a_hidden_occurrence_hidden_without_a_suppression_note() {
+        let mut hidden = occurrence(1, "cube.ipt", root(), 30.0);
+        hidden["visible"] = json!(false);
+        let project = Project::new(&[(
+            "top.iam",
+            vec![occurrence(0, "cube.ipt", root(), 0.0), hidden],
+        )]);
+        let mut report = Report::default();
+        let top = project.read("top.iam", &mut report).unwrap();
+        let assembly = top.assembly.unwrap();
+        let flags: Vec<bool> = assembly.placements.iter().map(|p| p.hidden).collect();
+        assert_eq!(flags, [false, true]);
+        assert_eq!(assembly.placements[1].transform[0][3], 30.0);
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "suppressed components"));
     }
 
     #[test]
