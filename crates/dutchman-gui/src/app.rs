@@ -2247,6 +2247,20 @@ impl App {
             return;
         }
 
+        egui::TopBottomPanel::bottom("as-is-footer")
+            .frame(
+                Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(Margin {
+                        left: theme::SPACE_8 as i8,
+                        right: theme::SPACE_8 as i8,
+                        top: 0,
+                        bottom: theme::SPACE_1 as i8,
+                    }),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| self.as_is_footer(ui, ctx));
+
         egui::TopBottomPanel::bottom("conversion")
             .frame(
                 Frame::new()
@@ -2474,6 +2488,33 @@ impl App {
                     subtitle = text;
                 }
                 ui.label(RichText::new(subtitle).small().color(p.tide));
+            }
+        });
+    }
+
+    /// One quiet line at the bottom of the window: the as-is notice and a link to its details.
+    fn as_is_footer(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let p = *theme::palette(ui);
+        let text = (crate::FOOTER, crate::FOOTER_MORE);
+        // The panel spans the whole window below both columns. A row is as tall as a button by
+        // default; the footer's is as tall as its small text, so it never costs the controls room.
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+            ui.label(RichText::new(text.0).small().color(p.tide));
+            let more = ui.add(egui::Link::new(RichText::new(text.1).small()));
+            // Another "More" button lives on result cards; give this one its own name.
+            more.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Link,
+                    true,
+                    "More about Dutchman and your files",
+                )
+            });
+            if more.clicked() {
+                ctx.open_url(egui::OpenUrl::new_tab(footer_docs_url(
+                    dutchman::BUILD_VERSION,
+                )));
             }
         });
     }
@@ -4197,6 +4238,15 @@ pub fn agents_url(version: &str) -> String {
         _ => format!("v{version}"),
     };
     format!("https://github.com/dutchman-cad/dutchman/blob/{rev}/assets/install/AGENTS.md")
+}
+
+/// The docs section the footer's **More** link opens, at this build's own version.
+pub fn footer_docs_url(version: &str) -> String {
+    let rev = match version.split_once("-nightly.") {
+        Some((_, commit)) if !commit.is_empty() => commit.to_owned(),
+        _ => format!("v{version}"),
+    };
+    format!("https://github.com/dutchman-cad/dutchman/blob/{rev}/docs/desktop.md#provided-as-is-and-your-files")
 }
 
 /// How long "Copied" shows before the button looks as it did.

@@ -5891,6 +5891,24 @@ fn connected_onshape_keeps_results_in_their_own_column() {
     }
 }
 
+/// The as-is footer is one line under every control, in both themes, and the left column's
+/// controls stay on screen with it.
+#[cfg(feature = "test-support")]
+#[test]
+fn as_is_footer_is_one_quiet_line_below_the_controls() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let out = tempfile::tempdir().unwrap();
+        let h = many_results_onshape_harness(out.path(), theme, true);
+        let footer = h.get_by_label_contains("provided as is").rect();
+        let convert = h.get_by_label("Convert").rect();
+        assert!(convert.bottom() <= footer.top());
+        assert!(footer.bottom() <= h.ctx.content_rect().bottom());
+        assert!(footer.height() < 24.0, "one line, not a banner");
+        h.get_by_label("More about Dutchman and your files");
+        assert!(!h.state().page_scrolls());
+    }
+}
+
 /// Windows and macOS offer "Export from Fusion…" in the Convert bar (the tests offer it
 /// everywhere): it must not make the left column overflow at 1280x800.
 #[test]
@@ -5908,6 +5926,59 @@ fn the_fusion_button_in_the_convert_bar_keeps_the_left_column_inside() {
         assert!(button.right() <= 1280.0);
         assert!(!h.state().page_scrolls());
     }
+}
+
+/// The main window with the footer at 1280x800, Day and Night: an English design name, and a
+/// long German one (the app has no translations, so the footer stays English in both).
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "renders GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn as_is_footer_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (language, file) in [
+        ("en", "Cube.ipt"),
+        (
+            "de-DE",
+            "Getriebegehäuse_Hauptwelle_Lagerdeckel_Konstruktionsstand_Revision_C.ipt",
+        ),
+    ] {
+        for (theme, name) in [
+            (ThemePreference::Light, "day"),
+            (ThemePreference::Dark, "night"),
+        ] {
+            let docs = PathBuf::from("/Users/demo/Documents");
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(1280.0, 800.0));
+            harness.state_mut().preview_solidcraft(Some("0.50.0"));
+            harness.state_mut().set_out_dir(docs.join("Converted"));
+            let mut report = developer_notes_report();
+            report["mode"] = serde_json::json!("history");
+            let stem = file.trim_end_matches(".ipt");
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: docs.join(file),
+                    output: Some(docs.join("Converted").join(format!("{stem}.sc"))),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(report),
+                });
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("as-is-footer-{language}"),
+                name,
+                "The main window with the as-is line at the bottom.",
+            );
+        }
+    }
+    std::fs::write(dir.join("as-is-footer.md"), index).unwrap();
 }
 
 /// Synthetic result cards, identical in both revisions for screenshot comparison.
