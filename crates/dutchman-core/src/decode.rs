@@ -488,6 +488,7 @@ fn decode_unguarded(
     }
     drop_removed_bodies(&mut ir, report);
     drop_inactive_configuration_bodies(&mut ir, report);
+    crate::design_history::project(&mut ir, report);
 
     let model = Model {
         ir,
@@ -915,7 +916,6 @@ fn member_error_code(error: &CodecError) -> &'static str {
         CodecError::ResourceLimit(_) => "resource_limit",
         CodecError::UnsupportedDialect { .. } => "unsupported_dialect",
         CodecError::UnsupportedTarget(_) => "unsupported_target",
-        CodecError::InsufficientDepth { .. } => "insufficient_depth",
         CodecError::NotImplemented(_) => "not_implemented",
         CodecError::Io(_) => "io",
         _ => "other",
@@ -929,7 +929,9 @@ fn member_error_code(error: &CodecError) -> &'static str {
 /// would otherwise be converted as part of the design. Only a Remove whose bodies cadmpeg
 /// resolves can say which bodies those are; any other is left as it is.
 fn drop_removed_bodies(ir: &mut cadmpeg_ir::CadIr, report: &mut Report) {
-    use cadmpeg_ir::{BodyRetentionMode, BodySelection, FeatureOperation};
+    use cadmpeg_ir::features::operation_settings::BodyRetentionMode;
+    use cadmpeg_ir::features::selections::BodySelection;
+    use cadmpeg_ir::FeatureOperation;
     let mut removed: Vec<(cadmpeg_ir::ids::BodyId, String)> = Vec::new();
     for feature in &ir.model.features {
         if feature.suppressed == Some(true) {
@@ -1769,7 +1771,7 @@ mod tests {
             );
         }
         ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": []}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "bodies": ["test:model:body#A", "test:model:body#B"], "bom_properties": {}, "sketches": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         for (ordinal, name, body, active) in [(0, "Short", "A", true), (1, "Tall", "B", false)] {
@@ -1875,7 +1877,7 @@ mod tests {
     fn geometry_alone_leaves_no_definition_naming_a_removed_sketch() {
         let mut model = cube();
         model.ir.model.product_definitions.push(
-            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": []}))
+            serde_json::from_value(serde_json::json!({"id": "test:product:definition#0", "kind": "part", "sketches": ["test:model:sketch#0"], "bom_properties": {}, "bodies": [], "storage":{"kind":"embedded"}, "tessellations":[], "occurrences":[], "instance_bodies":[], "representations":[]}))
             .unwrap(),
         );
         geometry_only(&mut model.ir);
