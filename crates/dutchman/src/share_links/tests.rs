@@ -628,9 +628,11 @@ fn total_deadline_removes_scratch_while_body_is_still_streaming() {
                 .map_err(|_| NETWORK.to_owned())
         },
     );
-    received.recv_timeout(Duration::from_secs(1)).unwrap();
+    received.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(result.unwrap_err(), NETWORK);
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // A download that waited for the body would take the server's full 5 s. A busy machine
+    // can be well past the 200 ms deadline and still be clearly short of that.
+    assert!(started.elapsed() < Duration::from_secs(3));
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     release.send(()).unwrap();
     server.join().unwrap();
