@@ -775,6 +775,10 @@ struct Context<'a> {
     topological_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Ids in `named_bodies` that name, as a second id, a body another id already names: a
+    /// captured history body registered beside the final body it becomes. An alias shares
+    /// its body's name without making that name ambiguous.
+    body_aliases: std::collections::BTreeSet<String>,
     /// Whether an earlier feature made a body the history could not name. Then the one
     /// named body is not necessarily the only body, so a single-body input state cannot be
     /// taken for it.
@@ -853,6 +857,7 @@ impl<'a> Context<'a> {
             pattern_replay_required: false,
             topological_replay_required: false,
             named_bodies: Vec::new(),
+            body_aliases: std::collections::BTreeSet::new(),
             unnamed_bodies: false,
             generated_bodies: Vec::new(),
             confirming_consumed_bodies: false,
@@ -923,6 +928,15 @@ impl<'a> Context<'a> {
             rows
         });
         rows.get(id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a body name other than `id`'s own names another body: ids that only alias
+    /// one body under its name do not.
+    fn body_name_shared(&self, id: &str, name: &str) -> bool {
+        !self.body_aliases.contains(id)
+            && self.named_bodies.iter().any(|(other, known)| {
+                other != id && known == name && !self.body_aliases.contains(other)
+            })
     }
 
     /// Whether a body the history makes already has this name.

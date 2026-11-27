@@ -346,11 +346,7 @@ fn body_seeds(
                 .iter()
                 .find(|(known, _)| known == id)
                 .ok_or("it patterns a body without an earlier mapped name")?;
-            if ctx
-                .named_bodies
-                .iter()
-                .any(|(known, other)| known != id && other == name)
-            {
+            if ctx.body_name_shared(id, name) {
                 return Err("it patterns a body whose name is ambiguous".to_owned());
             }
             Ok(name.clone())
